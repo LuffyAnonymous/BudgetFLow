@@ -1,0 +1,149 @@
+/**
+ * POST /api/imports/sms
+ *
+ * SMS import webhook endpoint.
+ *
+ * Authentication:
+ *   Authorization: Bearer <import-token>
+ *   userId is resolved from the token. Never from the request body.
+ *
+ * Request body (JSON, max 10 KB):
+ *   {
+ *     "sender":     string (required, max 100 chars)
+ *     "message":    string (required, max 2000 chars)
+ *     "receivedAt": string (required, ISO 8601 timestamp)
+ *     "deviceId":   string | null (optional, metadata only, not trusted for auth)
+ *   }
+ *
+ * Idempotency:
+ *   Idempotency-Key: <uuid>  (optional header)
+ *   Same key = same result returned without re-processing.
+ *
+ * Rate limiting: 20 requests / 60 s per token.
+ *
+ * Response:
+ *   200 OK — processed | review_required | duplicate | idempotent
+ *   400 — invalid request body
+ *   401 — missing or invalid token
+ *   429 — rate limit exceeded
+ *   503 — import engine disabled for this user
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { importSettingService } from "@/server/services/import-setting.service";
+import { importService } from "@/imports/engine/import.service";
+import { checkRateLimit } from "@/lib/rate-limiter";
+import { createHash } from "crypto";
+
+const MAX_BODY_BYTES = 10 * 1024; // 10 KB
+
+const SmsWebhookBodySchema = z.object({
+  sender: z.string().trim().min(1).max(100),
+  message: z.string().trim().min(1).max(2000),
+  receivedAt: z.string().datetime({ offset: true }),
+  deviceId: z.string().max(100).nullish(),
+});
+
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  // ── 1. Extract Bearer token ─────────────────────────────────────────────────
+  const authHeader = req.headers.get("authorization") ?? "";
+  const rawToken = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7).trim()
+    : null;
+
+  if (!rawToken) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // ── 2. Resolve user from token (timing-safe) ─────────────────────────────────
+  const userId = await importSettingService.resolveUserFromToken(rawToken);
+  if (!userId) {
+    // Generic — do not reveal whether the token belongs to a valid account
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // ── 3. Rate limiting (key = first 16 chars of token hash) ───────────────────
+  const tokenHashPrefix = createHash("sha256").update(rawToken).digest("hex").slice(0, 16);
+  const rateLimit = await checkRateLimit(`sms_import:${tokenHashPrefix}`);
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil(rateLimit.resetInMs / 1000)),
+          "X-RateLimit-Remaining": "0",
+        },
+      }
+    );
+  }
+
+  // ── 4. Body size guard ───────────────────────────────────────────────────────
+  const contentLength = parseInt(req.headers.get("content-length") ?? "0", 10);
+  if (contentLength > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+  }
+
+  // ── 5. Parse and validate body ───────────────────────────────────────────────
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = SmsWebhookBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request", details: parsed.error.flatten().fieldErrors },
+      { status: 400 }
+    );
+  }
+
+  const { sender, message, receivedAt: receivedAtStr, deviceId } = parsed.data;
+
+  // ── 6. Timestamp freshness check ─────────────────────────────────────────────
+  const receivedAt = new Date(receivedAtStr);
+  if (isNaN(receivedAt.getTime())) {
+    return NextResponse.json({ error: "Invalid receivedAt timestamp" }, { status: 400 });
+  }
+  if (receivedAt.getTime() > Date.now() + FUTURE_TOLERANCE_MS) {
+    return NextResponse.json(
+      { error: "receivedAt timestamp is too far in the future" },
+      { status: 400 }
+    );
+  }
+
+  // deviceId is metadata only — logged but not trusted for auth
+  void deviceId;
+
+  // ── 7. Idempotency key from header ───────────────────────────────────────────
+  const idempotencyKey = req.headers.get("idempotency-key") ?? null;
+
+  // ── 8. Stamp tokenLastUsedAt (throttled — only if >5 min old) ───────────────
+  // Called here: token is valid, not revoked, not expired, body is valid.
+  // Does NOT wait for import result — a valid message may correctly enter REVIEW_REQUIRED.
+  void importSettingService.touchLastUsed(userId).catch((err) => {
+    console.error("[sms-webhook] touchLastUsed failed (non-fatal):", err);
+  });
+
+  // ── 8. Run import engine ─────────────────────────────────────────────────────
+  const result = await importService.processSms(userId, {
+    sender,
+    message,
+    receivedAt,
+    idempotencyKey,
+  });
+
+  if (result.outcome === "disabled") {
+    return NextResponse.json(
+      { error: "Import engine is not enabled for this account" },
+      { status: 503 }
+    );
+  }
+
+  return NextResponse.json({ data: result }, { status: 200 });
+}
