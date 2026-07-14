@@ -10,6 +10,11 @@ import {
   LucideEyeOff,
   LucideCheckCircle2,
   LucideAlertCircle,
+  LucideKey,
+  LucideCopy,
+  LucideRotateCw,
+  LucideTrash2,
+  LucideShieldCheck,
 } from "lucide-react";
 
 export function SettingsClient() {
@@ -50,6 +55,79 @@ export function SettingsClient() {
   const [showCurrentPass, setShowCurrentPass] = useState(false);
   const [showNewPass, setShowNewPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
+
+  // Token state
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [tokenWarning, setTokenWarning] = useState<string | null>(null);
+  const [tokenError, setTokenError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  // Token Status Query
+  const { data: tokenStatus, isLoading: isLoadingToken } = useQuery({
+    queryKey: ["import-token-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/import-token/status");
+      const json = await res.json();
+      return json.data; // { isActive: boolean, expiresAt: string | null, lastUsedAt: string | null }
+    },
+  });
+
+  // Generate Token Mutation
+  const generateTokenMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/import-token", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to generate token");
+      return json.data;
+    },
+    onSuccess: (data) => {
+      setGeneratedToken(data.token);
+      setTokenWarning(data.warning);
+      setTokenError("");
+      queryClient.invalidateQueries({ queryKey: ["import-token-status"] });
+    },
+    onError: (err: Error) => {
+      setTokenError(err.message);
+    },
+  });
+
+  // Rotate Token Mutation
+  const rotateTokenMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/import-token", { method: "PATCH" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to rotate token");
+      return json.data;
+    },
+    onSuccess: (data) => {
+      setGeneratedToken(data.token);
+      setTokenWarning(data.warning);
+      setTokenError("");
+      queryClient.invalidateQueries({ queryKey: ["import-token-status"] });
+    },
+    onError: (err: Error) => {
+      setTokenError(err.message);
+    },
+  });
+
+  // Revoke Token Mutation
+  const revokeTokenMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/import-token", { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to revoke token");
+      return json.data;
+    },
+    onSuccess: () => {
+      setGeneratedToken(null);
+      setTokenWarning(null);
+      setTokenError("");
+      queryClient.invalidateQueries({ queryKey: ["import-token-status"] });
+    },
+    onError: (err: Error) => {
+      setTokenError(err.message);
+    },
+  });
 
   // Success/Error Indicators
   const [prefSuccess, setPrefSuccess] = useState("");
@@ -535,6 +613,126 @@ export function SettingsClient() {
             </button>
           </div>
         </form>
+
+        {/* API Import Token Section */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6">
+          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+            <LucideKey className="h-5 w-5 text-indigo-400" />
+            <div>
+              <h2 className="text-lg font-semibold text-white">SMS Import Credentials</h2>
+              <p className="text-xs text-slate-400">Generate access tokens for the automated bank SMS endpoint.</p>
+            </div>
+          </div>
+
+          {tokenError && (
+            <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-semibold text-red-400 border border-red-500/20">
+              <LucideAlertCircle className="h-4 w-4 flex-shrink-0" />
+              {tokenError}
+            </div>
+          )}
+
+          {generatedToken && (
+            <div className="rounded-xl bg-indigo-500/10 border border-indigo-500/20 p-4 space-y-3">
+              <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider">Generated Access Token</p>
+              <div className="flex items-center gap-2 bg-slate-950 p-3 rounded-lg border border-slate-850">
+                <code className="text-xs text-indigo-300 font-mono break-all flex-1 select-all">
+                  {generatedToken}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(generatedToken);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="p-1.5 rounded-md hover:bg-slate-800 text-slate-400 hover:text-white transition-all"
+                  title="Copy to clipboard"
+                >
+                  <LucideCopy className="h-4 w-4" />
+                </button>
+              </div>
+              {copied && <p className="text-[10px] text-emerald-400 font-semibold">✓ Copied to clipboard!</p>}
+              <p className="text-[10px] text-amber-400 leading-normal">
+                ⚠️ {tokenWarning || "Copy this token now! It will not be shown again for security reasons."}
+              </p>
+            </div>
+          )}
+
+          {isLoadingToken ? (
+            <div className="h-20 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-850" />
+          ) : tokenStatus?.isActive ? (
+            <div className="space-y-4">
+              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
+                  <LucideShieldCheck className="h-4 w-4" />
+                  <span>Token Active & Secure</span>
+                </div>
+                <div className="text-[11px] text-slate-400 space-y-1">
+                  {tokenStatus.lastUsedAt && (
+                    <p>
+                      Last Used:{" "}
+                      <span className="text-slate-350">
+                        {new Date(tokenStatus.lastUsedAt).toLocaleString()}
+                      </span>
+                    </p>
+                  )}
+                  {tokenStatus.expiresAt && (
+                    <p>
+                      Expires:{" "}
+                      <span className="text-slate-350">
+                        {new Date(tokenStatus.expiresAt).toLocaleDateString()}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to rotate this token? The previous token will stop working immediately.")) {
+                      rotateTokenMutation.mutate();
+                    }
+                  }}
+                  disabled={rotateTokenMutation.isPending}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  <LucideRotateCw className={`h-3.5 w-3.5 ${rotateTokenMutation.isPending ? "animate-spin" : ""}`} />
+                  Rotate
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to revoke this token? SMS imports will fail until a new token is generated.")) {
+                      revokeTokenMutation.mutate();
+                    }
+                  }}
+                  disabled={revokeTokenMutation.isPending}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  <LucideTrash2 className="h-3.5 w-3.5" />
+                  Revoke
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400 leading-normal">
+                No active import token generated. Generate a token to connect external iOS Shortcuts or bank webhooks.
+              </p>
+              <button
+                type="button"
+                onClick={() => generateTokenMutation.mutate()}
+                disabled={generateTokenMutation.isPending}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-500 shadow-md shadow-indigo-600/20 disabled:opacity-50"
+              >
+                <LucideKey className="h-4 w-4" />
+                {generateTokenMutation.isPending ? "Generating..." : "Generate Token"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
