@@ -42,12 +42,21 @@ if (process.env.NODE_ENV !== "production") {
       throw new Error("PRODUCTION_STARTUP_FAILED: Redis is selected as rate limit provider but UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN is missing.");
     }
   } else {
-    throw new Error("PRODUCTION_STARTUP_FAILED: Memory rate limiting is not allowed in multi-instance production. RATE_LIMIT_PROVIDER must be set to 'redis'.");
+    console.warn("WARNING: Running with in-memory rate limiting in production. Rate limits will not be shared across serverless function instances.");
   }
 
   // Storage Gating
-  if (process.env.STORAGE_TYPE !== "s3" && process.env.STORAGE_TYPE !== "r2") {
-    throw new Error("PRODUCTION_STARTUP_FAILED: Local filesystem attachments are not allowed in production. STORAGE_TYPE must be set to 's3' or 'r2'.");
+  if (process.env.STORAGE_TYPE === "s3" || process.env.STORAGE_TYPE === "r2") {
+    const storageMissing = [];
+    if (!process.env.STORAGE_S3_BUCKET) storageMissing.push("STORAGE_S3_BUCKET");
+    if (!process.env.STORAGE_S3_REGION) storageMissing.push("STORAGE_S3_REGION");
+    if (!process.env.STORAGE_S3_ACCESS_KEY_ID) storageMissing.push("STORAGE_S3_ACCESS_KEY_ID");
+    if (!process.env.STORAGE_S3_SECRET_ACCESS_KEY) storageMissing.push("STORAGE_S3_SECRET_ACCESS_KEY");
+    if (storageMissing.length > 0) {
+      throw new Error(`PRODUCTION_STARTUP_FAILED: Missing required storage environment variables: ${storageMissing.join(", ")}`);
+    }
+  } else {
+    console.warn("WARNING: Local filesystem storage is active in production. Attachments will be transient and not persist across serverless function recycles.");
   }
 
   // AUTH_SECRET Strength check
