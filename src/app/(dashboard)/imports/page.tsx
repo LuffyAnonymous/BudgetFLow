@@ -46,40 +46,77 @@ interface ImportDetail extends ImportItem {
   parserVersion: string | null;
 }
 
+export function normalizeCategories(json: any): any[] {
+  if (!json) return [];
+  if (json.data && Array.isArray(json.data)) {
+    return json.data;
+  }
+  if (Array.isArray(json)) {
+    return json;
+  }
+  return [];
+}
+
+export function normalizeImportsList(json: any): any[] {
+  if (!json) return [];
+  if (json.data && json.data.items && Array.isArray(json.data.items)) {
+    return json.data.items;
+  }
+  if (json.data && Array.isArray(json.data)) {
+    return json.data;
+  }
+  if (Array.isArray(json)) {
+    return json;
+  }
+  return [];
+}
+
 export default function ImportsPage() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmCategoryId, setConfirmCategoryId] = useState<string>("");
   const [confirmDate, setConfirmDate] = useState<string>("");
 
-  const { data: reviewItems = [], isLoading } = useQuery<ImportItem[]>({
+  const { data: reviewItems = [], isLoading, error: listError } = useQuery<ImportItem[]>({
     queryKey: ["imports", "review_required"],
     queryFn: async () => {
       const res = await fetch("/api/imports/sms/list?status=REVIEW_REQUIRED&pageSize=50");
       const json = await res.json();
-      return json.data?.items ?? [];
+      if (!res.ok) {
+        throw new Error(json.error?.message || "Failed to load pending imports");
+      }
+      return normalizeImportsList(json);
     },
   });
 
-  const { data: detail } = useQuery<ImportDetail>({
+  const { data: detail, error: detailError } = useQuery<ImportDetail>({
     queryKey: ["import-detail", selectedId],
     queryFn: async () => {
       const res = await fetch(`/api/imports/sms/${selectedId}`);
       const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error?.message || "Failed to load import detail");
+      }
       return json.data;
     },
     enabled: !!selectedId,
   });
 
-  const { data: categories = [] } = useQuery<{ id: string; name: string; type: string }[]>({
+  const { data: categories = [], error: categoriesError } = useQuery<{ id: string; name: string; type: string }[]>({
     queryKey: ["categories"],
     queryFn: async () => {
       const res = await fetch("/api/categories");
-      return res.json();
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error?.message || "Failed to load categories");
+      }
+      return normalizeCategories(json);
     },
   });
 
-  const incomeCategories = categories.filter((c) => c.type === "INCOME");
+  const incomeCategories = Array.isArray(categories)
+    ? categories.filter((c) => c.type === "INCOME")
+    : [];
 
   const confirmMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -118,7 +155,7 @@ export default function ImportsPage() {
     },
   });
 
-
+  const pageError = listError || categoriesError || detailError;
 
   return (
     <div className="space-y-6">
@@ -127,6 +164,13 @@ export default function ImportsPage() {
         description="Review and confirm salary imports before they become transactions."
       />
 
+      {pageError && (
+        <div className="flex items-center gap-2 rounded-lg bg-rose-500/10 border border-rose-500/20 p-3 text-sm text-rose-400">
+          <LucideAlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{pageError.message}</span>
+        </div>
+      )}
+
       {isLoading && (
         <div className="flex items-center gap-2 text-slate-400 py-8">
           <LucideRefreshCw className="h-4 w-4 animate-spin" />
@@ -134,7 +178,7 @@ export default function ImportsPage() {
         </div>
       )}
 
-      {!isLoading && reviewItems.length === 0 && (
+      {!isLoading && (!Array.isArray(reviewItems) || reviewItems.length === 0) && (
         <div className="flex flex-col items-center gap-3 py-16 text-center text-slate-500">
           <LucideInbox className="h-10 w-10" />
           <p className="text-sm">No imports pending review.</p>
@@ -144,7 +188,7 @@ export default function ImportsPage() {
       <div className="grid gap-4 md:grid-cols-2">
         {/* List */}
         <div className="space-y-3">
-          {reviewItems.map((item) => (
+          {Array.isArray(reviewItems) && reviewItems.map((item) => (
             <button
               key={item.id}
               onClick={() => {
@@ -315,7 +359,7 @@ export default function ImportsPage() {
                   className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 >
                   <option value="">Use configured Salary category</option>
-                  {incomeCategories.map((c) => (
+                  {Array.isArray(incomeCategories) && incomeCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
