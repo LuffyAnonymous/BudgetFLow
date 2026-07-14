@@ -6,20 +6,25 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Starting database seeding...");
 
-  // 1. Clean existing data (in reverse order of dependencies)
-  await prisma.setting.deleteMany({});
-  await prisma.savingTransaction.deleteMany({});
-  await prisma.savingGoal.deleteMany({});
-  await prisma.debtPayment.deleteMany({});
-  await prisma.debt.deleteMany({});
-  await prisma.remittance.deleteMany({});
-  await prisma.transaction.deleteMany({});
-  await prisma.budget.deleteMany({});
-  await prisma.category.deleteMany({});
-  await prisma.account.deleteMany({});
-  await prisma.user.deleteMany({});
+  const isProduction = process.env.NODE_ENV === "production";
 
-  console.log("Cleared existing data.");
+  if (!isProduction) {
+    // 1. Clean existing data (in reverse order of dependencies)
+    await prisma.setting.deleteMany({});
+    await prisma.savingTransaction.deleteMany({});
+    await prisma.savingGoal.deleteMany({});
+    await prisma.debtPayment.deleteMany({});
+    await prisma.debt.deleteMany({});
+    await prisma.remittance.deleteMany({});
+    await prisma.transaction.deleteMany({});
+    await prisma.budget.deleteMany({});
+    await prisma.category.deleteMany({});
+    await prisma.account.deleteMany({});
+    await prisma.user.deleteMany({});
+    console.log("Cleared existing data.");
+  } else {
+    console.log("Production environment detected: skipping database clearance.");
+  }
 
   // 2. Load and validate seed credentials from environment variables
   const seedEmail = process.env.SEED_USER_EMAIL;
@@ -32,28 +37,41 @@ async function main() {
     );
   }
 
-  const passwordHash = bcrypt.hashSync(seedPassword, 10);
-  const user = await prisma.user.create({
-    data: {
-      email: seedEmail,
+  const normalizedEmail = seedEmail.trim().toLowerCase();
+  const passwordHash = await bcrypt.hash(seedPassword, 12);
+  const user = await prisma.user.upsert({
+    where: { email: normalizedEmail },
+    update: {
+      name: seedName,
+      passwordHash,
+    },
+    create: {
+      email: normalizedEmail,
       passwordHash,
       name: seedName,
     },
   });
-  console.log(`Created user: ${user.email}`);
+  console.log(`Seeded user: ${user.email}`);
 
-  // 3. Create settings for user
-  await prisma.setting.create({
-    data: {
-      userId: user.id,
-      monthlySalary: 5750.00,
-      payday: 25,
-      currency: "AED",
-      theme: "system",
-      notificationPref: {},
-    },
+  // 3. Create settings for user if missing
+  const existingSetting = await prisma.setting.findFirst({
+    where: { userId: user.id },
   });
-  console.log("Created settings.");
+  if (!existingSetting) {
+    await prisma.setting.create({
+      data: {
+        userId: user.id,
+        monthlySalary: 5750.00,
+        payday: 25,
+        currency: "AED",
+        theme: "system",
+        notificationPref: {},
+      },
+    });
+    console.log("Created settings.");
+  } else {
+    console.log("Settings already exist for user.");
+  }
 
   // 4. Create default categories
   const categoriesData = [
@@ -78,8 +96,18 @@ async function main() {
 
   const categoriesMap: Record<string, string> = {};
   for (const cat of categoriesData) {
-    const createdCat = await prisma.category.create({
-      data: {
+    const createdCat = await prisma.category.upsert({
+      where: {
+        userId_name: {
+          userId: user.id,
+          name: cat.name,
+        },
+      },
+      update: {
+        type: cat.type,
+        budgetGroupKey: cat.budgetGroupKey,
+      },
+      create: {
         name: cat.name,
         type: cat.type,
         budgetGroupKey: cat.budgetGroupKey,
@@ -90,7 +118,7 @@ async function main() {
   }
   console.log(`Seeded ${categoriesData.length} categories.`);
 
-  const isProduction = process.env.NODE_ENV === "production";
+
 
   if (!isProduction) {
     // 5. Create budget allocations for the current month
