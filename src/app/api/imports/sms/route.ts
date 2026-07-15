@@ -182,20 +182,77 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   });
 
   // ── 8. Run import engine ─────────────────────────────────────────────────────
-  const result = await importService.processSms(userId, {
-    sender,
-    message,
-    receivedAt,
-    deviceId,
-    idempotencyKey,
-  });
+  let result;
+  try {
+    result = await importService.processSms(userId, {
+      sender,
+      message,
+      receivedAt,
+      deviceId,
+      idempotencyKey,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Internal server error";
+    console.error("[SMS Webhook Debug] 500 Internal Server Error in processSms", {
+      sender,
+      messageLength: message.length,
+      error: errorMsg,
+    });
+    return NextResponse.json(
+      {
+        success: false,
+        outcome: "failed",
+        error: "Internal server error occurred during import processing",
+        reason: errorMsg,
+      },
+      { status: 500 }
+    );
+  }
 
   if (result.outcome === "disabled") {
     return NextResponse.json(
-      { error: "Import engine is not enabled for this account" },
+      {
+        success: false,
+        outcome: "disabled",
+        reason: "Import engine is not enabled for this account",
+        error: "Import engine is not enabled for this account",
+      },
       { status: 503 }
     );
   }
 
-  return NextResponse.json({ data: result }, { status: 200 });
+  // Outcome mapping for success & HTTP status
+  let status = 200;
+  let success = true;
+  let reason: string | undefined = undefined;
+  let importedTransactionId: string | undefined = undefined;
+
+  if (result.outcome === "rejected") {
+    status = 422;
+    success = false;
+    reason = "reason" in result ? result.reason : "No supported parser matched the SMS format";
+  } else if (result.outcome === "review_required") {
+    status = 202;
+    success = true;
+    reason = "The SMS could not be parsed automatically";
+    importedTransactionId = "importedTransactionId" in result ? result.importedTransactionId : undefined;
+  } else {
+    // auto_posted, duplicate, idempotent, ignored, pending_event
+    importedTransactionId = "importedTransactionId" in result ? result.importedTransactionId : undefined;
+    if (result.outcome === "ignored") {
+      reason = "reason" in result ? result.reason : "Message was ignored";
+    }
+  }
+
+  return NextResponse.json(
+    {
+      success,
+      outcome: result.outcome,
+      reason,
+      error: !success ? reason : undefined,
+      importedTransactionId,
+      data: result, // Keep for backward compatibility with E2E and unit tests
+    },
+    { status }
+  );
 }

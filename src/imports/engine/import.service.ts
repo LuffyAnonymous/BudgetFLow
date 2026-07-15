@@ -55,182 +55,202 @@ export type ImportResult =
 export class ImportService {
   async processSms(userId: string, payload: SmsWebhookPayload): Promise<ImportResult> {
     const { sender, message, receivedAt, deviceId, idempotencyKey } = payload;
+    const payloadHash = sha256(message);
+    const hashPrefix = payloadHash.slice(0, 10);
+    const messageLength = message.length;
 
-    const importSetting = await db.importSetting.findUnique({ where: { userId } });
-    if (!importSetting || !importSetting.enabled) {
-      return { outcome: "disabled" };
-    }
-
-    if (idempotencyKey) {
-      const existing = await db.importedTransaction.findUnique({
-        where: { userId_idempotencyKey: { userId, idempotencyKey } },
-        select: { id: true },
-      });
-      if (existing) {
-        return { outcome: "idempotent", importedTransactionId: existing.id };
-      }
-    }
-
-    const bank = normalizeSender(sender);
-    if (!bank) {
-      return { outcome: "ignored", reason: "Sender not recognized" };
-    }
-
-    const selectionResult = smsParserRegistry.select(sender, message, importSetting.senderAllowlist);
-    if (selectionResult.outcome === "no_match" || selectionResult.outcome === "ambiguous") {
-      const redacted = redactFinancialText(message);
-      const payloadHash = sha256(message);
-      const maskedSenderValue = maskSender(sender);
-      const reason = selectionResult.outcome === "ambiguous" ? "Ambiguous parsers matched" : selectionResult.reason;
-
-      await db.auditLog.create({
-        data: {
-          userId,
-          action: AuditAction.SMS_IMPORT_REJECTED,
-          entityType: AuditEntityType.IMPORTED_TRANSACTION,
-          entityId: "none",
-          source: "SMS_WEBHOOK",
-          metadata: { maskedSender: maskedSenderValue, payloadHash, redactedMessage: redacted, reason },
-        },
-      });
-      return { outcome: "rejected", reason };
-    }
-
-    const parser = selectionResult.parser;
-    let normalized: NormalizedSmsTransaction;
-    try {
-      normalized = parser.parse(sender, message, receivedAt);
-    } catch (err) {
-      return { outcome: "rejected", reason: err instanceof Error ? err.message : "Parsing execution failed" };
-    }
-
-    const maskedSenderValue = maskSender(sender);
-    const fingerprint = buildFingerprint(normalized, maskedSenderValue);
-    const existingByFingerprint = await db.importedTransaction.findUnique({
-      where: { userId_fingerprint: { userId, fingerprint } },
-      select: { id: true },
+    console.log("[Import Service] Starting SMS processing", {
+      sender,
+      messageLength,
+      hashPrefix,
+      hasIdempotencyKey: !!idempotencyKey,
     });
 
-    if (existingByFingerprint) {
-      await db.importedTransaction.update({
-        where: { id: existingByFingerprint.id },
-        data: { duplicateCount: { increment: 1 }, lastDuplicateAt: new Date() },
-      });
-      return { outcome: "duplicate", importedTransactionId: existingByFingerprint.id };
-    }
-
-    const direction = classifyDirection(message, bank);
-    if (direction === TransactionDirection.DECLINED || direction === TransactionDirection.INFORMATIONAL || direction === TransactionDirection.PENDING) {
-      const status = direction === TransactionDirection.DECLINED ? ImportStatus.PROCESSED : ImportStatus.REJECTED;
-      const outcome = direction === TransactionDirection.PENDING ? "pending_event" : "ignored";
-      const failureCode = direction === TransactionDirection.PENDING ? "PENDING_TRANSACTION" : "INFORMATIONAL_MESSAGE";
-      const failureMessage = direction === TransactionDirection.PENDING ? "Pending transactions are not posted." : "Informational messages are ignored.";
-      
-      const importedTx = await db.importedTransaction.create({
-        data: {
-          source: ImportSource.SMS,
-          institution: normalized.institution,
-          status,
-          parserKey: normalized.parserKey,
-          parserVersion: normalized.parserVersion,
-          redactedPayload: normalized.redactedMessage,
-          rawPayload: message,
-          deviceId: deviceId ?? null,
-          payloadHash: normalized.payloadHash,
-          maskedSender: maskedSenderValue,
-          parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
-          parsedCurrency: normalized.currency,
-          parsedReference: normalized.reference,
-          fingerprint,
-          receivedAt,
-          financialDate: receivedAt,
-          idempotencyKey: idempotencyKey ?? null,
-          userId,
-          failureCode: status === ImportStatus.REJECTED ? failureCode : null,
-          failureMessage: status === ImportStatus.REJECTED ? failureMessage : null,
-        },
-      });
-      
-      // Update balance if available, even for ignored messages
-      await this.syncBalance(userId, bank, normalized.availableBalance, direction, null, receivedAt);
-
-      if (outcome === "pending_event") return { outcome: "pending_event", importedTransactionId: importedTx.id };
-      return { outcome: "ignored" };
-    }
-
-    const category = categorizeMerchant(normalized.merchant);
-    const confidenceScore = evaluateConfidence(
-      normalized.amount.greaterThan(0),
-      direction,
-      category,
-      !!normalized.reference,
-      !!normalized.availableBalance
-    );
-
-    const confidence = confidenceScore >= 90 ? ImportConfidence.HIGH 
-                     : confidenceScore >= 70 ? ImportConfidence.MEDIUM 
-                     : ImportConfidence.LOW;
-
-    const dubaiMs = normalized.transactionDate.getTime() + DUBAI_OFFSET_HOURS * 60 * 60 * 1000;
-    const d = new Date(dubaiMs);
-    const financialDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-
-    // Transfer matching
-    let matchedTransferId: string | null = null;
-    if (confidence !== ImportConfidence.LOW) {
-        matchedTransferId = await matchInternalTransfer(
-            userId,
-            normalized.amount,
-            financialDate,
-            bank,
-            direction === TransactionDirection.INFLOW,
-            normalized.reference
-        );
-    }
-
-    if (confidence === ImportConfidence.LOW) {
-      const importedTx = await db.importedTransaction.create({
-        data: {
-          source: ImportSource.SMS,
-          institution: normalized.institution,
-          status: ImportStatus.REVIEW_REQUIRED,
-          confidence,
-          parserKey: normalized.parserKey,
-          parserVersion: normalized.parserVersion,
-          redactedPayload: normalized.redactedMessage,
-          rawPayload: message,
-          deviceId: deviceId ?? null,
-          payloadHash: normalized.payloadHash,
-          maskedSender: maskedSenderValue,
-          parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
-          parsedCurrency: normalized.currency,
-          parsedReference: normalized.reference,
-          parsedDescription: normalized.merchant || "Unknown",
-          fingerprint,
-          receivedAt,
-          financialDate,
-          idempotencyKey: idempotencyKey ?? null,
-          failureCode: "LOW_CONFIDENCE",
-          userId,
-        },
-      });
-
-      await this.syncBalance(userId, bank, normalized.availableBalance, direction, null, receivedAt);
-
-      return { outcome: "review_required", importedTransactionId: importedTx.id, parsedAmount: normalized.amount.toFixed(2), currency: normalized.currency };
-    }
-
-    // Auto-Post
     try {
+      const importSetting = await db.importSetting.findUnique({ where: { userId } });
+      if (!importSetting || !importSetting.enabled) {
+        console.log("[Import Service] Import disabled for user", { userId });
+        return { outcome: "disabled" };
+      }
+
+      if (idempotencyKey) {
+        const existing = await db.importedTransaction.findUnique({
+          where: { userId_idempotencyKey: { userId, idempotencyKey } },
+          select: { id: true },
+        });
+        if (existing) {
+          console.log("[Import Service] Idempotent request detected", { idempotencyKey });
+          return { outcome: "idempotent", importedTransactionId: existing.id };
+        }
+      }
+
+      const bank = normalizeSender(sender);
+      if (!bank) {
+        console.log("[Import Service] Sender not recognized", { sender });
+        return { outcome: "ignored", reason: "Sender not recognized" };
+      }
+
+      console.log("[Import Service] Stage: Selecting parser", { bank });
+      const selectionResult = smsParserRegistry.select(sender, message, importSetting.senderAllowlist);
+      if (selectionResult.outcome === "no_match" || selectionResult.outcome === "ambiguous") {
+        const redacted = redactFinancialText(message);
+        const maskedSenderValue = maskSender(sender);
+        const reason = selectionResult.outcome === "ambiguous" ? "Ambiguous parsers matched" : selectionResult.reason;
+
+        console.log("[Import Service] Parser selection rejected", { outcome: selectionResult.outcome, reason });
+
+        await db.auditLog.create({
+          data: {
+            userId,
+            action: AuditAction.SMS_IMPORT_REJECTED,
+            entityType: AuditEntityType.IMPORTED_TRANSACTION,
+            entityId: "none",
+            source: "SMS_WEBHOOK",
+            metadata: { maskedSender: maskedSenderValue, payloadHash, redactedMessage: redacted, reason },
+          },
+        });
+        return { outcome: "rejected", reason };
+      }
+
+      const parser = selectionResult.parser;
+      console.log("[Import Service] Stage: Parsing message", { parserKey: parser.parserKey });
+      let normalized: NormalizedSmsTransaction;
+      try {
+        normalized = parser.parse(sender, message, receivedAt);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Parsing execution failed";
+        console.log("[Import Service] Parser parse threw exception", { parserKey: parser.parserKey, errMsg });
+        return { outcome: "rejected", reason: errMsg };
+      }
+
+      const maskedSenderValue = maskSender(sender);
+      const fingerprint = buildFingerprint(normalized, maskedSenderValue);
+      const existingByFingerprint = await db.importedTransaction.findUnique({
+        where: { userId_fingerprint: { userId, fingerprint } },
+        select: { id: true },
+      });
+
+      if (existingByFingerprint) {
+        console.log("[Import Service] Duplicate transaction detected by fingerprint", { fingerprintPrefix: fingerprint.slice(0, 10) });
+        await db.importedTransaction.update({
+          where: { id: existingByFingerprint.id },
+          data: { duplicateCount: { increment: 1 }, lastDuplicateAt: new Date() },
+        });
+        return { outcome: "duplicate", importedTransactionId: existingByFingerprint.id };
+      }
+
+      console.log("[Import Service] Stage: Classifying direction");
+      const direction = classifyDirection(message, bank);
+      if (direction === TransactionDirection.DECLINED || direction === TransactionDirection.INFORMATIONAL || direction === TransactionDirection.PENDING) {
+        const status = direction === TransactionDirection.DECLINED ? ImportStatus.PROCESSED : ImportStatus.REJECTED;
+        const outcome = direction === TransactionDirection.PENDING ? "pending_event" : "ignored";
+        const failureCode = direction === TransactionDirection.PENDING ? "PENDING_TRANSACTION" : "INFORMATIONAL_MESSAGE";
+        const failureMessage = direction === TransactionDirection.PENDING ? "Pending transactions are not posted." : "Informational messages are ignored.";
+        
+        console.log("[Import Service] Ignored or pending message processed", { direction, status });
+        const importedTx = await db.importedTransaction.create({
+          data: {
+            source: ImportSource.SMS,
+            institution: normalized.institution,
+            status,
+            parserKey: normalized.parserKey,
+            parserVersion: normalized.parserVersion,
+            redactedPayload: normalized.redactedMessage,
+            rawPayload: message,
+            deviceId: deviceId ?? null,
+            payloadHash: normalized.payloadHash,
+            maskedSender: maskedSenderValue,
+            parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
+            parsedCurrency: normalized.currency,
+            parsedReference: normalized.reference,
+            fingerprint,
+            receivedAt,
+            financialDate: receivedAt,
+            idempotencyKey: idempotencyKey ?? null,
+            userId,
+            failureCode: status === ImportStatus.REJECTED ? failureCode : null,
+            failureMessage: status === ImportStatus.REJECTED ? failureMessage : null,
+          },
+        });
+        
+        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null, receivedAt);
+
+        if (outcome === "pending_event") return { outcome: "pending_event", importedTransactionId: importedTx.id };
+        return { outcome: "ignored" };
+      }
+
+      console.log("[Import Service] Stage: Categorizing merchant");
+      const category = categorizeMerchant(normalized.merchant);
+      const confidenceScore = evaluateConfidence(
+        normalized.amount.greaterThan(0),
+        direction,
+        category,
+        !!normalized.reference,
+        !!normalized.availableBalance
+      );
+
+      const confidence = confidenceScore >= 90 ? ImportConfidence.HIGH 
+                       : confidenceScore >= 70 ? ImportConfidence.MEDIUM 
+                       : ImportConfidence.LOW;
+
+      const dubaiMs = normalized.transactionDate.getTime() + DUBAI_OFFSET_HOURS * 60 * 60 * 1000;
+      const d = new Date(dubaiMs);
+      const financialDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+
+      console.log("[Import Service] Stage: Match internal transfer", { confidence });
+      let matchedTransferId: string | null = null;
+      if (confidence !== ImportConfidence.LOW) {
+          matchedTransferId = await matchInternalTransfer(
+              userId,
+              normalized.amount,
+              financialDate,
+              bank,
+              direction === TransactionDirection.INFLOW,
+              normalized.reference
+          );
+      }
+
+      if (confidence === ImportConfidence.LOW) {
+        console.log("[Import Service] Stage: Saving low confidence import");
+        const importedTx = await db.importedTransaction.create({
+          data: {
+            source: ImportSource.SMS,
+            institution: normalized.institution,
+            status: ImportStatus.REVIEW_REQUIRED,
+            confidence,
+            parserKey: normalized.parserKey,
+            parserVersion: normalized.parserVersion,
+            redactedPayload: normalized.redactedMessage,
+            rawPayload: message,
+            deviceId: deviceId ?? null,
+            payloadHash: normalized.payloadHash,
+            maskedSender: maskedSenderValue,
+            parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
+            parsedCurrency: normalized.currency,
+            parsedReference: normalized.reference,
+            parsedDescription: normalized.merchant || "Unknown",
+            fingerprint,
+            receivedAt,
+            financialDate,
+            idempotencyKey: idempotencyKey ?? null,
+            failureCode: "LOW_CONFIDENCE",
+            userId,
+          },
+        });
+
+        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null, receivedAt);
+
+        return { outcome: "review_required", importedTransactionId: importedTx.id, parsedAmount: normalized.amount.toFixed(2), currency: normalized.currency };
+      }
+
+      console.log("[Import Service] Stage: Executing auto-post transaction");
       const result = await db.$transaction(async (tx) => {
         await accountService.ensureDefaultAccounts(userId, tx);
         const accounts = await tx.account.findMany({ where: { userId } });
         const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
         const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ)!;
-        const cashAcc = accounts.find((a) => a.type === AccountType.CASH)!;
         const primaryAccId = bank === SupportedBank.MASHREQ ? mashreqAcc.id : enbdAcc.id;
 
-        // Sync Balance first
         await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx);
 
         let ledgerTxId: string;
@@ -250,7 +270,6 @@ export class ImportService {
                 txType = TransactionType.TRANSFER;
             }
 
-            // Map category string to actual category id
             const dbCategory = await tx.category.findFirst({
               where: { userId, name: { equals: category, mode: "insensitive" } }
             }) || await tx.category.findFirst({
@@ -309,8 +328,11 @@ export class ImportService {
         return { importedTxId: importedTx.id, ledgerTxId };
       });
 
+      console.log("[Import Service] SMS auto-posted successfully", { importedTxId: result.importedTxId });
       return { outcome: "auto_posted", importedTransactionId: result.importedTxId, transactionId: result.ledgerTxId };
     } catch (err) {
+      const errorObj = err instanceof Error ? { message: err.message, stack: err.stack } : { message: String(err) };
+      console.error("[Import Service] Exception during processSms:", errorObj);
       throw err;
     }
   }
