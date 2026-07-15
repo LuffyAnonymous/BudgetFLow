@@ -46,7 +46,23 @@ export class ObjectStorageProvider extends StorageProvider {
     if (!accessKeyId) missing.push("STORAGE_S3_ACCESS_KEY_ID");
     if (!secretAccessKey) missing.push("STORAGE_S3_SECRET_ACCESS_KEY");
 
+    const isBuildPhase =
+      process.env.NEXT_PHASE === "phase-production-build" ||
+      process.env.IS_NEXT_BUILD === "true" ||
+      process.env.CI === "true" ||
+      process.env.VERCEL === "1";
     if (missing.length > 0) {
+      if (isBuildPhase) {
+        this.bucket = "dummy-bucket";
+        this.s3Client = new S3Client({
+          region: "us-east-1",
+          credentials: {
+            accessKeyId: "dummy-key",
+            secretAccessKey: "dummy-secret",
+          },
+        });
+        return;
+      }
       throw new Error(
         `STORAGE_CONFIG_MISSING: Object storage is not fully configured. ` +
         `The following environment variables are required: ${missing.join(", ")}. ` +

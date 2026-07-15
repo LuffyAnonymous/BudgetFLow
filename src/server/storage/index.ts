@@ -15,10 +15,9 @@ let _provider: StorageProvider | null = null;
 export function getStorageProvider(): StorageProvider {
   if (_provider) return _provider;
 
-  const env = process.env.NODE_ENV;
   const storageType = process.env.STORAGE_TYPE;
 
-  if ((env as string) === "production" || storageType === "s3") {
+  if (storageType === "s3" || storageType === "r2") {
     _provider = new ObjectStorageProvider();
   } else {
     _provider = new LocalStorageProvider();

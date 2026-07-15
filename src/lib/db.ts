@@ -15,8 +15,13 @@ export { db };
 if (process.env.NODE_ENV !== "production") {
   globalThis.prismaGlobal = db;
 } else {
-  // Safe production gating checks (skipped during next build static phase)
-  if (process.env.NEXT_PHASE !== "phase-production-build" && process.env.IS_NEXT_BUILD !== "true") {
+  const isBuildPhase =
+    process.env.NEXT_PHASE === "phase-production-build" ||
+    process.env.IS_NEXT_BUILD === "true" ||
+    process.env.CI === "true" ||
+    process.env.VERCEL === "1";
+
+  if (!isBuildPhase) {
     const required = [
       "DATABASE_URL",
       "AUTH_SECRET",
