@@ -29,6 +29,17 @@ export function classifyDirection(
     return TransactionDirection.INFORMATIONAL;
   }
 
+  // Inflow (Check this first to catch "received a transfer" before just "transfer")
+  if (
+    lowerMsg.includes("credited") ||
+    lowerMsg.includes("salary") ||
+    lowerMsg.includes("refund") ||
+    lowerMsg.includes("deposited") ||
+    lowerMsg.includes("received")
+  ) {
+    return TransactionDirection.INFLOW;
+  }
+
   // Outflow
   if (
     lowerMsg.includes("purchase") ||
@@ -40,16 +51,6 @@ export function classifyDirection(
     lowerMsg.includes("transaction of")
   ) {
     return TransactionDirection.OUTFLOW;
-  }
-
-  // Inflow
-  if (
-    lowerMsg.includes("credited") ||
-    lowerMsg.includes("salary") ||
-    lowerMsg.includes("refund") ||
-    lowerMsg.includes("deposited")
-  ) {
-    return TransactionDirection.INFLOW;
   }
 
   // Default to informational if we can't tell

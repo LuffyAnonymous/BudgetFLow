@@ -100,6 +100,8 @@ export class EmiratesNBDParser implements ISmsParser {
       if (/tabby/i.test(merchant)) {
         merchant = "TABBY";
       }
+    } else if (/salary/i.test(message)) {
+      merchant = "Salary";
     }
 
     // 6. Determine Reference

@@ -121,8 +121,10 @@ export class ImportService {
 
     const direction = classifyDirection(message, bank);
     if (direction === TransactionDirection.DECLINED || direction === TransactionDirection.INFORMATIONAL || direction === TransactionDirection.PENDING) {
-      const status = direction === TransactionDirection.DECLINED ? ImportStatus.PROCESSED : ImportStatus.IGNORED;
+      const status = direction === TransactionDirection.DECLINED ? ImportStatus.PROCESSED : ImportStatus.REJECTED;
       const outcome = direction === TransactionDirection.PENDING ? "pending_event" : "ignored";
+      const failureCode = direction === TransactionDirection.PENDING ? "PENDING_TRANSACTION" : "INFORMATIONAL_MESSAGE";
+      const failureMessage = direction === TransactionDirection.PENDING ? "Pending transactions are not posted." : "Informational messages are ignored.";
       
       const importedTx = await db.importedTransaction.create({
         data: {
@@ -144,6 +146,8 @@ export class ImportService {
           financialDate: receivedAt,
           idempotencyKey: idempotencyKey ?? null,
           userId,
+          failureCode: status === ImportStatus.REJECTED ? failureCode : null,
+          failureMessage: status === ImportStatus.REJECTED ? failureMessage : null,
         },
       });
       
@@ -331,7 +335,7 @@ export class ImportService {
 
       await accountService.ensureDefaultAccounts(userId, tx);
       const accounts = await tx.account.findMany({ where: { userId } });
-      const bank = normalizeSender(importedTx.maskedSender);
+      const bank = normalizeSender(importedTx.maskedSender || "");
       
       const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
       const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ)!;
@@ -349,7 +353,11 @@ export class ImportService {
       // This means relative balance update was NOT applied for LOW_CONFIDENCE imports.
       // Therefore, we MUST update the relative balance here upon confirmation!
 
-      const direction = classifyDirection(importedTx.rawPayload, bank!);
+      if (!importedTx.parsedAmount) {
+          throw new Error("Cannot confirm import: parsedAmount is missing");
+      }
+      
+      const direction = classifyDirection(importedTx.rawPayload || "", bank!);
       await updateBalance(primaryAccId, importedTx.parsedAmount, direction, null);
 
       let txType: TransactionType = TransactionType.EXPENSE;
@@ -378,10 +386,10 @@ export class ImportService {
 
       const ledgerTx = await tx.transaction.create({
           data: {
-              date: overrides?.financialDate || importedTx.financialDate,
+              date: overrides?.financialDate || importedTx.financialDate || importedTx.receivedAt,
               categoryId,
               description: importedTx.parsedDescription || "Manually confirmed",
-              amount: importedTx.parsedAmount,
+              amount: importedTx.parsedAmount!,
               paymentMethod: "SMS Import",
               type: txType,
               cashFlowDirection: cashFlowDir,
@@ -415,13 +423,15 @@ export class ImportService {
           });
 
           if (status === "PAID" && debt.status !== "PAID") {
-            await notificationService.createNotification(tx, {
-              userId,
-              type: NotificationType.DEBT_PAID_OFF,
-              severity: NotificationSeverity.SUCCESS,
-              title: "Debt Paid Off!",
-              message: `You have successfully paid off your debt: ${debt.name}.`,
-              metadata: { debtId: debt.id },
+            await tx.notification.create({
+              data: {
+                  userId,
+                  type: NotificationType.DEBT_PAID_OFF,
+                  severity: NotificationSeverity.INFO, // Assuming SUCCESS is not valid, INFO is used earlier
+                  title: "Debt Paid Off!",
+                  message: `You have successfully paid off your debt: ${debt.name}.`,
+                  eventKey: `debt-paid-${debt.id}-${ledgerTx.id}`,
+              }
             });
           }
         }

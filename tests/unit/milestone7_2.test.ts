@@ -158,7 +158,8 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow (Refactored)", 
     expect(res.outcome).toBe("pending_event");
     if (res.outcome === "pending_event") {
       const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
-      expect(importedTx!.status).toBe(ImportStatus.IGNORED);
+      expect(importedTx!.status).toBe(ImportStatus.REJECTED);
+      expect(importedTx!.failureCode).toBe("PENDING_TRANSACTION");
       expect(importedTx!.transactionId).toBeNull();
     }
   });

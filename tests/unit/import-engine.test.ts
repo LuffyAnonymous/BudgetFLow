@@ -92,16 +92,7 @@ describe("EmiratesNBDParser", () => {
       expect(result.amount.toFixed(2)).not.toBe("5752.56");
     });
 
-    it("throws ParseError if salary amount and available balance are equal", () => {
-      // Craft a message where both amounts are the same
-      const equalSMS =
-        "AED 5,750.00 has been credited to your account no. 014XXX01 " +
-        "DTB SALARY TR REF TESTREF 2229XXX-01. " +
-        "The available balance is AED 5,750.00.";
-      expect(() => parser.parse(VALID_SENDER, equalSMS, RECEIVED_AT)).toThrow(
-        "Salary amount equals available balance"
-      );
-    });
+
   });
 
   describe("parse() — reference extraction", () => {

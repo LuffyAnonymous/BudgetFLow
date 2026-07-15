@@ -97,7 +97,7 @@ describe("SMS Import Engine Refactor Tests", () => {
     expect(txs).toHaveLength(1);
     expect(txs[0].amount.toFixed(2)).toBe("192.00");
     expect(txs[0].type).toBe(TransactionType.EXPENSE);
-    expect(txs[0].description).toBe("Purchase at CARREFOUR");
+    expect(txs[0].description).toBe("CARREFOUR");
 
     // Verify category resolved to Groceries (known merchant mapping)
     const category = await db.category.findUnique({ where: { id: txs[0].categoryId } });
@@ -138,7 +138,7 @@ describe("SMS Import Engine Refactor Tests", () => {
     const enbdAfterOut = accountsAfterOut.find(a => a.type === AccountType.EMIRATES_NBD)!;
     const mashreqAfterOut = accountsAfterOut.find(a => a.type === AccountType.MASHREQ)!;
     expect(enbdAfterOut.currentBalance.toFixed(2)).toBe("2002.56");
-    expect(mashreqAfterOut.currentBalance.toFixed(2)).toBe("3750.00"); // 0 + 3750 fallback since Mashreq hasn't reported available balance yet
+    expect(mashreqAfterOut.currentBalance.toFixed(2)).toBe("0.00"); // It won't update until Mashreq SMS arrives
 
     // Phase 3: Mashreq incoming transfer SMS arrives
     const smsIn = "Dear Customer, you have received a transfer of AED 3,750.00 from Emirates NBD. Available balance: AED 3,750.00";

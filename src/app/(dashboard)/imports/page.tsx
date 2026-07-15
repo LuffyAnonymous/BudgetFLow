@@ -190,7 +190,6 @@ export default function ImportsPage() {
       <div className="flex gap-2 mb-6 border-b border-slate-800 pb-2 overflow-x-auto">
         {[
           { id: "REVIEW_REQUIRED", label: "Review Required" },
-          { id: "PENDING_EVENT,IGNORED", label: "Pending/Ignored" },
           { id: "PROCESSED", label: "Processed" },
           { id: "REJECTED,FAILED", label: "Rejected" },
         ].map((tab) => (

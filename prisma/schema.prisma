@@ -22,8 +22,6 @@ enum ImportStatus {
   PROCESSED
   REJECTED
   FAILED
-  IGNORED
-  PENDING_EVENT
 }
 
 enum ImportConfidence {
