@@ -79,5 +79,14 @@ async function handleUpdate(req: NextRequest): Promise<NextResponse> {
   }
 }
 
+export async function GET(): Promise<NextResponse> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const settings = await importSettingService.getOrCreate(session.user.id);
+  return NextResponse.json({ data: settings });
+}
+
 export const POST = handleUpdate;
 export const PATCH = handleUpdate;

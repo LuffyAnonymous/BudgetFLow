@@ -129,6 +129,36 @@ export function SettingsClient() {
     },
   });
 
+  // Import Settings Query
+  const { data: importSettings, isLoading: isLoadingImportSettings } = useQuery({
+    queryKey: ["import-settings"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/import");
+      const json = await res.json();
+      return json.data; // { enabled: boolean, autoImportSalary: boolean, ... }
+    },
+  });
+
+  // Update Import Settings Mutation
+  const updateImportSettingsMutation = useMutation({
+    mutationFn: async (payload: { enabled: boolean }) => {
+      const res = await fetch("/api/settings/import", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to update import settings");
+      return json.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["import-settings"] });
+    },
+    onError: (err: Error) => {
+      setTokenError(err.message);
+    },
+  });
+
   // Success/Error Indicators
   const [prefSuccess, setPrefSuccess] = useState("");
   const [prefError, setPrefError] = useState("");
@@ -622,6 +652,25 @@ export function SettingsClient() {
               <h2 className="text-lg font-semibold text-white">SMS Import Credentials</h2>
               <p className="text-xs text-slate-400">Generate access tokens for the automated bank SMS endpoint.</p>
             </div>
+          </div>
+
+          {/* Import Engine Toggle */}
+          <div className="flex items-center gap-3 bg-slate-950 p-4 rounded-xl border border-slate-850">
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={importSettings?.enabled ?? false}
+                onChange={(e) => {
+                  updateImportSettingsMutation.mutate({ enabled: e.target.checked });
+                }}
+                disabled={isLoadingImportSettings || updateImportSettingsMutation.isPending}
+                className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500 h-4 w-4 cursor-pointer"
+              />
+              <div>
+                <p className="text-sm font-semibold text-white">Enable Import Engine</p>
+                <p className="text-xs text-slate-400">Allow receiving automated transactions via SMS integrations.</p>
+              </div>
+            </label>
           </div>
 
           {tokenError && (

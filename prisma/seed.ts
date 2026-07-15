@@ -73,6 +73,20 @@ async function main() {
     console.log("Settings already exist for user.");
   }
 
+  // Create or update import settings for user, enabling the import engine by default for admin
+  await prisma.importSetting.upsert({
+    where: { userId: user.id },
+    create: {
+      userId: user.id,
+      enabled: true,
+      senderAllowlist: ["ENBD", "MASHREQ"],
+    },
+    update: {
+      enabled: true,
+    },
+  });
+  console.log("Seeded import settings (enabled: true) for admin.");
+
   // 4. Create default categories
   const categoriesData = [
     // Income
