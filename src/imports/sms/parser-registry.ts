@@ -66,12 +66,8 @@ export class SmsParserRegistry {
     senderAllowlist: string[]
   ): ParserSelectionResult {
     // ── 1. Sender allowlist check ─────────────────────────────────────────
-    console.log(
-      `[sms-webhook] Running sender matching. Incoming: "${sender}", Canonical: "${getCanonicalSender(sender)}". Allowed (raw):`,
-      senderAllowlist
-    );
-
     const incomingCanonical = getCanonicalSender(sender);
+    const normalizedAllowlist = senderAllowlist.map((allowed) => getCanonicalSender(allowed));
     const senderTrusted =
       senderAllowlist.length === 0
         ? false
@@ -83,6 +79,14 @@ export class SmsParserRegistry {
               allowedCanonical.includes(incomingCanonical)
             );
           });
+
+    console.log(`[sms-webhook] Sender check:`, {
+      incomingSender: sender,
+      normalizedSender: incomingCanonical,
+      configuredAllowlist: senderAllowlist,
+      normalizedAllowlist: normalizedAllowlist,
+      finalComparisonResult: senderTrusted,
+    });
 
     if (!senderTrusted) {
       return {

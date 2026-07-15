@@ -83,6 +83,7 @@ async function main() {
     },
     update: {
       enabled: true,
+      senderAllowlist: ["ENBD", "MASHREQ"],
     },
   });
   console.log("Seeded import settings (enabled: true) for admin.");
