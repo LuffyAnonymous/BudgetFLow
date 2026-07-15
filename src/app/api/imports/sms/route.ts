@@ -41,7 +41,7 @@ const MAX_BODY_BYTES = 10 * 1024; // 10 KB
 const SmsWebhookBodySchema = z.object({
   sender: z.string().trim().min(1).max(100),
   message: z.string().trim().min(1).max(2000),
-  receivedAt: z.string().datetime({ offset: true }),
+  receivedAt: z.string().nullish(),
   deviceId: z.string().max(100).nullish(),
 });
 
@@ -106,15 +106,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const { sender, message, receivedAt: receivedAtStr, deviceId } = parsed.data;
 
   // ── 6. Timestamp freshness check ─────────────────────────────────────────────
-  const receivedAt = new Date(receivedAtStr);
-  if (isNaN(receivedAt.getTime())) {
-    return NextResponse.json({ error: "Invalid receivedAt timestamp" }, { status: 400 });
-  }
-  if (receivedAt.getTime() > Date.now() + FUTURE_TOLERANCE_MS) {
-    return NextResponse.json(
-      { error: "receivedAt timestamp is too far in the future" },
-      { status: 400 }
-    );
+  let receivedAt: Date;
+  if (!receivedAtStr || receivedAtStr.trim() === "") {
+    receivedAt = new Date();
+  } else {
+    const parsedDate = new Date(receivedAtStr);
+    if (isNaN(parsedDate.getTime())) {
+      console.warn(
+        `[sms-webhook]\n\nInvalid receivedAt.\n\nOriginal value:\n${receivedAtStr}\n\nUsing server timestamp instead.`
+      );
+      receivedAt = new Date();
+    } else if (parsedDate.getTime() > Date.now() + FUTURE_TOLERANCE_MS) {
+      console.warn(
+        `[sms-webhook]\n\nInvalid receivedAt.\n\nOriginal value:\n${receivedAtStr}\n\nUsing server timestamp instead.`
+      );
+      receivedAt = new Date();
+    } else {
+      receivedAt = parsedDate;
+    }
   }
 
   // deviceId is metadata only — logged but not trusted for auth
