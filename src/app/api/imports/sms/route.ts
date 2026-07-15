@@ -48,19 +48,33 @@ const SmsWebhookBodySchema = z.object({
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  console.log("[Auth Debug] POST /api/imports/sms invoked");
+  
   // ── 1. Extract Bearer token ─────────────────────────────────────────────────
   const authHeader = req.headers.get("authorization") ?? "";
+  const xApiKey = req.headers.get("x-api-key");
+  
+  console.log("[Auth Debug] Headers check:", {
+    hasAuthorization: !!authHeader,
+    authorizationStartsWithBearer: authHeader.startsWith("Bearer "),
+    hasXApiKey: !!xApiKey,
+  });
+
   const rawToken = authHeader.startsWith("Bearer ")
     ? authHeader.slice(7).trim()
     : null;
 
+  console.log("[Auth Debug] rawToken extracted:", !!rawToken);
   if (!rawToken) {
+    console.log("[Auth Debug] Unauthorized: No rawToken extracted from Authorization header");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // ── 2. Resolve user from token (timing-safe) ─────────────────────────────────
   const userId = await importSettingService.resolveUserFromToken(rawToken);
+  console.log("[Auth Debug] resolved userId:", userId);
   if (!userId) {
+    console.log("[Auth Debug] Unauthorized: Failed to resolve user from token");
     // Generic — do not reveal whether the token belongs to a valid account
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

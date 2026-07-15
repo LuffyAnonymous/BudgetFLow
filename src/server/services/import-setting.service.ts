@@ -337,9 +337,15 @@ export class ImportSettingService {
    * Error messages are deliberately generic.
    */
   async resolveUserFromToken(rawToken: string | null): Promise<string | null> {
-    if (!rawToken || !rawToken.startsWith(TOKEN_PREFIX)) return null;
+    console.log("[Auth Debug] resolveUserFromToken invoked. Has token:", !!rawToken);
+    if (!rawToken) return null;
+
+    const startsWithPrefix = rawToken.startsWith(TOKEN_PREFIX);
+    console.log("[Auth Debug] Token starts with bf_import_:", startsWithPrefix);
+    if (!startsWithPrefix) return null;
 
     const candidateHash = hashToken(rawToken);
+    console.log("[Auth Debug] Candidate hash prefix (first 10):", candidateHash.slice(0, 10));
 
     const setting = await db.importSetting.findFirst({
       where: { tokenHash: candidateHash },
@@ -351,16 +357,32 @@ export class ImportSettingService {
       },
     });
 
+    console.log("[Auth Debug] DB lookup result - setting found:", !!setting);
     if (!setting) return null;
 
+    console.log("[Auth Debug] Setting details:", {
+      userId: setting.userId,
+      tokenRevokedAt: setting.tokenRevokedAt,
+      tokenExpiresAt: setting.tokenExpiresAt,
+      isExpired: setting.tokenExpiresAt ? setting.tokenExpiresAt < new Date() : false,
+    });
+
     // Check revocation
-    if (setting.tokenRevokedAt) return null;
+    if (setting.tokenRevokedAt) {
+      console.log("[Auth Debug] Token is revoked");
+      return null;
+    }
 
     // Check expiry
-    if (setting.tokenExpiresAt && setting.tokenExpiresAt < new Date()) return null;
+    if (setting.tokenExpiresAt && setting.tokenExpiresAt < new Date()) {
+      console.log("[Auth Debug] Token is expired");
+      return null;
+    }
 
     // Timing-safe comparison (defense-in-depth — @unique already prevents hash collision)
-    if (!compareTokens(candidateHash, setting.tokenHash!)) return null;
+    const isMatch = compareTokens(candidateHash, setting.tokenHash!);
+    console.log("[Auth Debug] Timing-safe match result:", isMatch);
+    if (!isMatch) return null;
 
     return setting.userId;
   }
