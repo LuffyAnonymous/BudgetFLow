@@ -25,6 +25,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import type { UpcomingPaymentItem } from "@/server/services/upcoming-payment.service";
 import { AutomationStatusPanel } from "@/components/imports/automation-status-panel";
+import { SalarySafetyAlert } from "@/components/dashboard/salary-safety-alert";
 
 interface TransactionSummary {
   id: string;
@@ -244,6 +245,9 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
           </div>
         }
       />
+      {/* Salary Safety & Webhook Health Alert */}
+      <SalarySafetyAlert />
+      
       {/* Automation Status Panel — replaces quick actions */}
       <AutomationStatusPanel />
 

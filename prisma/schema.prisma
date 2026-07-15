@@ -22,6 +22,8 @@ enum ImportStatus {
   PROCESSED
   REJECTED
   FAILED
+  IGNORED
+  PENDING_EVENT
 }
 
 enum ImportConfidence {
@@ -189,7 +191,7 @@ model Transaction {
   remittance           Remittance?           @relation("RemittanceOriginal")
   remittanceReversal   Remittance?           @relation("RemittanceReversal")
   recurringOccurrence  RecurringOccurrence?
-  importedTransaction  ImportedTransaction?  // back-ref; FK lives on ImportedTransaction
+  importedTransactions ImportedTransaction[]
   attachments          Attachment[]
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
@@ -673,11 +675,14 @@ model ImportedTransaction {
   /// Redacted SMS text — no raw account numbers stored.
   /// Set to null after rawPayloadRetentionDays per owning user's ImportSetting.
   redactedPayload String?
+  /// The raw, unmodified message received from the client.
+  rawPayload      String?
   /// SHA-256 of the original raw message (for integrity verification, not display)
   payloadHash     String
   /// Timestamp when redactedPayload was cleared by the retention cleanup job.
   payloadClearedAt DateTime?
   maskedSender    String?
+  deviceId        String?
 
   /// Parsed financial data
   parsedAmount    Decimal?         @db.Decimal(12, 2)
@@ -687,6 +692,7 @@ model ImportedTransaction {
 
   /// Timestamps
   receivedAt      DateTime
+  serverReceivedAt DateTime?
   financialDate   DateTime?
   processedAt     DateTime?
   reviewedAt      DateTime?
@@ -703,8 +709,8 @@ model ImportedTransaction {
   failureCode     String?
   failureMessage  String?
 
-  /// FK lives HERE, not on Transaction (correction #3)
-  transactionId   String?          @unique
+  /// FK lives HERE
+  transactionId   String?
   transaction     Transaction?     @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
   userId          String

@@ -73,14 +73,15 @@ export function normalizeImportsList(json: any): any[] {
 
 export default function ImportsPage() {
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<string>("REVIEW_REQUIRED");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmCategoryId, setConfirmCategoryId] = useState<string>("");
   const [confirmDate, setConfirmDate] = useState<string>("");
 
   const { data: reviewItems = [], isLoading, error: listError } = useQuery<ImportItem[]>({
-    queryKey: ["imports", "review_required"],
+    queryKey: ["imports", activeTab],
     queryFn: async () => {
-      const res = await fetch("/api/imports/sms/list?status=REVIEW_REQUIRED&pageSize=50");
+      const res = await fetch(`/api/imports/sms/list?status=${activeTab}&pageSize=50`);
       const json = await res.json();
       if (!res.ok) {
         throw new Error(json.error?.message || "Failed to load pending imports");
@@ -181,9 +182,34 @@ export default function ImportsPage() {
       {!isLoading && (!Array.isArray(reviewItems) || reviewItems.length === 0) && (
         <div className="flex flex-col items-center gap-3 py-16 text-center text-slate-500">
           <LucideInbox className="h-10 w-10" />
-          <p className="text-sm">No imports pending review.</p>
+          <p className="text-sm">No imports found for this tab.</p>
         </div>
       )}
+
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6 border-b border-slate-800 pb-2 overflow-x-auto">
+        {[
+          { id: "REVIEW_REQUIRED", label: "Review Required" },
+          { id: "PENDING_EVENT,IGNORED", label: "Pending/Ignored" },
+          { id: "PROCESSED", label: "Processed" },
+          { id: "REJECTED,FAILED", label: "Rejected" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => {
+              setActiveTab(tab.id);
+              setSelectedId(null);
+            }}
+            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
+              activeTab === tab.id
+                ? "bg-indigo-500/20 text-indigo-400"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* List */}
@@ -378,24 +404,26 @@ export default function ImportsPage() {
             )}
 
             {/* Actions */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => confirmMutation.mutate(selectedId)}
-                disabled={confirmMutation.isPending}
-                className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-4 py-3 text-sm font-bold transition-all disabled:opacity-50"
-              >
-                <LucideCheckCircle className="h-4 w-4" />
-                Confirm Import
-              </button>
-              <button
-                onClick={() => rejectMutation.mutate(selectedId)}
-                disabled={rejectMutation.isPending}
-                className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-4 py-3 text-sm font-bold transition-all disabled:opacity-50"
-              >
-                <LucideXCircle className="h-4 w-4" />
-                Reject
-              </button>
-            </div>
+            {detail.status === "REVIEW_REQUIRED" && (
+              <div className="flex gap-3 mt-5">
+                <button
+                  onClick={() => confirmMutation.mutate(selectedId)}
+                  disabled={confirmMutation.isPending}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-4 py-3 text-sm font-bold transition-all disabled:opacity-50"
+                >
+                  <LucideCheckCircle className="h-4 w-4" />
+                  Confirm Import
+                </button>
+                <button
+                  onClick={() => rejectMutation.mutate(selectedId)}
+                  disabled={rejectMutation.isPending}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-4 py-3 text-sm font-bold transition-all disabled:opacity-50"
+                >
+                  <LucideXCircle className="h-4 w-4" />
+                  Reject
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

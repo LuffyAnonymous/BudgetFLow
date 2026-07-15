@@ -136,20 +136,14 @@ describe("EmiratesNBDParser", () => {
       expect(result.institution).toBe("Emirates NBD");
     });
 
-    it("returns transactionType = INCOME", () => {
-      const result = parser.parse(VALID_SENDER, VALID_SMS, RECEIVED_AT);
-      expect(result.transactionType).toBe("INCOME");
-    });
+
 
     it("returns currency = AED", () => {
       const result = parser.parse(VALID_SENDER, VALID_SMS, RECEIVED_AT);
       expect(result.currency).toBe("AED");
     });
 
-    it("returns description = Salary", () => {
-      const result = parser.parse(VALID_SENDER, VALID_SMS, RECEIVED_AT);
-      expect(result.description).toBe("Salary");
-    });
+
 
     it("returns parserKey and parserVersion", () => {
       const result = parser.parse(VALID_SENDER, VALID_SMS, RECEIVED_AT);
@@ -168,20 +162,7 @@ describe("EmiratesNBDParser", () => {
     });
   });
 
-  describe("parse() — confidence", () => {
-    it("returns HIGH confidence for valid complete SMS", () => {
-      const result = parser.parse(VALID_SENDER, VALID_SMS, RECEIVED_AT);
-      expect(result.confidence).toBe(ImportConfidence.HIGH);
-    });
 
-    it("returns MEDIUM confidence when reference is absent", () => {
-      const noRef =
-        "AED 5,750.00 has been credited to your account no. 014XXX01 " +
-        "DTB SALARY TR REF. The available balance is AED 5,752.56.";
-      const result = parser.parse(VALID_SENDER, noRef, RECEIVED_AT);
-      expect(result.confidence).toBe(ImportConfidence.MEDIUM);
-    });
-  });
 });
 
 // ─── Parser Registry ──────────────────────────────────────────────────────────
@@ -223,16 +204,13 @@ describe("buildFingerprint()", () => {
     institution: "Emirates NBD",
     parserKey: "emirates-nbd-salary-v1",
     parserVersion: "1.0.0",
-    transactionType: "INCOME",
     amount: new Decimal("5750.00"),
     currency: "AED",
     merchant: null,
-    description: "Salary",
     reference: "EPHCOP1810A4BEZH",
     transactionDate: RECEIVED_AT,
     redactedMessage: "",
     payloadHash: "",
-    confidence: ImportConfidence.HIGH,
     availableBalance: null,
     accountEnding: null,
     isDeclined: false,
@@ -287,16 +265,13 @@ describe("RulesEngine", () => {
       institution: "Emirates NBD",
       parserKey: "emirates-nbd-salary-v1",
       parserVersion: "1.0.0",
-      transactionType: "INCOME",
       amount: new Decimal("5750.00"),
       currency: "AED",
-      merchant: null,
-      description: "Salary",
+      merchant: "Salary",
       reference: "EPHCOP1810A4BEZH",
       transactionDate: RECEIVED_AT,
       redactedMessage: "",
       payloadHash: "",
-      confidence: ImportConfidence.HIGH,
       availableBalance: null,
       accountEnding: null,
       isDeclined: false,
@@ -312,16 +287,13 @@ describe("RulesEngine", () => {
       institution: "Emirates NBD",
       parserKey: "emirates-nbd-salary-v1",
       parserVersion: "1.0.0",
-      transactionType: "INCOME",
       amount: new Decimal("5750.00"),
       currency: "AED",
-      merchant: null,
-      description: "Credit",
+      merchant: "Credit",
       reference: "REF001",
       transactionDate: RECEIVED_AT,
       redactedMessage: "",
       payloadHash: "",
-      confidence: ImportConfidence.MEDIUM,
       availableBalance: null,
       accountEnding: null,
       isDeclined: false,
@@ -339,16 +311,13 @@ describe("buildImportTransactionData()", () => {
     institution: "Emirates NBD",
     parserKey: "emirates-nbd-salary-v1",
     parserVersion: "1.0.0",
-    transactionType: "INCOME",
     amount: new Decimal("5750.00"),
     currency: "AED",
-    merchant: null,
-    description: "Salary",
+    merchant: "Salary",
     reference: "EPHCOP1810A4BEZH",
     transactionDate: RECEIVED_AT,
     redactedMessage: "",
     payloadHash: "",
-    confidence: ImportConfidence.HIGH,
     availableBalance: null,
     accountEnding: null,
     isDeclined: false,
@@ -356,12 +325,12 @@ describe("buildImportTransactionData()", () => {
   };
 
   it("sets type to INCOME for INCOME transaction", () => {
-    const data = buildImportTransactionData(normalized, "cat-123");
+    const data = buildImportTransactionData(normalized, "cat-123", { type: TransactionType.INCOME });
     expect(data.type).toBe(TransactionType.INCOME);
   });
 
   it("sets cashFlowDirection to INFLOW for INCOME", () => {
-    const data = buildImportTransactionData(normalized, "cat-123");
+    const data = buildImportTransactionData(normalized, "cat-123", { type: TransactionType.INCOME });
     expect(data.cashFlowDirection).toBe(CashFlowDirection.INFLOW);
   });
 

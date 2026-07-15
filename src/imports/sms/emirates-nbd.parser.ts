@@ -6,7 +6,6 @@ import {
   ParseError,
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
-import { MERCHANT_CATEGORIES } from "../rules/rules-engine";
 
 const KNOWN_SENDERS = ["ENBD", "EmiratesNBD", "Emirates-NBD", "EMIRATESNBD"];
 
@@ -14,6 +13,7 @@ const KNOWN_SENDERS = ["ENBD", "EmiratesNBD", "Emirates-NBD", "EMIRATESNBD"];
 const AVAILABLE_BALANCE_RE = /(?:available\s+balance|bal|balance)\s+(?:is\s+)?(?:AED\s*)?([\d,]+(?:\.\d{1,2})?)/i;
 const MERCHANT_AT_RE = /at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|\s+Ref|Ref\b|\s+for|$)/i;
 const MERCHANT_USED_AT_RE = /used\s+at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+for|\.|\s+Ref|Ref\b|$)/i;
+const TRANSFER_TO_RE = /transfer\s+(?:of\s+(?:AED|USD)\s*[\d,.]+\s+)?to\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+(?:account|a\/c|card)|\.|\s+Ref|Ref\b|$)/i;
 
 function extractAccountEnding(message: string): string | null {
   const match = /(?:account|card|a\/c|acct)\s+(?:no\.?\s*|ending\s+)?([A-Za-z0-9X-]+)/i.exec(message);
@@ -84,10 +84,14 @@ export class EmiratesNBDParser implements ISmsParser {
     let merchant: string | null = null;
     const atMatch = MERCHANT_AT_RE.exec(message);
     const usedAtMatch = MERCHANT_USED_AT_RE.exec(message);
+    const transferMatch = TRANSFER_TO_RE.exec(message);
+    
     if (atMatch) {
       merchant = atMatch[1].trim();
     } else if (usedAtMatch) {
       merchant = usedAtMatch[1].trim();
+    } else if (transferMatch) {
+      merchant = transferMatch[1].trim();
     }
 
     // Clean up merchant name
@@ -102,80 +106,18 @@ export class EmiratesNBDParser implements ISmsParser {
     const refMatch = /(?:Ref|Reference|TR\s+REF|TXN)\s*:?\s*([A-Z0-9-]+)/i.exec(message);
     const reference = refMatch ? refMatch[1].toUpperCase() : null;
 
-    // 7. Determine Transaction Type & Direction
-    let transactionType: "INCOME" | "EXPENSE" | "TRANSFER" | "DEBT_PAYMENT" | "REMITTANCE" = "EXPENSE";
-    const isSalary = /salary/i.test(message) || /SALARY\s+TR\s+REF/i.test(message);
-    const isTransfer = /transfer\s+to\s+Mashreq|to\s+Mashreq/i.test(message) || (/transfer/i.test(message) && !/received/i.test(message));
-    const isWithdrawal = /ATM/i.test(message) || /withdrawn/i.test(message);
-    const isDebt = /tabby|table\s*tennis|butterfly|stiga|tt\s*equipment/i.test(merchant || message);
-    const isRemittance = /taptap\s*send/i.test(merchant || message);
-
-    if (isSalary) {
-      transactionType = "INCOME";
-      merchant = null;
-      if (availableBalance && amount.equals(availableBalance)) {
-        throw new ParseError(this.parserKey, "Salary amount equals available balance");
-      }
-    } else if (isTransfer) {
-      transactionType = "EXPENSE"; // Keep EXPENSE at parser level per tests, promoted in engine
-      if (/Mashreq/i.test(message)) {
-        merchant = "Mashreq";
-      }
-    } else if (isWithdrawal) {
-      transactionType = "EXPENSE"; // Will be mapped to Transfer to Cash
-      merchant = "ATM";
-    } else if (isDebt) {
-      transactionType = "DEBT_PAYMENT";
-    } else if (isRemittance) {
-      transactionType = "REMITTANCE";
-    } else {
-      const isInflow = /credited|received|refund|reversal|deposited|credit/i.test(message);
-      if (isInflow) {
-        transactionType = "INCOME";
-      } else {
-        transactionType = "EXPENSE";
-      }
-    }
-
-    // 8. Determine Confidence
-    const hasKnownMerchant = merchant && Object.keys(MERCHANT_CATEGORIES).some(
-      (key) => merchant!.toUpperCase().includes(key) || key.includes(merchant!.toUpperCase())
-    );
-    const isKnownTransfer = isTransfer || isWithdrawal;
-    const isKnownIncome = isSalary || /refund|reversal/i.test(message);
-
-    const isKnown = isKnownIncome || isKnownTransfer || isDebt || isRemittance || hasKnownMerchant;
-    const confidence = isKnown
-      ? (reference ? ImportConfidence.HIGH : ImportConfidence.MEDIUM)
-      : ImportConfidence.LOW;
-
-    // Description
-    let description = "Emirates NBD Transaction";
-    if (isSalary) {
-      description = "Salary";
-    } else if (isTransfer) {
-      description = merchant ? `Transfer to ${merchant}` : "Internal Transfer";
-    } else if (isWithdrawal) {
-      description = "ATM Withdrawal";
-    } else if (merchant) {
-      description = `Purchase at ${merchant}`;
-    }
-
     return {
       source: "SMS",
       institution: this.institution,
       parserKey: this.parserKey,
       parserVersion: this.parserVersion,
-      transactionType,
       amount,
       currency: "AED",
       merchant,
-      description,
       reference,
       transactionDate: receivedAt,
       redactedMessage,
       payloadHash,
-      confidence,
       availableBalance,
       accountEnding,
       isDeclined,

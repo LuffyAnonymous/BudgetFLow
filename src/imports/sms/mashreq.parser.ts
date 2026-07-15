@@ -6,7 +6,6 @@ import {
   ParseError,
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
-import { MERCHANT_CATEGORIES } from "../rules/rules-engine";
 
 const KNOWN_MASHREQ_SENDERS = ["MASHREQ", "MashreqBank", "Mashreq-Bank", "MASHREQBANK"];
 
@@ -107,72 +106,18 @@ export class MashreqParser implements ISmsParser {
     const refMatch = REFERENCE_RE.exec(message);
     const reference = refMatch ? refMatch[1].toUpperCase() : null;
 
-    // 7. Determine Transaction Type & Direction
-    let transactionType: "INCOME" | "EXPENSE" | "TRANSFER" | "DEBT_PAYMENT" | "REMITTANCE" = "EXPENSE";
-    const isSalary = /salary/i.test(message);
-    const isTransfer = /transfer|transferred|sent/i.test(message);
-    const isWithdrawal = /ATM/i.test(message) || /withdrawn/i.test(message);
-    const isDebt = /tabby|table\s*tennis|butterfly|stiga|tt\s*equipment/i.test(merchant || message);
-    const isRemittance = /taptap\s*send/i.test(merchant || message);
-
-    if (isSalary) {
-      transactionType = "INCOME";
-    } else if (isTransfer) {
-      transactionType = "EXPENSE"; // Keep EXPENSE at parser level, promoted in engine
-    } else if (isWithdrawal) {
-      transactionType = "EXPENSE"; // Will be mapped to Transfer to Cash
-    } else if (isDebt) {
-      transactionType = "DEBT_PAYMENT";
-    } else if (isRemittance) {
-      transactionType = "REMITTANCE";
-    } else {
-      const isInflow = /credited|received|refund|reversal|deposited|credit/i.test(message);
-      if (isInflow) {
-        transactionType = "INCOME";
-      } else {
-        transactionType = "EXPENSE";
-      }
-    }
-
-    // 8. Determine Confidence
-    const hasKnownMerchant = merchant && Object.keys(MERCHANT_CATEGORIES).some(
-      (key) => merchant!.toUpperCase().includes(key) || key.includes(merchant!.toUpperCase())
-    );
-    const isKnownTransfer = isTransfer || isWithdrawal;
-    const isKnownIncome = isSalary || /refund|reversal/i.test(message);
-
-    const isKnown = isKnownIncome || isKnownTransfer || isDebt || isRemittance || hasKnownMerchant;
-    const confidence = isKnown
-      ? (reference ? ImportConfidence.HIGH : ImportConfidence.MEDIUM)
-      : ImportConfidence.LOW;
-
-    // Description
-    let description = "Mashreq Transaction";
-    if (isSalary) {
-      description = "Salary";
-    } else if (isTransfer) {
-      description = merchant ? `Transfer to ${merchant}` : "Internal Transfer";
-    } else if (isWithdrawal) {
-      description = "ATM Withdrawal";
-    } else if (merchant) {
-      description = `Purchase at ${merchant}`;
-    }
-
     return {
       source: "SMS",
       institution: this.institution,
       parserKey: this.parserKey,
       parserVersion: this.parserVersion,
-      transactionType,
       amount,
       currency: "AED",
       merchant,
-      description,
       reference,
       transactionDate: receivedAt,
       redactedMessage,
       payloadHash,
-      confidence,
       availableBalance,
       accountEnding,
       isDeclined,

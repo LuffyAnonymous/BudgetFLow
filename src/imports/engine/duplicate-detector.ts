@@ -59,7 +59,7 @@ export function buildFingerprint(
   // Fallback: use Dubai financial calendar date
   const financialDate = toDubaiDateString(normalized.transactionDate);
   const sender = maskedSender.trim().toUpperCase();
-  const desc = (normalized.description ?? "").trim().toLowerCase();
+  const desc = (normalized.merchant ?? "").trim().toLowerCase();
   return sha256(`${institution}|${sender}|${amount}|${currency}|${financialDate}|${desc}`);
 }
 

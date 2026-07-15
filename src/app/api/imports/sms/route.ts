@@ -144,6 +144,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     sender,
     message,
     receivedAt,
+    deviceId,
     idempotencyKey,
   });
 

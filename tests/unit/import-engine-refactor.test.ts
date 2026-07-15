@@ -67,7 +67,7 @@ describe("SMS Import Engine Refactor Tests", () => {
       receivedAt: new Date("2026-07-15T00:00:00.000Z"),
     });
 
-    expect(result.outcome).toBe("processed");
+    expect(result.outcome).toBe("auto_posted");
 
     // Verify transaction
     const txs = await db.transaction.findMany({ where: { userId } });
@@ -90,7 +90,7 @@ describe("SMS Import Engine Refactor Tests", () => {
       receivedAt: new Date("2026-07-15T00:00:00.000Z"),
     });
 
-    expect(result.outcome).toBe("processed");
+    expect(result.outcome).toBe("auto_posted");
 
     // Verify transaction
     const txs = await db.transaction.findMany({ where: { userId } });
@@ -124,7 +124,7 @@ describe("SMS Import Engine Refactor Tests", () => {
       message: smsOut,
       receivedAt: new Date("2026-07-15T00:05:00.000Z"),
     });
-    expect(resOut.outcome).toBe("processed");
+    expect(resOut.outcome).toBe("auto_posted");
 
     // Check transaction created is of type TRANSFER
     const txsAfterOut = await db.transaction.findMany({
@@ -147,7 +147,7 @@ describe("SMS Import Engine Refactor Tests", () => {
       message: smsIn,
       receivedAt: new Date("2026-07-15T00:06:00.000Z"),
     });
-    expect(resIn.outcome).toBe("processed");
+    expect(resIn.outcome).toBe("auto_posted");
 
     // Ensure no duplicate ledger transfer transaction is created
     const txsFinal = await db.transaction.findMany({
@@ -225,7 +225,7 @@ describe("SMS Import Engine Refactor Tests", () => {
       receivedAt: new Date("2026-07-15T00:05:00.000Z"),
     });
 
-    expect(result.outcome).toBe("declined");
+    expect(result.outcome).toBe("ignored");
 
     // Verify no new transaction was created
     const carrefourTxs = await db.transaction.findMany({ where: { userId, description: { contains: "CARREFOUR" } } });
@@ -250,7 +250,7 @@ describe("SMS Import Engine Refactor Tests", () => {
       message: sms,
       receivedAt: new Date("2026-07-15T00:00:00.000Z"),
     });
-    expect(res1.outcome).toBe("processed");
+    expect(res1.outcome).toBe("auto_posted");
 
     // Second delivery
     const res2 = await importService.processSms(userId, {

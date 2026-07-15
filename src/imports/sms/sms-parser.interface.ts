@@ -25,16 +25,12 @@ export interface NormalizedSmsTransaction {
   readonly parserKey: string;
   /** Semver string, e.g. "1.0.0" */
   readonly parserVersion: string;
-  /** Transaction type hint from the parser */
-  readonly transactionType: "INCOME" | "EXPENSE" | "TRANSFER" | "DEBT_PAYMENT" | "REMITTANCE";
   /** Positive amount — always positive regardless of direction */
   readonly amount: Decimal;
   /** ISO 4217 currency code, e.g. "AED" */
   readonly currency: string;
   /** Merchant name if detectable, null otherwise */
   readonly merchant: string | null;
-  /** Human-readable description, e.g. "Salary" */
-  readonly description: string;
   /** Bank reference code, null if not present in message */
   readonly reference: string | null;
   /**
@@ -49,8 +45,6 @@ export interface NormalizedSmsTransaction {
   readonly redactedMessage: string;
   /** SHA-256 of the original unredacted message */
   readonly payloadHash: string;
-  /** Confidence in this parse result */
-  readonly confidence: ImportConfidence;
   /** Authoritative available balance if reported in the SMS, null otherwise */
   readonly availableBalance: Decimal | null;
   /** Last 4 digits of the account/card if available, null otherwise */

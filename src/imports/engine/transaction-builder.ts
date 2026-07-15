@@ -29,9 +29,7 @@ export function buildImportTransactionData(
   // Enforce types based on overrides or defaults
   let type = overrides?.type;
   if (!type) {
-    type = normalized.transactionType === "INCOME"
-      ? TransactionType.INCOME
-      : TransactionType.EXPENSE;
+    type = TransactionType.EXPENSE;
   }
 
   // cashFlowDirection is INFLOW for INCOME, OUTFLOW for EXPENSE, and null/optional for others (like TRANSFER)
@@ -52,7 +50,7 @@ export function buildImportTransactionData(
   return {
     date: normalized.transactionDate,
     categoryId,
-    description: normalized.description,
+    description: normalized.merchant ?? "Auto-imported",
     amount: new Decimal(normalized.amount.toFixed(2)),
     paymentMethod: "SMS Import",
     notes: notes || null,

@@ -1,32 +1,25 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { db } from "@/lib/db";
 import { accountService } from "../../src/server/services/account.service";
-import { emiratesNBDParser } from "../../src/imports/sms/emirates-nbd.parser";
-import { mashreqParser } from "../../src/imports/sms/mashreq.parser";
-import { categorizerService } from "../../src/imports/categorizer/categorizer.service";
-import { TransactionService } from "../../src/server/services/transaction.service";
-import { AccountType, TransactionType, ImportConfidence } from "@prisma/client";
-import { Decimal } from "decimal.js";
+import { importService } from "../../src/imports/engine/import.service";
+import { AccountType, ImportStatus } from "@prisma/client";
 
-// Import directly from the engine
-import { importService as actualImportService } from "../../src/imports/engine/import.service";
-
-const transactionService = new TransactionService();
-
-describe("Milestone 7.2 — Personal Finance Automation Workflow", () => {
+describe("Milestone 7.2 — Personal Finance Automation Workflow (Refactored)", () => {
   let userId: string;
 
   beforeEach(async () => {
-    // 1. Clean tables
     await db.debtPayment.deleteMany({});
     await db.debt.deleteMany({});
     await db.remittance.deleteMany({});
     await db.transaction.deleteMany({});
+    await db.importedTransaction.deleteMany({});
+    await db.notification.deleteMany({});
     await db.category.deleteMany({});
     await db.account.deleteMany({});
+    await db.importSetting.deleteMany({});
+    await db.setting.deleteMany({});
     await db.user.deleteMany({});
 
-    // 2. Create seed user
     const user = await db.user.create({
       data: {
         email: "m72_test@budgetflow.ae",
@@ -36,7 +29,6 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow", () => {
     });
     userId = user.id;
 
-    // 3. Create default settings
     await db.setting.create({
       data: {
         userId,
@@ -45,33 +37,21 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow", () => {
       },
     });
 
-    // 4. Provision standard categories
     const categoriesData = [
       { name: "Salary", type: "INCOME" },
       { name: "Transfers", type: "VARIABLE_EXPENSE" },
-      { name: "Rent Cash", type: "VARIABLE_EXPENSE" },
-      { name: "Transportation", type: "VARIABLE_EXPENSE" },
+      { name: "Transport", type: "VARIABLE_EXPENSE" },
       { name: "Groceries", type: "VARIABLE_EXPENSE" },
       { name: "Uncategorized", type: "VARIABLE_EXPENSE" },
       { name: "Tabby Payment", type: "DEBT" },
-      { name: "Table Tennis Payment", type: "DEBT" },
-      { name: "Remittance", type: "REMITTANCE" },
     ];
 
     for (const cat of categoriesData) {
       await db.category.create({
-        data: {
-          userId,
-          name: cat.name,
-          type: cat.type as any,
-        },
+        data: { userId, name: cat.name, type: cat.type as any },
       });
     }
 
-    // 5. Provision default accounts
-    await accountService.ensureDefaultAccounts(userId);
-
-    // 6. Provision settings for auto import
     await db.importSetting.create({
       data: {
         userId,
@@ -82,285 +62,214 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow", () => {
     });
   });
 
-  describe("Account Provisioning & Dynamic Balance Derivation", () => {
-    it("provisions Emirates NBD, Mashreq, and Cash with 0.00 starting balances", async () => {
-      const accounts = await accountService.getAccounts(userId);
-      expect(accounts).toHaveLength(3);
-      
-      const enbd = accounts.find((a) => a.type === AccountType.EMIRATES_NBD);
-      const mashreq = accounts.find((a) => a.type === AccountType.MASHREQ);
-      const cash = accounts.find((a) => a.type === AccountType.CASH);
+  it("10. Missing default accounts are provisioned safely without duplicates", async () => {
+    // Assert no accounts exist initially
+    let accounts = await db.account.findMany({ where: { userId } });
+    expect(accounts.length).toBe(0);
 
-      expect(enbd).toBeDefined();
-      expect(mashreq).toBeDefined();
-      expect(cash).toBeDefined();
-
-      expect(enbd!.currentBalance.toFixed(2)).toBe("0.00");
-      expect(mashreq!.currentBalance.toFixed(2)).toBe("0.00");
-      expect(cash!.currentBalance.toFixed(2)).toBe("0.00");
+    const msg = "AED 50.00 debited from card ending 1234 at RTA NOL on 11-07-2026. Ref: TXN11";
+    await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: msg,
+      receivedAt: new Date(),
     });
 
-    it("calculates dynamic balance as Inflows - Outflows", async () => {
-      const accounts = await accountService.getAccounts(userId);
-      const enbd = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
-      const mashreq = accounts.find((a) => a.type === AccountType.MASHREQ)!;
+    // Accounts should be provisioned now
+    accounts = await db.account.findMany({ where: { userId } });
+    expect(accounts.length).toBe(3); // ENBD, MASHREQ, CASH
 
-      const salaryCat = await db.category.findFirst({ where: { userId, name: "Salary" } });
-      const transferCat = await db.category.findFirst({ where: { userId, name: "Transfers" } });
+    const mashreq = accounts.find(a => a.type === AccountType.MASHREQ);
+    expect(mashreq).toBeDefined();
 
-      // Create inflow: Salary (AED 5,750) to ENBD
-      await transactionService.createTransaction(userId, {
-        date: new Date(),
-        categoryId: salaryCat!.id,
-        description: "Salary credit",
-        amount: new Decimal("5750.00"),
-        paymentMethod: "SMS Import",
-        type: TransactionType.INCOME,
-        accountId: enbd.id,
-      });
-
-      // Recalculate and assert
-      let enbdBal = await accountService.updateAccountBalance(userId, enbd.id);
-      expect(enbdBal.toFixed(2)).toBe("5750.00");
-
-      // Create outflow: Transfer (AED 3,750) from ENBD to Mashreq
-      await transactionService.createTransaction(userId, {
-        date: new Date(),
-        categoryId: transferCat!.id,
-        description: "Transfer to Mashreq",
-        amount: new Decimal("3750.00"),
-        paymentMethod: "SMS Import",
-        type: TransactionType.TRANSFER,
-        accountId: enbd.id,
-        toAccountId: mashreq.id,
-      });
-
-      enbdBal = await accountService.updateAccountBalance(userId, enbd.id);
-      const mashreqBal = await accountService.updateAccountBalance(userId, mashreq.id);
-
-      expect(enbdBal.toFixed(2)).toBe("2000.00"); // 5750 - 3750
-      expect(mashreqBal.toFixed(2)).toBe("3750.00"); // +3750 inflow
-    });
+    // Calling ensure again should not duplicate
+    await accountService.ensureDefaultAccounts(userId);
+    const accountsAfter = await db.account.findMany({ where: { userId } });
+    expect(accountsAfter.length).toBe(3);
   });
 
-  describe("Emirates NBD Parser Rules", () => {
-    it("parses Salary credit dynamically", () => {
-      const msg = "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY TR REF EPHCOP1810A4BEZH 2229XXX62XXX-19. The available balance is AED 5,752.56.";
-      const res = emiratesNBDParser.parse("ENBD", msg, new Date());
-      expect(res.transactionType).toBe("INCOME");
-      expect(res.amount.toFixed(2)).toBe("5750.00");
-      expect(res.reference).toBe("EPHCOP1810A4BEZH");
+  it("1. High-confidence salary imports auto-post immediately", async () => {
+    const msg = "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY TR REF EPHCOP18. The available balance is AED 5,752.56.";
+    const res = await importService.processSms(userId, {
+      sender: "ENBD",
+      message: msg,
+      receivedAt: new Date(),
     });
 
-    it("parses Internal Transfer dynamically", () => {
-      const msg = "Dear Customer, your transfer of AED 3,750.00 to Mashreq account ending 1234 was successful. Ref: TRF123456.";
-      const res = emiratesNBDParser.parse("ENBD", msg, new Date());
-      expect(res.transactionType).toBe("EXPENSE");
-      expect(res.merchant).toBe("Mashreq");
-      expect(res.amount.toFixed(2)).toBe("3750.00");
-      expect(res.reference).toBe("TRF123456");
-    });
-
-    it("parses ATM Cash Withdrawal dynamically", () => {
-      const msg = "Dear Customer, AED 2,000.00 has been withdrawn from your account ending 01 at ATM. Ref: ATM888999.";
-      const res = emiratesNBDParser.parse("ENBD", msg, new Date());
-      expect(res.transactionType).toBe("EXPENSE");
-      expect(res.merchant).toBe("ATM");
-      expect(res.amount.toFixed(2)).toBe("2000.00");
-      expect(res.reference).toBe("ATM888999");
-    });
-  });
-
-  describe("Mashreq Parser & Rules Engine Mapping", () => {
-    it("parses Tabby Debt Payment and maps to DEBT", async () => {
-      const msg = "AED 500.00 debited from card ending 1234 at TABBY UAE on 11-07-2026. Ref: TXN9992";
-      const parsed = mashreqParser.parse("MASHREQ", msg, new Date());
-      expect(parsed.amount.toFixed(2)).toBe("500.00");
-      expect(parsed.merchant).toBe("TABBY"); // MashreqParser normalizes "TABBY UAE" to "TABBY" if it detects TABBY
-
-      const catRes = await categorizerService.resolveCategory(userId, parsed);
-      const tabbyCat = await db.category.findFirst({ where: { userId, name: "Tabby Payment" } });
-      await db.debt.create({
-        data: {
-          userId,
-          name: "Tabby",
-          originalBalance: 8284.58,
-          currentBalance: 8284.58,
-          monthlyPayment: 500.00,
-          dueDay: 25,
-          rolloverFeeRate: 4.50,
-          categoryId: tabbyCat!.id,
-        },
-      });
-
-      const catResWithDebt = await categorizerService.resolveCategory(userId, parsed);
-      expect(catResWithDebt.resolved).toBe(true);
-      if (catResWithDebt.resolved) {
-        expect(catResWithDebt.categoryId).toBe(tabbyCat!.id);
-      }
-    });
-
-    it("parses Table Tennis payment with aliases", async () => {
-      const msg = "AED 150.00 debited from card ending 1234 at BUTTERFLY TT on 11-07-2026. Ref: TXN1112";
-      const parsed = mashreqParser.parse("MASHREQ", msg, new Date());
-      expect(parsed.merchant).toBe("BUTTERFLY TT");
-
-      const ttCat = await db.category.findFirst({ where: { userId, name: "Table Tennis Payment" } });
-      await db.debt.create({
-        data: {
-          userId,
-          name: "Table Tennis Equipment",
-          originalBalance: 600.00,
-          currentBalance: 600.00,
-          monthlyPayment: 150.00,
-          dueDay: 15,
-          rolloverFeeRate: 0.00,
-          categoryId: ttCat!.id,
-        },
-      });
-
-      const catRes = await categorizerService.resolveCategory(userId, parsed);
-      expect(catRes.resolved).toBe(true);
-      if (catRes.resolved) {
-        expect(catRes.categoryId).toBe(ttCat!.id);
-      }
-    });
-
-    it("parses RTA NOL top-up as Transportation expense", async () => {
-      const msg = "Your Mashreq card ending 1234 was used for AED 400.00 at RTA NOL on 11/07/2026. Ref: RTA123";
-      const parsed = mashreqParser.parse("MASHREQ", msg, new Date());
-      expect(parsed.amount.toFixed(2)).toBe("400.00");
-      expect(parsed.merchant).toBe("RTA NOL");
-
-      const catRes = await categorizerService.resolveCategory(userId, parsed);
-      const transportCat = await db.category.findFirst({ where: { userId, name: "Transportation" } });
-      expect(catRes.resolved).toBe(true);
-      if (catRes.resolved) {
-        expect(catRes.categoryId).toBe(transportCat!.id);
-      }
-    });
-
-    it("parses TapTap Send as Remittance", async () => {
-      const msg = "Your Mashreq card ending 1234 was used for AED 700.00 at TAPTAP SEND on 11/07/2026. Ref: TT777";
-      const parsed = mashreqParser.parse("MASHREQ", msg, new Date());
-      expect(parsed.amount.toFixed(2)).toBe("700.00");
-      expect(parsed.merchant).toBe("TAPTAP SEND");
-
-      const catRes = await categorizerService.resolveCategory(userId, parsed);
-      const remittanceCat = await db.category.findFirst({ where: { userId, name: "Remittance" } });
-      expect(catRes.resolved).toBe(true);
-      if (catRes.resolved) {
-        expect(catRes.categoryId).toBe(remittanceCat!.id);
-      }
-    });
-  });
-
-  describe("Import Engine Hardening: Automated Workflow Checks", () => {
-    it("automatically routes Mashreq spending to review when unverified, and processes after manual confirmation", async () => {
-      // Use UNKNOWN STORE to make confidence LOW so it goes to review
-      const msg = "Your Mashreq card ending 1234 was used for AED 120.00 at UNKNOWN STORE on 11/07/2026. Ref: CR888";
-      const res = await actualImportService.processSms(userId, {
-        sender: "MASHREQ",
-        message: msg,
-        receivedAt: new Date(),
-      });
-
-      expect(res.outcome).toBe("review_required");
-      const review = res as { outcome: "review_required"; importedTransactionId: string };
-
-      // Manually confirm import
-      const confirmRes = await actualImportService.confirmImport(userId, review.importedTransactionId);
-      expect(confirmRes.transactionId).toBeDefined();
-      
-      // Verify transaction was created in ledger
-      const tx = await db.transaction.findUnique({
-        where: { id: confirmRes.transactionId },
-      });
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
       expect(tx).toBeDefined();
-      expect(tx!.amount.toFixed(2)).toBe("120.00");
+      expect(tx!.amount.toFixed(2)).toBe("5750.00");
+    }
+  });
 
-      // Verify Mashreq account balance was updated
-      const accounts = await accountService.getAccounts(userId);
-      const mashreq = accounts.find((a) => a.type === AccountType.MASHREQ)!;
-      expect(mashreq.currentBalance.toFixed(2)).toBe("-120.00"); // 0 - 120
+  it("2. High-confidence purchases auto-post immediately", async () => {
+    const msg = "AED 50.00 debited from card ending 1234 at RTA NOL on 11-07-2026. Ref: TXN11";
+    const res = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: msg,
+      receivedAt: new Date(),
     });
 
-    it("automatically routes internal transfers and ATM cash withdrawals to review, and processes after manual confirmation", async () => {
-      // 1. Inflow of 5,750
-      const enbd = (await accountService.getAccounts(userId)).find(a => a.type === AccountType.EMIRATES_NBD)!;
-      const salaryCat = await db.category.findFirst({ where: { userId, name: "Salary" } });
-      await transactionService.createTransaction(userId, {
-        date: new Date(),
-        categoryId: salaryCat!.id,
-        description: "Salary credit",
-        amount: new Decimal("5750.00"),
-        paymentMethod: "SMS Import",
-        type: TransactionType.INCOME,
-        accountId: enbd.id,
-      });
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId }, include: { category: true } });
+      expect(tx).toBeDefined();
+      expect(tx!.amount.toFixed(2)).toBe("50.00");
+      expect(tx!.category.name).toBe("Transport");
+    }
+  });
 
-      // 2. Transfer of 3,750 ENBD -> Mashreq - automatically processed under new flow!
-      const msgTransfer = "Dear Customer, your transfer of AED 3,750.00 to Mashreq account ending 1234 was successful. Ref: TRF11";
-      const resTransfer = await actualImportService.processSms(userId, {
-        sender: "ENBD",
-        message: msgTransfer,
-        receivedAt: new Date(),
-      });
-      expect(resTransfer.outcome).toBe("processed");
-
-      // 3. ATM withdrawal of 2,000 ENBD -> Cash - automatically processed under new flow!
-      const msgWithdrawal = "Dear Customer, AED 2,000.00 has been withdrawn from your account ending 01 at ATM. Ref: ATM11";
-      const resWithdrawal = await actualImportService.processSms(userId, {
-        sender: "ENBD",
-        message: msgWithdrawal,
-        receivedAt: new Date(),
-      });
-      expect(resWithdrawal.outcome).toBe("processed");
-
-      // 4. Verify balances
-      const accounts = await accountService.getAccounts(userId);
-      const enbdFinal = accounts.find(a => a.type === AccountType.EMIRATES_NBD)!;
-      const mashreqFinal = accounts.find(a => a.type === AccountType.MASHREQ)!;
-      const cashFinal = accounts.find(a => a.type === AccountType.CASH)!;
-
-      expect(enbdFinal.currentBalance.toFixed(2)).toBe("0.00");
-      expect(mashreqFinal.currentBalance.toFixed(2)).toBe("3750.00");
-      expect(cashFinal.currentBalance.toFixed(2)).toBe("2000.00");
+  it("3 & 4. Low-confidence imports remain pending review, and confirmImport handles them", async () => {
+    // UNKNOWN STORE evaluates to low confidence
+    const msg = "AED 120.00 debited from card ending 1234 at UNKNOWN STORE on 11-07-2026.";
+    const res = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: msg,
+      receivedAt: new Date(),
     });
 
-    it("routes debt payment to review when unverified, and marks PAID after manual confirmation", async () => {
-      const tabbyCat = await db.category.findFirst({ where: { userId, name: "Tabby Payment" } });
-      const debt = await db.debt.create({
-        data: {
-          userId,
-          name: "Tabby",
-          originalBalance: 500.00,
-          currentBalance: 500.00,
-          monthlyPayment: 500.00,
-          dueDay: 25,
-          rolloverFeeRate: 0.00,
-          categoryId: tabbyCat!.id,
-        },
-      });
+    expect(res.outcome).toBe("review_required");
+    if (res.outcome === "review_required") {
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.status).toBe(ImportStatus.REVIEW_REQUIRED);
 
-      // Automatically processed under new flow!
-      const msg = "AED 500.00 debited from card ending 1234 at TABBY UAE on 11-07-2026. Ref: TXN9992";
-      const res = await actualImportService.processSms(userId, {
-        sender: "MASHREQ",
-        message: msg,
-        receivedAt: new Date(),
-      });
-      expect(res.outcome).toBe("processed");
+      // Confirm import
+      const confirmRes = await importService.confirmImport(userId, res.importedTransactionId);
+      expect(confirmRes.transactionId).toBeDefined();
 
-      // Verify debt is PAID
-      const updatedDebt = await db.debt.findUnique({ where: { id: debt.id } });
-      expect(updatedDebt!.currentBalance.toFixed(2)).toBe("0.00");
-      expect(updatedDebt!.status).toBe("PAID");
+      const ledgerTx = await db.transaction.findUnique({ where: { id: confirmRes.transactionId } });
+      expect(ledgerTx!.amount.toFixed(2)).toBe("120.00");
+      expect(ledgerTx!.description).toBe("UNKNOWN STORE");
 
-      // Verify notification generated
-      const notifications = await db.notification.findMany({ where: { userId } });
-      expect(notifications.length).toBeGreaterThan(0);
-      expect(notifications[0].title).toContain("Debt Paid Off");
+      const updatedImported = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(updatedImported!.status).toBe(ImportStatus.PROCESSED);
+    }
+  });
+
+  it("5. Pending transfer acknowledgements do not create ledger transactions", async () => {
+    const msg = "Dear customer, your pending transfer of AED 3,750.00 to Mashreq account is being processed. Ref: PEND11.";
+    const res = await importService.processSms(userId, {
+      sender: "ENBD",
+      message: msg,
+      receivedAt: new Date(),
     });
+
+    expect(res.outcome).toBe("pending_event");
+    if (res.outcome === "pending_event") {
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.status).toBe(ImportStatus.IGNORED);
+      expect(importedTx!.transactionId).toBeNull();
+    }
+  });
+
+  it("6. Completed Mashreq and Emirates NBD transfer messages match into one internal transfer", async () => {
+    // First: Outflow from ENBD
+    const msg1 = "Dear Customer, your transfer of AED 3,750.00 to Mashreq account ending 1234 was successful. Ref: TRF123456.";
+    const res1 = await importService.processSms(userId, {
+      sender: "ENBD",
+      message: msg1,
+      receivedAt: new Date("2026-07-25T10:00:00Z"),
+    });
+
+    expect(res1.outcome).toBe("auto_posted");
+    let tx1Id = "";
+    if (res1.outcome === "auto_posted") {
+      tx1Id = res1.transactionId;
+    }
+
+    // Second: Inflow to Mashreq
+    const msg2 = "AED 3,750.00 has been credited to your Mashreq account ending 1234. Ref: TRF123456.";
+    const res2 = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: msg2,
+      receivedAt: new Date("2026-07-25T10:05:00Z"),
+    });
+
+    expect(res2.outcome).toBe("auto_posted");
+    if (res2.outcome === "auto_posted") {
+      // It should match to the same transaction
+      expect(res2.transactionId).toBe(tx1Id);
+    }
+
+    // Assert only one transaction exists
+    const txCount = await db.transaction.count({ where: { userId } });
+    expect(txCount).toBe(1);
+  });
+
+  it("7. Available balance values update the correct bank account", async () => {
+    const msg = "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. The available balance is AED 12,000.00.";
+    const res = await importService.processSms(userId, {
+      sender: "ENBD",
+      message: msg,
+      receivedAt: new Date(),
+    });
+    console.log("TEST 7 RESULT:", res);
+
+    const accounts = await accountService.getAccounts(userId);
+    const enbd = accounts.find(a => a.type === AccountType.EMIRATES_NBD);
+    expect(enbd!.currentBalance.toFixed(2)).toBe("12000.00");
+  });
+
+  it("8. Declined transactions do not affect the ledger or balances", async () => {
+    // Give Mashreq a base balance of 500
+    await accountService.ensureDefaultAccounts(userId);
+    const accounts = await db.account.findMany({ where: { userId } });
+    const mashreq = accounts.find(a => a.type === AccountType.MASHREQ)!;
+    await db.account.update({ where: { id: mashreq.id }, data: { currentBalance: 500 } });
+
+    const msg = "Declined: AED 1,000.00 at RTA NOL due to insufficient funds. Ref: FAIL123";
+    const res = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: msg,
+      receivedAt: new Date(),
+    });
+
+    expect(res.outcome).toBe("ignored");
+
+    // Assert balance is untouched
+    const mashreqAfter = await db.account.findUnique({ where: { id: mashreq.id } });
+    expect(mashreqAfter!.currentBalance.toFixed(2)).toBe("500.00");
+
+    // Assert no ledger transaction
+    const txCount = await db.transaction.count({ where: { userId } });
+    expect(txCount).toBe(0);
+  });
+
+  it("9. Duplicate messages are idempotent", async () => {
+    const msg = "AED 50.00 debited from card ending 1234 at RTA NOL on 11-07-2026. Ref: IDEMP11";
+    
+    // First
+    const res1 = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: msg,
+      receivedAt: new Date(),
+    });
+    expect(res1.outcome).toBe("auto_posted");
+
+    // Second (same message)
+    const res2 = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: msg,
+      receivedAt: new Date(),
+    });
+    expect(res2.outcome).toBe("duplicate");
+
+    const validMsg = "AED 150.00 debited from card ending 1234 at RTA NOL on 11-07-2026. Ref: IDEMP22";
+    const res4 = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: validMsg,
+      receivedAt: new Date(),
+      idempotencyKey: "test-key-456",
+    });
+    expect(res4.outcome).toBe("auto_posted");
+
+    const res5 = await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: validMsg,
+      receivedAt: new Date(),
+      idempotencyKey: "test-key-456",
+    });
+    expect(res5.outcome).toBe("idempotent");
   });
 });

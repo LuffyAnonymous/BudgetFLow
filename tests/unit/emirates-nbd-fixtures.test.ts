@@ -52,10 +52,7 @@ describe("Emirates NBD Parser — salary-valid.txt", () => {
     expect(result.reference).toBe("EPHCOP1810A4BEZH");
   });
 
-  it("confidence is HIGH", () => {
-    const result = parser.parse(VALID_SENDER, sms, RECEIVED_AT);
-    expect(result.confidence).toBe(ImportConfidence.HIGH);
-  });
+
 
   it("institution is Emirates NBD", () => {
     const result = parser.parse(VALID_SENDER, sms, RECEIVED_AT);
@@ -117,10 +114,7 @@ describe("Emirates NBD Parser — salary-missing-reference.txt", () => {
     expect(result.reference).toBeNull();
   });
 
-  it("confidence is MEDIUM (no reference)", () => {
-    const result = parser.parse(VALID_SENDER, sms, RECEIVED_AT);
-    expect(result.confidence).toBe(ImportConfidence.MEDIUM);
-  });
+
 });
 
 describe("Emirates NBD Parser — salary-extra-spaces.txt", () => {
@@ -155,10 +149,7 @@ describe("Emirates NBD Parser — salary-comma-amount.txt", () => {
     expect(result.reference).toBe("FQHDBX2219C5RWMN");
   });
 
-  it("confidence is HIGH", () => {
-    const result = parser.parse(VALID_SENDER, sms, RECEIVED_AT);
-    expect(result.confidence).toBe(ImportConfidence.HIGH);
-  });
+
 
   it("produces different fingerprint from salary-valid (different reference)", () => {
     const valid = parser.parse(VALID_SENDER, loadFixture("salary-valid.txt"), RECEIVED_AT);

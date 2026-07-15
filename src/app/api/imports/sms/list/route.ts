@@ -17,7 +17,7 @@ import { ImportStatus } from "@prisma/client";
 import { z } from "zod";
 
 const QuerySchema = z.object({
-  status: z.nativeEnum(ImportStatus).optional(),
+  status: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(50).default(10),
 });
@@ -40,9 +40,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
   const { status, page, pageSize } = parsed.data;
 
+  const statuses = status ? status.split(",").map(s => s.trim()) as ImportStatus[] : undefined;
+
   const where = {
     userId,
-    ...(status ? { status } : {}),
+    ...(statuses && statuses.length > 0 ? { status: { in: statuses } } : {}),
   };
 
   const [totalItems, items] = await Promise.all([

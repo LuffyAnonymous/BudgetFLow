@@ -59,7 +59,7 @@ const BUILT_IN_RULES: ImportRule[] = [
     description: "Salary credit detected via SALARY TR REF marker",
     priority: 100,
     condition: (n) =>
-      n.description.toLowerCase() === "salary" ||
+      (n.merchant ?? "").toLowerCase() === "salary" ||
       n.parserKey.toLowerCase().includes("salary"),
     action: { categoryKey: "SALARY" },
   },
@@ -69,7 +69,7 @@ const BUILT_IN_RULES: ImportRule[] = [
     priority: 90,
     condition: (n) =>
       n.institution === "Emirates NBD" &&
-      /transfer/i.test(n.description),
+      /transfer/i.test(n.merchant ?? ""),
     action: { categoryKey: "TRANSFERS" },
   },
   {
@@ -78,7 +78,7 @@ const BUILT_IN_RULES: ImportRule[] = [
     priority: 85,
     condition: (n) =>
       n.institution === "Emirates NBD" &&
-      /ATM/i.test(n.description),
+      /ATM/i.test(n.merchant ?? ""),
     action: { categoryKey: "RENT_CASH" },
   },
   {
