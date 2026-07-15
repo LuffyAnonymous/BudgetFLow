@@ -33,6 +33,23 @@ export type ParserSelectionResult =
   | { outcome: "no_match"; reason: string }
   | { outcome: "ambiguous"; matchedParsers: string[] };
 
+// ─── Aliases Mapping ─────────────────────────────────────────────────────────
+
+const SENDER_ALIASES: Record<string, string> = {
+  MASHREQ: "MASHREQ",
+  MASHREQBANK: "MASHREQ",
+  MASHREQSMS: "MASHREQ",
+  
+  EMIRATESNBD: "ENBD",
+  EMIRATES: "ENBD",
+  ENBD: "ENBD",
+};
+
+export function getCanonicalSender(rawSender: string): string {
+  const clean = rawSender.trim().toUpperCase().replace(/[\s-]/g, "");
+  return SENDER_ALIASES[clean] || clean;
+}
+
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 export class SmsParserRegistry {
@@ -49,12 +66,23 @@ export class SmsParserRegistry {
     senderAllowlist: string[]
   ): ParserSelectionResult {
     // ── 1. Sender allowlist check ─────────────────────────────────────────
+    console.log(
+      `[sms-webhook] Running sender matching. Incoming: "${sender}", Canonical: "${getCanonicalSender(sender)}". Allowed (raw):`,
+      senderAllowlist
+    );
+
+    const incomingCanonical = getCanonicalSender(sender);
     const senderTrusted =
       senderAllowlist.length === 0
         ? false
-        : senderAllowlist.some((allowed) =>
-            sender.toUpperCase().includes(allowed.toUpperCase())
-          );
+        : senderAllowlist.some((allowed) => {
+            const allowedCanonical = getCanonicalSender(allowed);
+            return (
+              incomingCanonical === allowedCanonical ||
+              incomingCanonical.includes(allowedCanonical) ||
+              allowedCanonical.includes(incomingCanonical)
+            );
+          });
 
     if (!senderTrusted) {
       return {

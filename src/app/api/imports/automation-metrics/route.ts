@@ -38,6 +38,13 @@ const TOKEN_EXPIRY_WARN_DAYS = 30;
 
 type ImportHealth = "HEALTHY" | "NEEDS_REVIEW" | "NO_TOKEN" | "DISABLED";
 
+function getCanonicalDisplayName(sender: string): string {
+  const normalized = sender.trim().toUpperCase();
+  if (normalized === "ENBD" || normalized === "EMIRATESNBD") return "EmiratesNBD";
+  if (normalized === "MASHREQ" || normalized === "MASHREQBANK") return "Mashreq";
+  return sender.trim();
+}
+
 function toDubaiStartOfDay(date: { year: number; month: number; day: number }): Date {
   const localMs = Date.UTC(date.year, date.month - 1, date.day, 0, 0, 0, 0);
   return new Date(localMs - DUBAI_OFFSET_HOURS * 60 * 60 * 1000);
@@ -225,7 +232,7 @@ export async function GET(): Promise<NextResponse> {
   const supportedInstitution =
     parserKeys.find((k) => k.includes("emirates-nbd")) ? "Emirates NBD" :
     parserKeys.find((k) => k.includes("adcb"))         ? "ADCB" :
-    senderAllowlist.length > 0                          ? `Bank (sender: ${senderAllowlist[0]})` :
+    senderAllowlist.length > 0                          ? `Bank (sender: ${getCanonicalDisplayName(senderAllowlist[0])})` :
     null;
 
   // ── 8. Import health (deterministic — correction #13) ────────────────────────
@@ -261,7 +268,7 @@ export async function GET(): Promise<NextResponse> {
       // Institution (correction #14)
       connectedInstitution: {
         name: supportedInstitution,
-        configuredSenders: senderAllowlist,
+        configuredSenders: senderAllowlist.map(getCanonicalDisplayName),
         parserKeys,
       },
 
