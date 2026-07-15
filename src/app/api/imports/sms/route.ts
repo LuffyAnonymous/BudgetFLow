@@ -8,18 +8,7 @@
  *   userId is resolved from the token. Never from the request body.
  *
  * Request body (JSON, max 10 KB):
- *   {
- *     "sender":     string (required, max 100 chars)
- *     "message":    string (required, max 2000 chars)
- *     "receivedAt": string (required, ISO 8601 timestamp)
- *     "deviceId":   string | null (optional, metadata only, not trusted for auth)
- *   }
- *
- * Idempotency:
- *   Idempotency-Key: <uuid>  (optional header)
- *   Same key = same result returned without re-processing.
- *
- * Rate limiting: 20 requests / 60 s per token.
+ *   Can have varied iOS Shortcut structures, normalized before validation.
  *
  * Response:
  *   200 OK — processed | review_required | duplicate | idempotent
@@ -47,39 +36,150 @@ const SmsWebhookBodySchema = z.object({
 
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
 
+// Type-safe recursive SMS text extraction helper
+export function extractSmsText(payload: unknown, depth = 0): string | null {
+  if (depth > 5) return null;
+  if (payload === null || payload === undefined) return null;
+
+  // 1. If primitive string
+  if (typeof payload === "string") {
+    const trimmed = payload.trim();
+    if (trimmed.length > 15) {
+      return trimmed;
+    }
+    return null;
+  }
+
+  // 2. If array
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = extractSmsText(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // 3. If object
+  if (typeof payload === "object") {
+    const obj = payload as Record<string, unknown>;
+
+    // Candidate keys to check first
+    const candidateKeys = ["message", "text", "content", "input", "body", "value"];
+    for (const key of candidateKeys) {
+      if (key in obj) {
+        const val = obj[key];
+        if (typeof val === "string") {
+          const trimmed = val.trim();
+          if (trimmed.length > 15) return trimmed;
+        } else if (val && typeof val === "object") {
+          const found = extractSmsText(val, depth + 1);
+          if (found) return found;
+        }
+      }
+    }
+
+    // Generic fallback: check all properties
+    for (const key of Object.keys(obj)) {
+      if (candidateKeys.includes(key)) continue;
+
+      const val = obj[key];
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed.length > 15) {
+          return trimmed;
+        }
+      } else if (val && typeof val === "object") {
+        const found = extractSmsText(val, depth + 1);
+        if (found) return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+interface SafeShapeInfo {
+  keys?: string[];
+  types?: Record<string, string>;
+  lengths?: Record<string, number>;
+  nested?: Record<string, SafeShapeInfo | string>;
+}
+
+// Generate a safe representation of the payload layout
+export function getSafeShape(payload: unknown, depth = 0): SafeShapeInfo | string {
+  if (depth > 4) return "max-depth-reached";
+  if (payload === null || payload === undefined) return "null-or-undefined";
+
+  const valType = typeof payload;
+  if (valType !== "object") {
+    if (valType === "string") {
+      return `string(len=${(payload as string).length})`;
+    }
+    return valType;
+  }
+
+  if (Array.isArray(payload)) {
+    const arrayInfo: string[] = [];
+    for (let i = 0; i < Math.min(payload.length, 3); i++) {
+      const res = getSafeShape(payload[i], depth + 1);
+      if (typeof res === "string") {
+        arrayInfo.push(res);
+      } else {
+        arrayInfo.push("object");
+      }
+    }
+    return `array[${arrayInfo.join(", ")}]`;
+  }
+
+  const obj = payload as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  const types: Record<string, string> = {};
+  const lengths: Record<string, number> = {};
+  const nested: Record<string, SafeShapeInfo | string> = {};
+
+  for (const key of keys) {
+    if (/token|auth|key|password|secret|cred/i.test(key)) {
+      types[key] = "redacted";
+      continue;
+    }
+
+    const val = obj[key];
+    const t = typeof val;
+    types[key] = t;
+
+    if (t === "string") {
+      lengths[key] = (val as string).length;
+    } else if (val && t === "object") {
+      const res = getSafeShape(val, depth + 1);
+      nested[key] = res;
+    }
+  }
+
+  return { keys, types, lengths, nested };
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   console.log("[Auth Debug] POST /api/imports/sms invoked");
   
   // ── 1. Extract Bearer token ─────────────────────────────────────────────────
   const authHeader = req.headers.get("authorization") ?? "";
-  const xApiKey = req.headers.get("x-api-key");
-  
-  console.log("[Auth Debug] Headers check:", {
-    hasAuthorization: !!authHeader,
-    authorizationStartsWithBearer: authHeader.startsWith("Bearer "),
-    hasXApiKey: !!xApiKey,
-  });
-
   const rawToken = authHeader.startsWith("Bearer ")
     ? authHeader.slice(7).trim()
     : null;
 
-  console.log("[Auth Debug] rawToken extracted:", !!rawToken);
   if (!rawToken) {
-    console.log("[Auth Debug] Unauthorized: No rawToken extracted from Authorization header");
+    console.log("[Auth Debug] Unauthorized: No token found");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // ── 2. Resolve user from token (timing-safe) ─────────────────────────────────
+  // ── 2. Resolve user from token ───────────────────────────────────────────────
   const userId = await importSettingService.resolveUserFromToken(rawToken);
-  console.log("[Auth Debug] resolved userId:", userId);
   if (!userId) {
-    console.log("[Auth Debug] Unauthorized: Failed to resolve user from token");
-    // Generic — do not reveal whether the token belongs to a valid account
+    console.log("[Auth Debug] Unauthorized: Invalid token");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // ── 3. Rate limiting (key = first 16 chars of token hash) ───────────────────
+  // ── 3. Rate limiting ────────────────────────────────────────────────────────
   const tokenHashPrefix = createHash("sha256").update(rawToken).digest("hex").slice(0, 16);
   const rateLimit = await checkRateLimit(`sms_import:${tokenHashPrefix}`);
   if (!rateLimit.allowed) {
@@ -101,66 +201,95 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Request body too large" }, { status: 413 });
   }
 
-  // ── 5. Parse and validate body ───────────────────────────────────────────────
+  // ── 5. Parse and normalize body ──────────────────────────────────────────────
   let body: unknown;
   try {
     body = await req.json();
   } catch (err) {
-    console.log("[SMS Webhook Debug] 400 Bad Request: Failed to parse request body as JSON", err);
+    console.log("[SMS Webhook Debug] 400 Bad Request: Invalid JSON", err);
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (body && typeof body === "object") {
-    const rawBody = body as Record<string, unknown>;
-    const keys = Object.keys(rawBody);
-    const senderType = typeof rawBody.sender;
-    const isSenderNonEmpty = typeof rawBody.sender === "string" ? rawBody.sender.trim().length > 0 : false;
-    const messageType = typeof rawBody.message;
-    const messageLength = typeof rawBody.message === "string" ? rawBody.message.length : 0;
-    const receivedAtType = typeof rawBody.receivedAt;
-    const receivedAtValue = rawBody.receivedAt;
-    const deviceIdType = typeof rawBody.deviceId;
+  // Safe logging of the incoming payload shape
+  const safeShape = getSafeShape(body);
+  console.log("[SMS Webhook Debug] Safe Payload Shape:", JSON.stringify(safeShape));
 
-    console.log("[SMS Webhook Debug] Request body metadata:", {
-      keys,
-      senderType,
-      isSenderNonEmpty,
-      messageType,
-      messageLength,
-      receivedAtType,
-      receivedAtValue,
-      deviceIdType,
-    });
-  } else {
-    console.log("[SMS Webhook Debug] Request body is not an object:", typeof body);
+  const receivedKeys = body && typeof body === "object" ? Object.keys(body as object) : [];
+
+  // Extract SMS message text
+  const extractedText = extractSmsText(body);
+  if (!extractedText) {
+    console.log("[SMS Webhook Debug] 400 Bad Request: SMS text could not be extracted", { receivedKeys });
+    
+    const responsePayload: Record<string, unknown> = {
+      success: false,
+      error: "SMS text could not be extracted",
+      receivedKeys,
+    };
+
+    // If debug is requested via parameter or header, include safe shape in response JSON
+    const isDebug = req.nextUrl.searchParams.get("debug") === "true" || req.headers.get("x-debug-payload") === "true";
+    if (isDebug) {
+      responsePayload.debugShape = safeShape;
+    }
+
+    return NextResponse.json(responsePayload, { status: 400 });
   }
 
-  const parsed = SmsWebhookBodySchema.safeParse(body);
+  // Extract sender
+  let sender = "";
+  let receivedAtStr: string | null = null;
+  let deviceId: string | null = null;
+
+  if (body && typeof body === "object") {
+    const obj = body as Record<string, unknown>;
+    if (typeof obj.sender === "string") {
+      sender = obj.sender.trim();
+    } else if (typeof obj.from === "string") {
+      sender = obj.from.trim();
+    }
+    
+    if (typeof obj.receivedAt === "string") {
+      receivedAtStr = obj.receivedAt;
+    }
+    if (typeof obj.deviceId === "string") {
+      deviceId = obj.deviceId;
+    }
+  }
+
+  const normalizedPayload = {
+    sender,
+    message: extractedText,
+    receivedAt: receivedAtStr,
+    deviceId,
+  };
+
+  const parsed = SmsWebhookBodySchema.safeParse(normalizedPayload);
   if (!parsed.success) {
     const fieldErrors = parsed.error.flatten().fieldErrors;
-    console.log("[SMS Webhook Debug] 400 Bad Request: Zod validation failed", fieldErrors);
+    console.log("[SMS Webhook Debug] 400 Bad Request: Normalization validation failed", fieldErrors);
     return NextResponse.json(
       { error: "Invalid request", fieldErrors },
       { status: 400 }
     );
   }
 
-  const { sender, message, receivedAt: receivedAtStr, deviceId } = parsed.data;
+  const { sender: validatedSender, message: validatedMessage, receivedAt: validatedReceivedAtStr } = parsed.data;
 
   // ── 6. Timestamp freshness check ─────────────────────────────────────────────
   let receivedAt: Date;
-  if (!receivedAtStr || receivedAtStr.trim() === "") {
+  if (!validatedReceivedAtStr || validatedReceivedAtStr.trim() === "") {
     receivedAt = new Date();
   } else {
-    const parsedDate = new Date(receivedAtStr);
+    const parsedDate = new Date(validatedReceivedAtStr);
     if (isNaN(parsedDate.getTime())) {
       console.warn(
-        `[sms-webhook]\n\nInvalid receivedAt.\n\nOriginal value:\n${receivedAtStr}\n\nUsing server timestamp instead.`
+        `[sms-webhook]\n\nInvalid receivedAt.\n\nOriginal value:\n${validatedReceivedAtStr}\n\nUsing server timestamp instead.`
       );
       receivedAt = new Date();
     } else if (parsedDate.getTime() > Date.now() + FUTURE_TOLERANCE_MS) {
       console.warn(
-        `[sms-webhook]\n\nInvalid receivedAt.\n\nOriginal value:\n${receivedAtStr}\n\nUsing server timestamp instead.`
+        `[sms-webhook]\n\nInvalid receivedAt.\n\nOriginal value:\n${validatedReceivedAtStr}\n\nUsing server timestamp instead.`
       );
       receivedAt = new Date();
     } else {
@@ -168,25 +297,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // deviceId is metadata only — logged but not trusted for auth
+  // deviceId is metadata only
   void deviceId;
 
   // ── 7. Idempotency key from header ───────────────────────────────────────────
   const idempotencyKey = req.headers.get("idempotency-key") ?? null;
 
-  // ── 8. Stamp tokenLastUsedAt (throttled — only if >5 min old) ───────────────
-  // Called here: token is valid, not revoked, not expired, body is valid.
-  // Does NOT wait for import result — a valid message may correctly enter REVIEW_REQUIRED.
+  // ── 8. Stamp tokenLastUsedAt ─────────────────────────────────────────────────
   void importSettingService.touchLastUsed(userId).catch((err) => {
     console.error("[sms-webhook] touchLastUsed failed (non-fatal):", err);
   });
 
-  // ── 8. Run import engine ─────────────────────────────────────────────────────
+  // ── 9. Run import engine ─────────────────────────────────────────────────────
   let result;
   try {
     result = await importService.processSms(userId, {
-      sender,
-      message,
+      sender: validatedSender,
+      message: validatedMessage,
       receivedAt,
       deviceId,
       idempotencyKey,
@@ -194,8 +321,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Internal server error";
     console.error("[SMS Webhook Debug] 500 Internal Server Error in processSms", {
-      sender,
-      messageLength: message.length,
+      sender: validatedSender,
+      messageLength: validatedMessage.length,
       error: errorMsg,
     });
     return NextResponse.json(
@@ -237,22 +364,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     reason = "The SMS could not be parsed automatically";
     importedTransactionId = "importedTransactionId" in result ? result.importedTransactionId : undefined;
   } else {
-    // auto_posted, duplicate, idempotent, ignored, pending_event
     importedTransactionId = "importedTransactionId" in result ? result.importedTransactionId : undefined;
     if (result.outcome === "ignored") {
       reason = "reason" in result ? result.reason : "Message was ignored";
     }
   }
 
-  return NextResponse.json(
-    {
-      success,
-      outcome: result.outcome,
-      reason,
-      error: !success ? reason : undefined,
-      importedTransactionId,
-      data: result, // Keep for backward compatibility with E2E and unit tests
-    },
-    { status }
-  );
+  const responsePayload: Record<string, unknown> = {
+    success,
+    outcome: result.outcome,
+    reason,
+    error: !success ? reason : undefined,
+    importedTransactionId,
+    data: result, // Keep for backward compatibility
+  };
+
+  const isDebug = req.nextUrl.searchParams.get("debug") === "true" || req.headers.get("x-debug-payload") === "true";
+  if (isDebug) {
+    responsePayload.debugShape = safeShape;
+  }
+
+  return NextResponse.json(responsePayload, { status });
 }
