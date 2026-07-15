@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { smsParserRegistry, getCanonicalSender } from "../../src/imports/sms/parser-registry";
 
 describe("Sender Alias and Case-Insensitive Matching", () => {
@@ -63,6 +63,50 @@ describe("Sender Alias and Case-Insensitive Matching", () => {
     expect(result.outcome).toBe("no_match");
     if (result.outcome === "no_match") {
       expect(result.reason).toBe("Sender not in configured allowlist");
+    }
+  });
+});
+
+import { db } from "@/lib/db";
+import { importService } from "../../src/imports/engine/import.service";
+
+describe("Sender Matching Integration with DB", () => {
+  let userId: string;
+
+  beforeEach(async () => {
+    await db.importSetting.deleteMany({});
+    await db.user.deleteMany({});
+
+    const user = await db.user.create({
+      data: {
+        email: "alias_db_test@budgetflow.ae",
+        passwordHash: "dummy-hash",
+        name: "Alias DB Tester",
+      },
+    });
+    userId = user.id;
+
+    // Create ImportSetting with "ENBD" and "MASHREQ" in the allowlist
+    await db.importSetting.create({
+      data: {
+        userId,
+        enabled: true,
+        senderAllowlist: ["ENBD", "MASHREQ"],
+      },
+    });
+  });
+
+  it("successfully processes 'Mashreq' payload and does not reject with allowlist error", async () => {
+    const result = await importService.processSms(userId, {
+      sender: "Mashreq",
+      message: "Test transaction AED 50.00 at Carrefour",
+      receivedAt: new Date("2026-07-15T04:52:00.000Z"),
+    });
+
+    // It should not fail with "Sender not in configured allowlist"
+    expect(result.outcome).not.toBe("rejected");
+    if (result.outcome === "rejected") {
+      expect(result.reason).not.toBe("Sender not in configured allowlist");
     }
   });
 });
