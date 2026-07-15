@@ -42,7 +42,8 @@ export type ImportResult =
   | { outcome: "duplicate"; importedTransactionId: string }
   | { outcome: "rejected"; reason: string }
   | { outcome: "disabled" }
-  | { outcome: "idempotent"; importedTransactionId: string };
+  | { outcome: "idempotent"; importedTransactionId: string }
+  | { outcome: "declined"; importedTransactionId: string };
 
 export class ImportService {
   async processSms(userId: string, payload: SmsWebhookPayload): Promise<ImportResult> {
@@ -145,6 +146,69 @@ export class ImportService {
       return { outcome: "duplicate", importedTransactionId: existingByFingerprint.id };
     }
 
+    // ── 4b. Declined Check ──────────────────────────────────────────────────
+    if (normalized.isDeclined) {
+      const importedTx = await db.$transaction(async (tx) => {
+        await accountService.ensureDefaultAccounts(userId, tx);
+        const accounts = await tx.account.findMany({ where: { userId } });
+        const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
+        const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ)!;
+        const primaryAccId = normalized.institution === "Mashreq" ? mashreqAcc.id : enbdAcc.id;
+
+        if (normalized.availableBalance !== null) {
+          await tx.account.update({
+            where: { id: primaryAccId },
+            data: {
+              latestImportedBalance: normalized.availableBalance,
+              lastSMSImportedAt: receivedAt,
+              lastSuccessfulSyncAt: new Date(),
+            },
+          });
+          await accountService.updateAccountBalance(userId, primaryAccId, tx);
+        }
+
+        return tx.importedTransaction.create({
+          data: {
+            source: ImportSource.SMS,
+            institution: normalized.institution,
+            status: ImportStatus.PROCESSED,
+            confidence: normalized.confidence,
+            parserKey: normalized.parserKey,
+            parserVersion: normalized.parserVersion,
+            redactedPayload: normalized.redactedMessage,
+            payloadHash: normalized.payloadHash,
+            maskedSender: maskedSenderValue,
+            parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
+            parsedCurrency: normalized.currency,
+            parsedReference: normalized.reference,
+            parsedDescription: normalized.description,
+            fingerprint,
+            receivedAt,
+            financialDate: receivedAt,
+            idempotencyKey: idempotencyKey ?? null,
+            userId,
+          },
+        });
+      });
+
+      await db.auditLog.create({
+        data: {
+          userId,
+          action: AuditAction.SMS_IMPORT_PROCESSED,
+          entityType: AuditEntityType.IMPORTED_TRANSACTION,
+          entityId: importedTx.id,
+          source: "SMS_WEBHOOK",
+          metadata: {
+            institution: normalized.institution,
+            status: "DECLINED",
+            message: "Declined transaction; no expense created.",
+          },
+        },
+      });
+
+      return { outcome: "declined", importedTransactionId: importedTx.id };
+    }
+
     // ── 5. Categorize ───────────────────────────────────────────────────────
     const categorizerResult = await categorizerService.resolveCategory(userId, normalized);
 
@@ -156,8 +220,9 @@ export class ImportService {
 
     // ── 6. Decide: auto-create or review required ───────────────────────────
     const isSalary =
-      normalized.description.toLowerCase() === "salary" ||
-      normalized.parserKey.toLowerCase().includes("salary");
+      normalized.transactionType === "INCOME" &&
+      (normalized.description.toLowerCase() === "salary" ||
+       normalized.parserKey.toLowerCase().includes("salary"));
 
     // Let's compute it strictly by looking at the rules key:
     const rulesKey = /tabby|butterfly|stiga|tt\s*equipment/i.test(normalized.merchant || "") ? "DEBT" : null;
@@ -218,6 +283,24 @@ export class ImportService {
         },
       });
 
+      // Update reported available balance in DB if present!
+      const accounts = await db.account.findMany({ where: { userId } });
+      const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
+      const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ)!;
+      const primaryAccId = normalized.institution === "Mashreq" ? mashreqAcc.id : enbdAcc.id;
+
+      if (normalized.availableBalance !== null) {
+        await db.account.update({
+          where: { id: primaryAccId },
+          data: {
+            latestImportedBalance: normalized.availableBalance,
+            lastSMSImportedAt: receivedAt,
+            lastSuccessfulSyncAt: new Date(),
+          },
+        });
+        await accountService.updateAccountBalance(userId, primaryAccId);
+      }
+
       await db.auditLog.create({
         data: {
           userId,
@@ -260,25 +343,37 @@ export class ImportService {
         const primaryAccId =
           normalized.institution === "Mashreq" ? mashreqAcc.id : enbdAcc.id;
 
-        // Determine transaction type and target account
         let transactionType: TransactionType = isSalary
           ? TransactionType.INCOME
-          : TransactionType.EXPENSE;
+          : (normalized.transactionType === "TRANSFER" ? TransactionType.TRANSFER : TransactionType.EXPENSE);
         let destAccId: string | null = null;
+        let sourceAccId = primaryAccId;
 
-        const isTransfer = /transfer/i.test(normalized.description);
+        const isTransfer = transactionType === TransactionType.TRANSFER || /transfer/i.test(normalized.description);
         const isWithdrawal =
           /ATM/i.test(normalized.description) || /withdrawn/i.test(normalized.description);
-        const isDebtPayment = /tabby|table\s*tennis|butterfly|stiga|tt\s*equipment/i.test(
+        const isDebtPayment = normalized.transactionType === "DEBT_PAYMENT" || /tabby|table\s*tennis|butterfly|stiga|tt\s*equipment/i.test(
           normalized.merchant || ""
         );
-        const isRemittance = /taptap\s*send/i.test(normalized.merchant || "");
+        const isRemittance = normalized.transactionType === "REMITTANCE" || /taptap\s*send/i.test(normalized.merchant || "");
 
         if (isTransfer) {
           transactionType = TransactionType.TRANSFER;
-          destAccId = mashreqAcc.id;
+          if (normalized.institution === "Emirates NBD") {
+            sourceAccId = enbdAcc.id;
+            destAccId = mashreqAcc.id;
+          } else if (normalized.institution === "Mashreq") {
+            if (/received|credited|from/i.test(normalized.redactedMessage || "")) {
+              sourceAccId = enbdAcc.id;
+              destAccId = mashreqAcc.id;
+            } else {
+              sourceAccId = mashreqAcc.id;
+              destAccId = enbdAcc.id;
+            }
+          }
         } else if (isWithdrawal) {
           transactionType = TransactionType.TRANSFER;
+          sourceAccId = primaryAccId;
           destAccId = cashAcc.id;
         } else if (isDebtPayment) {
           transactionType = TransactionType.DEBT_PAYMENT;
@@ -286,9 +381,77 @@ export class ImportService {
           transactionType = TransactionType.REMITTANCE;
         }
 
+        // Check if an existing internal transfer exists to deduplicate
+        let existingTransferTxId: string | null = null;
+        if (transactionType === TransactionType.TRANSFER && destAccId && destAccId !== cashAcc.id) {
+          const duplicateTransfer = await tx.transaction.findFirst({
+            where: {
+              userId,
+              type: TransactionType.TRANSFER,
+              amount: { equals: normalized.amount },
+              accountId: sourceAccId,
+              toAccountId: destAccId,
+              date: {
+                gte: new Date(receivedAt.getTime() - 10 * 60 * 1000), // Within 10 mins
+                lte: new Date(receivedAt.getTime() + 10 * 60 * 1000),
+              },
+            },
+            select: { id: true },
+          });
+          if (duplicateTransfer) {
+            existingTransferTxId = duplicateTransfer.id;
+          }
+        }
+
+        if (existingTransferTxId) {
+          if (normalized.availableBalance !== null) {
+            await tx.account.update({
+              where: { id: primaryAccId },
+              data: {
+                latestImportedBalance: normalized.availableBalance,
+                lastSMSImportedAt: receivedAt,
+                lastSuccessfulSyncAt: new Date(),
+              },
+            });
+          }
+          await accountService.updateAccountBalance(userId, sourceAccId, tx);
+          await accountService.updateAccountBalance(userId, destAccId!, tx);
+
+          const importedTx = await tx.importedTransaction.create({
+            data: {
+              source: ImportSource.SMS,
+              institution: normalized.institution,
+              status: ImportStatus.PROCESSED,
+              confidence: normalized.confidence,
+              parserKey: normalized.parserKey,
+              parserVersion: normalized.parserVersion,
+              redactedPayload: normalized.redactedMessage,
+              payloadHash: normalized.payloadHash,
+              maskedSender: maskedSenderValue,
+              parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
+              parsedCurrency: normalized.currency,
+              parsedReference: normalized.reference,
+              parsedDescription: normalized.description,
+              fingerprint,
+              receivedAt,
+              financialDate,
+              idempotencyKey: idempotencyKey ?? null,
+              userId,
+              processedAt: new Date(),
+            },
+          });
+
+          await tx.importSetting.update({
+            where: { userId },
+            data: { lastSuccessfulImportAt: new Date() },
+          });
+
+          return { importedTxId: importedTx.id, ledgerTxId: existingTransferTxId };
+        }
+
         const txData = buildImportTransactionData(normalized, categoryId, {
           type: transactionType,
-          accountId: primaryAccId,
+          accountId: sourceAccId,
           toAccountId: destAccId,
         });
 
@@ -460,20 +623,30 @@ export class ImportService {
           data: { lastSuccessfulImportAt: new Date() },
         });
 
+        // Update SMS sync timestamps and latestImportedBalance on primary account
+        if (normalized.availableBalance !== null) {
+          await tx.account.update({
+            where: { id: primaryAccId },
+            data: {
+              latestImportedBalance: normalized.availableBalance,
+              lastSMSImportedAt: receivedAt,
+              lastSuccessfulSyncAt: new Date(),
+            },
+          });
+        } else {
+          await tx.account.update({
+            where: { id: primaryAccId },
+            data: {
+              lastSuccessfulSyncAt: new Date(),
+            },
+          });
+        }
+
         // Update account balances
-        await accountService.updateAccountBalance(userId, primaryAccId, tx);
+        await accountService.updateAccountBalance(userId, sourceAccId, tx);
         if (destAccId) {
           await accountService.updateAccountBalance(userId, destAccId, tx);
         }
-
-        // Update SMS sync timestamps on source account
-        await tx.account.update({
-          where: { id: primaryAccId },
-          data: {
-            lastSMSImportedAt: new Date(),
-            lastSuccessfulSyncAt: new Date(),
-          },
-        });
 
         await tx.auditLog.create({
           data: {
@@ -568,6 +741,9 @@ export class ImportService {
       redactedMessage: importedTx.redactedPayload || "",
       payloadHash: importedTx.payloadHash,
       confidence: importedTx.confidence || ImportConfidence.MEDIUM,
+      availableBalance: null,
+      accountEnding: null,
+      isDeclined: false,
       metadata: {},
     };
 
@@ -787,7 +963,7 @@ export class ImportService {
 
       await tx.account.update({
         where: { id: primaryAccId },
-        data: { lastSMSImportedAt: new Date(), lastSuccessfulSyncAt: new Date() },
+        data: { lastSuccessfulSyncAt: new Date() },
       });
 
       await tx.auditLog.create({

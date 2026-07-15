@@ -233,6 +233,9 @@ describe("buildFingerprint()", () => {
     redactedMessage: "",
     payloadHash: "",
     confidence: ImportConfidence.HIGH,
+    availableBalance: null,
+    accountEnding: null,
+    isDeclined: false,
     metadata: {},
     ...overrides,
   });
@@ -294,6 +297,9 @@ describe("RulesEngine", () => {
       redactedMessage: "",
       payloadHash: "",
       confidence: ImportConfidence.HIGH,
+      availableBalance: null,
+      accountEnding: null,
+      isDeclined: false,
       metadata: {},
     });
     expect(result.categoryKey).toBe("SALARY");
@@ -316,6 +322,9 @@ describe("RulesEngine", () => {
       redactedMessage: "",
       payloadHash: "",
       confidence: ImportConfidence.MEDIUM,
+      availableBalance: null,
+      accountEnding: null,
+      isDeclined: false,
       metadata: {},
     });
     expect(result.categoryKey).toBe("SALARY");
@@ -340,6 +349,9 @@ describe("buildImportTransactionData()", () => {
     redactedMessage: "",
     payloadHash: "",
     confidence: ImportConfidence.HIGH,
+    availableBalance: null,
+    accountEnding: null,
+    isDeclined: false,
     metadata: {},
   };
 

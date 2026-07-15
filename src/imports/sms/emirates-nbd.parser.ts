@@ -6,16 +6,28 @@ import {
   ParseError,
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
+import { MERCHANT_CATEGORIES } from "../rules/rules-engine";
 
 const KNOWN_SENDERS = ["ENBD", "EmiratesNBD", "Emirates-NBD", "EMIRATESNBD"];
 
 // Regular Expressions
-const SALARY_AMOUNT_RE = /AED\s*([\d,]+(?:\.\d{1,2})?)\s+has\s+been\s+credited\s+to\s+your\s+account/i;
-const SALARY_MARKER_RE = /SALARY\s+TR\s+REF/i;
-const REFERENCE_RE = /SALARY\s+TR\s+REF\s+([A-Z0-9-]+)/i;
-const AVAILABLE_BALANCE_RE = /available\s+balance\s+is\s+AED\s*([\d,]+(?:\.\d{1,2})?)/i;
-const GENERIC_AMOUNT_RE = /AED\s*([\d,]+(?:\.\d{1,2})?)/i;
-const GENERIC_REFERENCE_RE = /(?:Ref|Reference)\s*:?\s*([A-Z0-9-]+)/i;
+const AVAILABLE_BALANCE_RE = /(?:available\s+balance|bal|balance)\s+(?:is\s+)?(?:AED\s*)?([\d,]+(?:\.\d{1,2})?)/i;
+const MERCHANT_AT_RE = /at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|\s+Ref|Ref\b|\s+for|$)/i;
+const MERCHANT_USED_AT_RE = /used\s+at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+for|\.|\s+Ref|Ref\b|$)/i;
+
+function extractAccountEnding(message: string): string | null {
+  const match = /(?:account|card|a\/c|acct)\s+(?:no\.?\s*|ending\s+)?([A-Za-z0-9X-]+)/i.exec(message);
+  if (match) {
+    const raw = match[1].trim();
+    return raw.length > 4 ? raw.slice(-4) : raw;
+  }
+  const matchEnding = /ending\s+([A-Za-z0-9X-]+)/i.exec(message);
+  if (matchEnding) {
+    const raw = matchEnding[1].trim();
+    return raw.length > 4 ? raw.slice(-4) : raw;
+  }
+  return null;
+}
 
 export class EmiratesNBDParser implements ISmsParser {
   readonly parserKey = "emirates-nbd-salary-v1";
@@ -30,7 +42,7 @@ export class EmiratesNBDParser implements ISmsParser {
 
     // Reject obvious OTPs and promotions
     const isOtp = /otp|verification|one-time|passcode|security\s*code|activate/i.test(message);
-    const isPromo = /promo|discount|offer|win|apply\s*now|cashback|credit\s*card\s*offer|rewards/i.test(message);
+    const isPromo = /promo|discount|offer|win|apply\s*now|customs|cashback|credit\s*card\s*offer|rewards/i.test(message);
     if (isOtp || isPromo) return false;
 
     return true;
@@ -45,125 +57,133 @@ export class EmiratesNBDParser implements ISmsParser {
     if (/otp|verification|one-time|passcode|security\s*code|activate/i.test(message)) {
       throw new ParseError(this.parserKey, "OTP message cannot be parsed as a financial transaction");
     }
-    if (/promo|discount|offer|win|apply\s*now|cashback|credit\s*card\s*offer|rewards/i.test(message)) {
+    if (/promo|discount|offer|win|apply\s*now|customs|cashback|credit\s*card\s*offer|rewards/i.test(message)) {
       throw new ParseError(this.parserKey, "Promo message cannot be parsed as a financial transaction");
     }
 
-    // 1. Check if it is a Salary Credit
-    if (SALARY_AMOUNT_RE.test(message) && SALARY_MARKER_RE.test(message)) {
-      const match = SALARY_AMOUNT_RE.exec(message);
-      if (!match) throw new ParseError(this.parserKey, "Failed to extract salary amount");
-      const amount = new Decimal(match[1].replace(/,/g, ""));
-      const refMatch = REFERENCE_RE.exec(message);
-      const reference = refMatch ? refMatch[1].toUpperCase() : null;
+    // 1. Check if declined
+    const isDeclined = /declined|insufficient\s*funds|insufficient\s*limit|unsuccessful|failed/i.test(message);
 
-      // Extract available balance for safety check
-      const balMatch = AVAILABLE_BALANCE_RE.exec(message);
-      const availableBalance = balMatch ? new Decimal(balMatch[1].replace(/,/g, "")) : null;
+    // 2. Extract Available Balance
+    const balMatch = AVAILABLE_BALANCE_RE.exec(message);
+    const availableBalance = balMatch ? new Decimal(balMatch[1].replace(/,/g, "")) : null;
 
-      if (availableBalance && amount.eq(availableBalance)) {
+    // 3. Extract Transaction Amount (first amount in message)
+    const amountMatches = [...message.matchAll(/(?:AED|USD)\s*([\d,]+(?:\.\d{1,2})?)/gi)];
+    let amount = new Decimal(0);
+    if (amountMatches.length > 0) {
+      amount = new Decimal(amountMatches[0][1].replace(/,/g, ""));
+    } else {
+      throw new ParseError(this.parserKey, "Failed to extract transaction amount");
+    }
+
+    // 4. Extract Account Ending
+    const accountEnding = extractAccountEnding(message);
+
+    // 5. Extract Merchant
+    let merchant: string | null = null;
+    const atMatch = MERCHANT_AT_RE.exec(message);
+    const usedAtMatch = MERCHANT_USED_AT_RE.exec(message);
+    if (atMatch) {
+      merchant = atMatch[1].trim();
+    } else if (usedAtMatch) {
+      merchant = usedAtMatch[1].trim();
+    }
+
+    // Clean up merchant name
+    if (merchant) {
+      merchant = merchant.replace(/\*.*$/, "").trim();
+      if (/tabby/i.test(merchant)) {
+        merchant = "TABBY";
+      }
+    }
+
+    // 6. Determine Reference
+    const refMatch = /(?:Ref|Reference|TR\s+REF|TXN)\s*:?\s*([A-Z0-9-]+)/i.exec(message);
+    const reference = refMatch ? refMatch[1].toUpperCase() : null;
+
+    // 7. Determine Transaction Type & Direction
+    let transactionType: "INCOME" | "EXPENSE" | "TRANSFER" | "DEBT_PAYMENT" | "REMITTANCE" = "EXPENSE";
+    const isSalary = /salary/i.test(message) || /SALARY\s+TR\s+REF/i.test(message);
+    const isTransfer = /transfer\s+to\s+Mashreq|to\s+Mashreq/i.test(message) || (/transfer/i.test(message) && !/received/i.test(message));
+    const isWithdrawal = /ATM/i.test(message) || /withdrawn/i.test(message);
+    const isDebt = /tabby|table\s*tennis|butterfly|stiga|tt\s*equipment/i.test(merchant || message);
+    const isRemittance = /taptap\s*send/i.test(merchant || message);
+
+    if (isSalary) {
+      transactionType = "INCOME";
+      merchant = null;
+      if (availableBalance && amount.equals(availableBalance)) {
         throw new ParseError(this.parserKey, "Salary amount equals available balance");
       }
-
-      return {
-        source: "SMS",
-        institution: this.institution,
-        parserKey: this.parserKey,
-        parserVersion: this.parserVersion,
-        transactionType: "INCOME",
-        amount,
-        currency: "AED",
-        merchant: null,
-        description: "Salary",
-        reference,
-        transactionDate: receivedAt,
-        redactedMessage,
-        payloadHash,
-        confidence: reference ? ImportConfidence.HIGH : ImportConfidence.MEDIUM,
-        metadata: {
-          maskedSender: maskedSenderValue,
-          category: "salary",
-          hasAvailableBalance: !!availableBalance,
-        },
-      };
+    } else if (isTransfer) {
+      transactionType = "EXPENSE"; // Keep EXPENSE at parser level per tests, promoted in engine
+      if (/Mashreq/i.test(message)) {
+        merchant = "Mashreq";
+      }
+    } else if (isWithdrawal) {
+      transactionType = "EXPENSE"; // Will be mapped to Transfer to Cash
+      merchant = "ATM";
+    } else if (isDebt) {
+      transactionType = "DEBT_PAYMENT";
+    } else if (isRemittance) {
+      transactionType = "REMITTANCE";
+    } else {
+      const isInflow = /credited|received|refund|reversal|deposited|credit/i.test(message);
+      if (isInflow) {
+        transactionType = "INCOME";
+      } else {
+        transactionType = "EXPENSE";
+      }
     }
 
-    // 2. Check if it is an Internal Transfer to Mashreq
-    if (/to\s+Mashreq/i.test(message) || /Transfer\s+to\s+Mashreq/i.test(message)) {
-      const match = GENERIC_AMOUNT_RE.exec(message);
-      if (!match) throw new ParseError(this.parserKey, "Failed to extract transfer amount");
-      const amount = new Decimal(match[1].replace(/,/g, ""));
-      const refMatch = GENERIC_REFERENCE_RE.exec(message);
-      const reference = refMatch ? refMatch[1].toUpperCase() : null;
+    // 8. Determine Confidence
+    const hasKnownMerchant = merchant && Object.keys(MERCHANT_CATEGORIES).some(
+      (key) => merchant!.toUpperCase().includes(key) || key.includes(merchant!.toUpperCase())
+    );
+    const isKnownTransfer = isTransfer || isWithdrawal;
+    const isKnownIncome = isSalary || /refund|reversal/i.test(message);
 
-      return {
-        source: "SMS",
-        institution: this.institution,
-        parserKey: this.parserKey,
-        parserVersion: this.parserVersion,
-        transactionType: "EXPENSE",
-        amount,
-        currency: "AED",
-        merchant: "Mashreq",
-        description: "Transfer to Mashreq",
-        reference,
-        transactionDate: receivedAt,
-        redactedMessage,
-        payloadHash,
-        confidence: ImportConfidence.LOW, // Keep in review mode until VERIFIED_REAL example provided
-        metadata: { maskedSender: maskedSenderValue, category: "transfer" },
-      };
+    const isKnown = isKnownIncome || isKnownTransfer || isDebt || isRemittance || hasKnownMerchant;
+    const confidence = isKnown
+      ? (reference ? ImportConfidence.HIGH : ImportConfidence.MEDIUM)
+      : ImportConfidence.LOW;
+
+    // Description
+    let description = "Emirates NBD Transaction";
+    if (isSalary) {
+      description = "Salary";
+    } else if (isTransfer) {
+      description = merchant ? `Transfer to ${merchant}` : "Internal Transfer";
+    } else if (isWithdrawal) {
+      description = "ATM Withdrawal";
+    } else if (merchant) {
+      description = `Purchase at ${merchant}`;
     }
-
-    // 3. Check if it is an ATM Cash Withdrawal
-    if (/ATM/i.test(message) || /withdrawn/i.test(message)) {
-      const match = GENERIC_AMOUNT_RE.exec(message);
-      if (!match) throw new ParseError(this.parserKey, "Failed to extract ATM withdrawal amount");
-      const amount = new Decimal(match[1].replace(/,/g, ""));
-      const refMatch = GENERIC_REFERENCE_RE.exec(message);
-      const reference = refMatch ? refMatch[1].toUpperCase() : null;
-
-      return {
-        source: "SMS",
-        institution: this.institution,
-        parserKey: this.parserKey,
-        parserVersion: this.parserVersion,
-        transactionType: "EXPENSE",
-        amount,
-        currency: "AED",
-        merchant: "ATM",
-        description: "ATM Withdrawal",
-        reference,
-        transactionDate: receivedAt,
-        redactedMessage,
-        payloadHash,
-        confidence: ImportConfidence.LOW, // Keep in review mode until VERIFIED_REAL example provided
-        metadata: { maskedSender: maskedSenderValue, category: "atm" },
-      };
-    }
-
-    // 4. Unknown SMS from Emirates NBD (but not promo/OTP) -> parse amount if possible, mark as LOW confidence
-    const amountMatch = GENERIC_AMOUNT_RE.exec(message);
-    const amount = amountMatch ? new Decimal(amountMatch[1].replace(/,/g, "")) : new Decimal(0);
-    const refMatch = GENERIC_REFERENCE_RE.exec(message);
-    const reference = refMatch ? refMatch[1].toUpperCase() : null;
 
     return {
       source: "SMS",
       institution: this.institution,
       parserKey: this.parserKey,
       parserVersion: this.parserVersion,
-      transactionType: "EXPENSE",
+      transactionType,
       amount,
       currency: "AED",
-      merchant: null,
-      description: "Emirates NBD Unknown Transaction",
+      merchant,
+      description,
       reference,
       transactionDate: receivedAt,
       redactedMessage,
       payloadHash,
-      confidence: ImportConfidence.LOW,
-      metadata: { maskedSender: maskedSenderValue, unknown: true },
+      confidence,
+      availableBalance,
+      accountEnding,
+      isDeclined,
+      metadata: {
+        maskedSender: maskedSenderValue,
+        hasAvailableBalance: !!availableBalance,
+        isDeclined,
+      },
     };
   }
 }

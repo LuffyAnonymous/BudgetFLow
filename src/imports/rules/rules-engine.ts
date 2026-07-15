@@ -19,6 +19,21 @@
 
 import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
 
+export const MERCHANT_CATEGORIES: Record<string, string> = {
+  CARREFOUR: "Groceries",
+  LULU: "Groceries",
+  SPINNEYS: "Groceries",
+  TALABAT: "Food Delivery",
+  DELIVEROO: "Food Delivery",
+  CAREEM: "Transport",
+  UBER: "Transport",
+  RTA: "Transport",
+  NOON: "Shopping",
+  AMAZON: "Shopping",
+  APPLE: "Subscriptions",
+  NETFLIX: "Entertainment",
+};
+
 // ─── Rule types ───────────────────────────────────────────────────────────────
 
 export interface ImportRule {

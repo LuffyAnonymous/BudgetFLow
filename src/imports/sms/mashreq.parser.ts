@@ -6,19 +6,32 @@ import {
   ParseError,
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
+import { MERCHANT_CATEGORIES } from "../rules/rules-engine";
 
 const KNOWN_MASHREQ_SENDERS = ["MASHREQ", "MashreqBank", "Mashreq-Bank", "MASHREQBANK"];
 
 // Regular Expressions
 const AMOUNT_RE = /AED\s*([\d,]+(?:\.\d{1,2})?)/i;
 const REFERENCE_RE = /(?:TR\s+REF|Ref|Reference|Ref\.?|TXN)\s*:?\s*([A-Z0-9-]+)/i;
+const AVAILABLE_BALANCE_RE = /(?:available\s+balance|bal|balance)\s*(?::|is)?\s*(?:AED\s*)?([\d,]+(?:\.\d{1,2})?)/i;
 
 // Match merchant patterns:
-// "at MerchantName on ..."
-// "at MerchantName."
-// "used at MerchantName for AED ..."
 const MERCHANT_AT_RE = /at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|\s+Ref|Ref\b|\s+for|$)/i;
 const MERCHANT_USED_AT_RE = /used\s+at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+for|\.|\s+Ref|Ref\b|$)/i;
+
+function extractAccountEnding(message: string): string | null {
+  const match = /(?:account|card|a\/c|acct)\s+(?:no\.?\s*|ending\s+)?([A-Za-z0-9X-]+)/i.exec(message);
+  if (match) {
+    const raw = match[1].trim();
+    return raw.length > 4 ? raw.slice(-4) : raw;
+  }
+  const matchEnding = /ending\s+([A-Za-z0-9X-]+)/i.exec(message);
+  if (matchEnding) {
+    const raw = matchEnding[1].trim();
+    return raw.length > 4 ? raw.slice(-4) : raw;
+  }
+  return null;
+}
 
 export class MashreqParser implements ISmsParser {
   readonly parserKey = "mashreq-v1";
@@ -33,7 +46,7 @@ export class MashreqParser implements ISmsParser {
 
     // Reject obvious OTPs and promotions
     const isOtp = /otp|verification|one-time|passcode|security\s*code|activate/i.test(message);
-    const isPromo = /promo|discount|offer|win|apply\s*now|cashback|credit\s*card\s*offer|rewards/i.test(message);
+    const isPromo = /promo|discount|offer|win|apply\s*now|customs|cashback|credit\s*card\s*offer|rewards/i.test(message);
     if (isOtp || isPromo) return false;
 
     return true;
@@ -44,14 +57,34 @@ export class MashreqParser implements ISmsParser {
     const payloadHash = sha256(message);
     const maskedSenderValue = maskSender(sender);
 
-    // 1. Extract Amount
-    const amountMatch = AMOUNT_RE.exec(message);
-    if (!amountMatch) {
+    // Reject obvious OTPs and promotions inside parse too
+    if (/otp|verification|one-time|passcode|security\s*code|activate/i.test(message)) {
+      throw new ParseError(this.parserKey, "OTP message cannot be parsed as a financial transaction");
+    }
+    if (/promo|discount|offer|win|apply\s*now|customs|cashback|credit\s*card\s*offer|rewards/i.test(message)) {
+      throw new ParseError(this.parserKey, "Promo message cannot be parsed as a financial transaction");
+    }
+
+    // 1. Check if declined
+    const isDeclined = /declined|insufficient\s*funds|insufficient\s*limit|unsuccessful|failed/i.test(message);
+
+    // 2. Extract Available Balance
+    const balMatch = AVAILABLE_BALANCE_RE.exec(message);
+    const availableBalance = balMatch ? new Decimal(balMatch[1].replace(/,/g, "")) : null;
+
+    // 3. Extract Transaction Amount (first amount in message)
+    const amountMatches = [...message.matchAll(/(?:AED|USD)\s*([\d,]+(?:\.\d{1,2})?)/gi)];
+    let amount = new Decimal(0);
+    if (amountMatches.length > 0) {
+      amount = new Decimal(amountMatches[0][1].replace(/,/g, ""));
+    } else {
       throw new ParseError(this.parserKey, "Failed to extract transaction amount");
     }
-    const amount = new Decimal(amountMatch[1].replace(/,/g, ""));
 
-    // 2. Extract Merchant Name
+    // 4. Extract Account Ending
+    const accountEnding = extractAccountEnding(message);
+
+    // 5. Extract Merchant Name
     let merchant: string | null = null;
     const atMatch = MERCHANT_AT_RE.exec(message);
     const usedAtMatch = MERCHANT_USED_AT_RE.exec(message);
@@ -62,24 +95,68 @@ export class MashreqParser implements ISmsParser {
       merchant = usedAtMatch[1].trim();
     }
 
-    // Clean up merchant name if it has wildcard or extra trailing characters
+    // Clean up merchant name
     if (merchant) {
-      // e.g., Tabby* UAE -> Tabby
       merchant = merchant.replace(/\*.*$/, "").trim();
       if (/tabby/i.test(merchant)) {
         merchant = "TABBY";
       }
     }
 
-    // 3. Extract Reference
+    // 6. Extract Reference
     const refMatch = REFERENCE_RE.exec(message);
     const reference = refMatch ? refMatch[1].toUpperCase() : null;
 
-    // Determine type: typically purchases/debits are EXPENSEs
-    const transactionType = "EXPENSE";
+    // 7. Determine Transaction Type & Direction
+    let transactionType: "INCOME" | "EXPENSE" | "TRANSFER" | "DEBT_PAYMENT" | "REMITTANCE" = "EXPENSE";
+    const isSalary = /salary/i.test(message);
+    const isTransfer = /transfer|transferred|sent/i.test(message);
+    const isWithdrawal = /ATM/i.test(message) || /withdrawn/i.test(message);
+    const isDebt = /tabby|table\s*tennis|butterfly|stiga|tt\s*equipment/i.test(merchant || message);
+    const isRemittance = /taptap\s*send/i.test(merchant || message);
 
-    // Assess confidence: Mashreq SMS formats are not VERIFIED_REAL yet. Keep in review mode.
-    const confidence = ImportConfidence.LOW;
+    if (isSalary) {
+      transactionType = "INCOME";
+    } else if (isTransfer) {
+      transactionType = "EXPENSE"; // Keep EXPENSE at parser level, promoted in engine
+    } else if (isWithdrawal) {
+      transactionType = "EXPENSE"; // Will be mapped to Transfer to Cash
+    } else if (isDebt) {
+      transactionType = "DEBT_PAYMENT";
+    } else if (isRemittance) {
+      transactionType = "REMITTANCE";
+    } else {
+      const isInflow = /credited|received|refund|reversal|deposited|credit/i.test(message);
+      if (isInflow) {
+        transactionType = "INCOME";
+      } else {
+        transactionType = "EXPENSE";
+      }
+    }
+
+    // 8. Determine Confidence
+    const hasKnownMerchant = merchant && Object.keys(MERCHANT_CATEGORIES).some(
+      (key) => merchant!.toUpperCase().includes(key) || key.includes(merchant!.toUpperCase())
+    );
+    const isKnownTransfer = isTransfer || isWithdrawal;
+    const isKnownIncome = isSalary || /refund|reversal/i.test(message);
+
+    const isKnown = isKnownIncome || isKnownTransfer || isDebt || isRemittance || hasKnownMerchant;
+    const confidence = isKnown
+      ? (reference ? ImportConfidence.HIGH : ImportConfidence.MEDIUM)
+      : ImportConfidence.LOW;
+
+    // Description
+    let description = "Mashreq Transaction";
+    if (isSalary) {
+      description = "Salary";
+    } else if (isTransfer) {
+      description = merchant ? `Transfer to ${merchant}` : "Internal Transfer";
+    } else if (isWithdrawal) {
+      description = "ATM Withdrawal";
+    } else if (merchant) {
+      description = `Purchase at ${merchant}`;
+    }
 
     return {
       source: "SMS",
@@ -89,16 +166,21 @@ export class MashreqParser implements ISmsParser {
       transactionType,
       amount,
       currency: "AED",
-      merchant: merchant || null,
-      description: merchant ? `Purchase at ${merchant}` : "Mashreq Transaction",
+      merchant,
+      description,
       reference,
       transactionDate: receivedAt,
       redactedMessage,
       payloadHash,
       confidence,
+      availableBalance,
+      accountEnding,
+      isDeclined,
       metadata: {
         maskedSender: maskedSenderValue,
         parsedMerchant: merchant,
+        hasAvailableBalance: !!availableBalance,
+        isDeclined,
       },
     };
   }

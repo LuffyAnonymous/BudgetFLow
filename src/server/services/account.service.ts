@@ -63,13 +63,41 @@ export class AccountService {
   ): Promise<Decimal> {
     const client = this.getClient(tx);
 
+    const account = await client.account.findUnique({
+      where: { id: accountId },
+      select: { latestImportedBalance: true, lastSMSImportedAt: true }
+    });
+
+    let baseBalance = new Decimal(0);
+    let filterDate: Date | null = null;
+
+    if (
+      account?.latestImportedBalance !== null &&
+      account?.latestImportedBalance !== undefined &&
+      account?.lastSMSImportedAt !== null &&
+      account?.lastSMSImportedAt !== undefined
+    ) {
+      baseBalance = new Decimal(account.latestImportedBalance.toString());
+      filterDate = account.lastSMSImportedAt;
+    }
+
     // 1. Calculate Inflows: INCOME (primary) + TRANSFER (destination)
     const incomeAgg = await client.transaction.aggregate({
-      where: { userId, accountId, type: TransactionType.INCOME },
+      where: {
+        userId,
+        accountId,
+        type: TransactionType.INCOME,
+        ...(filterDate ? { date: { gt: filterDate } } : {}),
+      },
       _sum: { amount: true },
     });
     const transferInAgg = await client.transaction.aggregate({
-      where: { userId, toAccountId: accountId, type: TransactionType.TRANSFER },
+      where: {
+        userId,
+        toAccountId: accountId,
+        type: TransactionType.TRANSFER,
+        ...(filterDate ? { date: { gt: filterDate } } : {}),
+      },
       _sum: { amount: true },
     });
 
@@ -90,13 +118,14 @@ export class AccountService {
             TransactionType.TRANSFER,
           ],
         },
+        ...(filterDate ? { date: { gt: filterDate } } : {}),
       },
       _sum: { amount: true },
     });
 
     const outflows = new Decimal(outflowAgg._sum.amount?.toString() || "0");
 
-    const derivedBalance = inflows.minus(outflows);
+    const derivedBalance = baseBalance.add(inflows).minus(outflows);
 
     // 3. Update the cached balance on the Account model
     await client.account.update({

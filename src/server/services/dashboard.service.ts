@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getDubaiCurrentDate, getDubaiMonthRange, getRemainingDaysInMonthDubai } from "@/lib/dates";
 import { Decimal } from "decimal.js";
-import { CategoryType, TransactionType, CashFlowDirection, DebtStatus, SavingGoalStatus } from "@prisma/client";
+import { CategoryType, TransactionType, CashFlowDirection, DebtStatus, SavingGoalStatus, AccountType } from "@prisma/client";
 import {
   calculateRemainingMoney,
   calculateCategoryBudgetRemaining,
@@ -224,7 +224,9 @@ export class DashboardService {
       lastSuccessfulSync: acc.lastSuccessfulSyncAt ? acc.lastSuccessfulSyncAt.toISOString() : null,
     }));
 
-    const totalAvailable = accounts.reduce((sum, acc) => sum.plus(acc.currentBalance), new Decimal(0));
+    const totalAvailable = accounts
+      .filter((acc) => acc.type === AccountType.EMIRATES_NBD || acc.type === AccountType.MASHREQ)
+      .reduce((sum, acc) => sum.plus(acc.currentBalance), new Decimal(0));
 
     return {
       month: activeMonth,

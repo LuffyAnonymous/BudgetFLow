@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { Category, CategoryType } from "@prisma/client";
 import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
-import { defaultRulesEngine } from "../rules/rules-engine";
+import { defaultRulesEngine, MERCHANT_CATEGORIES } from "../rules/rules-engine";
 
 export type CategorizerResult =
   | { resolved: true; categoryId: string; matchedRuleId: string | null }
@@ -87,6 +87,21 @@ export class CategorizerService {
     // 4. Fallback for general spends or unmapped categories: Try to find a category matching the merchant name,
     // otherwise fallback to "Uncategorized".
     if (normalized.merchant) {
+      const cleanMerchant = normalized.merchant.trim().toUpperCase();
+      const matchedKey = Object.keys(MERCHANT_CATEGORIES).find(
+        (key) => cleanMerchant === key || cleanMerchant.includes(key) || key.includes(cleanMerchant)
+      );
+      const mappedCategoryName = matchedKey ? MERCHANT_CATEGORIES[matchedKey] : null;
+
+      if (mappedCategoryName) {
+        const cat = await db.category.findFirst({
+          where: { userId, name: { equals: mappedCategoryName, mode: "insensitive" } },
+        });
+        if (cat) {
+          return { resolved: true, categoryId: cat.id, matchedRuleId: "builtin-merchant-map" };
+        }
+      }
+
       const cat = await db.category.findFirst({
         where: { userId, name: { equals: normalized.merchant, mode: "insensitive" } },
       });

@@ -257,7 +257,8 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow", () => {
 
   describe("Import Engine Hardening: Automated Workflow Checks", () => {
     it("automatically routes Mashreq spending to review when unverified, and processes after manual confirmation", async () => {
-      const msg = "Your Mashreq card ending 1234 was used for AED 120.00 at CARREFOUR on 11/07/2026. Ref: CR888";
+      // Use UNKNOWN STORE to make confidence LOW so it goes to review
+      const msg = "Your Mashreq card ending 1234 was used for AED 120.00 at UNKNOWN STORE on 11/07/2026. Ref: CR888";
       const res = await actualImportService.processSms(userId, {
         sender: "MASHREQ",
         message: msg,
@@ -298,29 +299,23 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow", () => {
         accountId: enbd.id,
       });
 
-      // 2. Transfer of 3,750 ENBD -> Mashreq
+      // 2. Transfer of 3,750 ENBD -> Mashreq - automatically processed under new flow!
       const msgTransfer = "Dear Customer, your transfer of AED 3,750.00 to Mashreq account ending 1234 was successful. Ref: TRF11";
       const resTransfer = await actualImportService.processSms(userId, {
         sender: "ENBD",
         message: msgTransfer,
         receivedAt: new Date(),
       });
-      expect(resTransfer.outcome).toBe("review_required");
-      const reviewTransfer = resTransfer as { outcome: "review_required"; importedTransactionId: string };
-      const confirmTransfer = await actualImportService.confirmImport(userId, reviewTransfer.importedTransactionId);
-      expect(confirmTransfer.transactionId).toBeDefined();
+      expect(resTransfer.outcome).toBe("processed");
 
-      // 3. ATM withdrawal of 2,000 ENBD -> Cash
+      // 3. ATM withdrawal of 2,000 ENBD -> Cash - automatically processed under new flow!
       const msgWithdrawal = "Dear Customer, AED 2,000.00 has been withdrawn from your account ending 01 at ATM. Ref: ATM11";
       const resWithdrawal = await actualImportService.processSms(userId, {
         sender: "ENBD",
         message: msgWithdrawal,
         receivedAt: new Date(),
       });
-      expect(resWithdrawal.outcome).toBe("review_required");
-      const reviewWithdrawal = resWithdrawal as { outcome: "review_required"; importedTransactionId: string };
-      const confirmWithdrawal = await actualImportService.confirmImport(userId, reviewWithdrawal.importedTransactionId);
-      expect(confirmWithdrawal.transactionId).toBeDefined();
+      expect(resWithdrawal.outcome).toBe("processed");
 
       // 4. Verify balances
       const accounts = await accountService.getAccounts(userId);
@@ -348,17 +343,14 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow", () => {
         },
       });
 
+      // Automatically processed under new flow!
       const msg = "AED 500.00 debited from card ending 1234 at TABBY UAE on 11-07-2026. Ref: TXN9992";
       const res = await actualImportService.processSms(userId, {
         sender: "MASHREQ",
         message: msg,
         receivedAt: new Date(),
       });
-      expect(res.outcome).toBe("review_required");
-      const review = res as { outcome: "review_required"; importedTransactionId: string };
-      
-      const confirmRes = await actualImportService.confirmImport(userId, review.importedTransactionId);
-      expect(confirmRes.transactionId).toBeDefined();
+      expect(res.outcome).toBe("processed");
 
       // Verify debt is PAID
       const updatedDebt = await db.debt.findUnique({ where: { id: debt.id } });

@@ -51,6 +51,12 @@ export interface NormalizedSmsTransaction {
   readonly payloadHash: string;
   /** Confidence in this parse result */
   readonly confidence: ImportConfidence;
+  /** Authoritative available balance if reported in the SMS, null otherwise */
+  readonly availableBalance: Decimal | null;
+  /** Last 4 digits of the account/card if available, null otherwise */
+  readonly accountEnding: string | null;
+  /** Whether the transaction was explicitly declined/failed */
+  readonly isDeclined: boolean;
   /** Additional structured data the parser found (no sensitive values) */
   readonly metadata: Record<string, unknown>;
 }
