@@ -105,14 +105,42 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let body: unknown;
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.log("[SMS Webhook Debug] 400 Bad Request: Failed to parse request body as JSON", err);
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (body && typeof body === "object") {
+    const rawBody = body as Record<string, unknown>;
+    const keys = Object.keys(rawBody);
+    const senderType = typeof rawBody.sender;
+    const isSenderNonEmpty = typeof rawBody.sender === "string" ? rawBody.sender.trim().length > 0 : false;
+    const messageType = typeof rawBody.message;
+    const messageLength = typeof rawBody.message === "string" ? rawBody.message.length : 0;
+    const receivedAtType = typeof rawBody.receivedAt;
+    const receivedAtValue = rawBody.receivedAt;
+    const deviceIdType = typeof rawBody.deviceId;
+
+    console.log("[SMS Webhook Debug] Request body metadata:", {
+      keys,
+      senderType,
+      isSenderNonEmpty,
+      messageType,
+      messageLength,
+      receivedAtType,
+      receivedAtValue,
+      deviceIdType,
+    });
+  } else {
+    console.log("[SMS Webhook Debug] Request body is not an object:", typeof body);
   }
 
   const parsed = SmsWebhookBodySchema.safeParse(body);
   if (!parsed.success) {
+    const fieldErrors = parsed.error.flatten().fieldErrors;
+    console.log("[SMS Webhook Debug] 400 Bad Request: Zod validation failed", fieldErrors);
     return NextResponse.json(
-      { error: "Invalid request", details: parsed.error.flatten().fieldErrors },
+      { error: "Invalid request", fieldErrors },
       { status: 400 }
     );
   }
