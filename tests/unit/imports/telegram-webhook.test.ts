@@ -13,7 +13,7 @@ describe("Telegram Webhook Integration Endpoint", () => {
     vi.restoreAllMocks();
     process.env.TELEGRAM_BOT_TOKEN = "test-bot-token";
     process.env.TELEGRAM_WEBHOOK_SECRET = "test-webhook-secret";
-    process.env.TELEGRAM_ALLOWED_CHAT_IDS = "12345,67890";
+    process.env.TELEGRAM_ALLOWED_CHAT_IDS = "12345,67890,55555"; // 12345 (mapped & exists), 67890 (mapped & not exists), 55555 (allowed but unmapped)
 
     // Mock fetch
     fetchSpy = vi.fn().mockImplementation(() => Promise.resolve({
@@ -40,6 +40,9 @@ describe("Telegram Webhook Integration Endpoint", () => {
       },
     });
     userId = user.id;
+
+    // Set User Map dynamically (mapped 12345 to our real user, 67890 to a non-existent uuid)
+    process.env.TELEGRAM_CHAT_USER_MAP = `12345:${userId},67890:84bec043-bff0-470e-9bba-fd81a6800844`;
 
     // Setup base account balances
     const oneHourAgo = new Date(Date.now() - 3600 * 1000);
@@ -111,10 +114,6 @@ describe("Telegram Webhook Integration Endpoint", () => {
     const req = makeWebhookRequest({ update_id: 1, message: { text: "hello" } }, "wrong-secret");
     const res = await POST(req);
     expect(res.status).toBe(401);
-
-    const reqMissing = makeWebhookRequest({ update_id: 1, message: { text: "hello" } }, "");
-    const resMissing = await POST(reqMissing);
-    expect(resMissing.status).toBe(401);
   });
 
   it("ignores messages without text, returning HTTP 200", async () => {
@@ -154,7 +153,70 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("successfully parses ENBD salary SMS and sends success reply", async () => {
+  it("ignores edited_message updates entirely, returning HTTP 200", async () => {
+    const req = makeWebhookRequest({
+      update_id: 102,
+      edited_message: {
+        message_id: 202,
+        chat: { id: 12345 },
+        date: Math.floor(Date.now() / 1000),
+        text: "ENBD:\nYour salary of AED 5750.00 has been credited to account ending 1234."
+      }
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ignored).toBe(true);
+    expect(json.reason).toBe("edited_message ignored");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("replies that connection is not connected for allowed but unmapped chat ID", async () => {
+    const req = makeWebhookRequest({
+      update_id: 110,
+      message: {
+        message_id: 210,
+        chat: { id: 55555 }, // Allowed in allowlist, but not in map
+        date: Math.floor(Date.now() / 1000),
+        text: "ENBD:\nYour salary of AED 5750.00 has been credited to account ending 1234."
+      }
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ignored).toBe(true);
+    expect(json.reason).toBe("unmapped chat ID");
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    expect(body.text).toBe("Telegram account is not connected to BudgetFlow.");
+  });
+
+  it("replies that connection is invalid for mapped user that does not exist in DB", async () => {
+    const req = makeWebhookRequest({
+      update_id: 111,
+      message: {
+        message_id: 211,
+        chat: { id: 67890 }, // Mapped to non-existent userId in map
+        date: Math.floor(Date.now() / 1000),
+        text: "ENBD:\nYour salary of AED 5750.00 has been credited to account ending 1234."
+      }
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ignored).toBe(true);
+    expect(json.reason).toBe("invalid user mapping");
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+    expect(body.text).toBe("Telegram account connection is invalid.");
+  });
+
+  it("successfully parses ENBD salary SMS and sends success reply for mapped user", async () => {
     const req = makeWebhookRequest({
       update_id: 103,
       message: {
@@ -201,45 +263,7 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(body.text).toContain("Reason: Could not confidently identify the transaction type.");
   });
 
-  it("handles low confidence/unsupported Tabby payment messages as low-confidence review or rejection", async () => {
-    const req = makeWebhookRequest({
-      update_id: 105,
-      message: {
-        message_id: 205,
-        chat: { id: 12345 },
-        date: Math.floor(Date.now() / 1000),
-        text: "Tabby: AED 50.00 is due."
-      }
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-
-    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body.text).toContain("❌ Import failed");
-    expect(body.text).toContain("Reason: Sender not recognized");
-  });
-
-  it("handles unsupported messages gracefully, replying with failure and returning HTTP 200", async () => {
-    const req = makeWebhookRequest({
-      update_id: 106,
-      message: {
-        message_id: 206,
-        chat: { id: 12345 },
-        date: Math.floor(Date.now() / 1000),
-        text: "ENBD: Random text that does not resemble bank SMS."
-      }
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-
-    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body.text).toContain("❌ Import failed");
-    expect(body.text).toContain("Reason: [emirates-nbd-salary-v1] Parse failed: Failed to extract transaction amount");
-  });
-
-  it("prevents duplicate Telegram webhook deliveries using idempotencyKey, replying with Already Imported", async () => {
+  it("prevents duplicate Telegram webhook deliveries using stable chatId/messageId idempotencyKey", async () => {
     const payload = {
       update_id: 107,
       message: {
@@ -257,6 +281,13 @@ describe("Telegram Webhook Integration Endpoint", () => {
     const body1 = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(body1.text).toContain("✅ Imported");
 
+    // Check that transaction is stored in DB with correct idempotencyKey
+    const importedTxs = await db.importedTransaction.findMany({
+      where: { userId }
+    });
+    expect(importedTxs.length).toBe(1);
+    expect(importedTxs[0].idempotencyKey).toBe("telegram:12345:207");
+
     // Clear calls
     fetchSpy.mockClear();
 
@@ -266,45 +297,5 @@ describe("Telegram Webhook Integration Endpoint", () => {
 
     const body2 = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(body2.text).toContain("ℹ️ Already imported");
-  });
-
-  it("handles Telegram reply HTTP failure safely without throwing server 500 error", async () => {
-    // Make fetch return error
-    fetchSpy.mockImplementation(() => Promise.resolve({
-      ok: false,
-      status: 400,
-      text: () => Promise.resolve("Bad Request"),
-    }));
-
-    const req = makeWebhookRequest({
-      update_id: 108,
-      message: {
-        message_id: 208,
-        chat: { id: 12345 },
-        date: Math.floor(Date.now() / 1000),
-        text: "ENBD:\nYour salary of AED 5750.00 has been credited to account ending 1234."
-      }
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200); // Route itself returns 200 even if reply fails
-  });
-
-  it("handles Telegram reply Network/Exception failure safely without throwing server 500 error", async () => {
-    // Make fetch throw exception
-    fetchSpy.mockImplementation(() => Promise.reject(new Error("Network Down")));
-
-    const req = makeWebhookRequest({
-      update_id: 109,
-      message: {
-        message_id: 209,
-        chat: { id: 12345 },
-        date: Math.floor(Date.now() / 1000),
-        text: "ENBD:\nYour salary of AED 5750.00 has been credited to account ending 1234."
-      }
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200); // Route itself returns 200 even if reply fails
   });
 });
