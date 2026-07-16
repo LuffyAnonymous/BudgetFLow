@@ -22,7 +22,7 @@ import { createRedisProvider } from "./redis.provider";
 export type { RateLimiterProvider, RateLimitResult };
 
 function createProvider(): RateLimiterProvider {
-  const rawProvider = process.env.RATE_LIMIT_PROVIDER?.toLowerCase() ?? "memory";
+  const rawProvider = process.env.RATE_LIMIT_PROVIDER?.trim().toLowerCase() || "memory";
 
   if (rawProvider === "redis") {
     // Will throw with a descriptive message if UPSTASH vars are missing

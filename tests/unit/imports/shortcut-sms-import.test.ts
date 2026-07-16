@@ -1,0 +1,225 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { POST } from "../../../src/app/api/integrations/sms/shortcut/route";
+import { NextRequest } from "next/server";
+import { db } from "@/lib/db";
+import { AccountType } from "@prisma/client";
+
+describe("iOS Shortcut SMS Ingestion Endpoint", () => {
+  let userId: string;
+  const originalEnv = { ...process.env };
+  let fetchSpy = vi.fn();
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    process.env.IOS_SHORTCUT_IMPORT_TOKEN = "test-shortcut-token";
+    process.env.TELEGRAM_BOT_TOKEN = "test-bot-token";
+    process.env.TELEGRAM_CHAT_USER_MAP = `12345:some-user-id`; // mapped dynamically
+
+    // Mock fetch for Telegram notifications
+    fetchSpy = vi.fn().mockImplementation(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ ok: true }),
+      text: () => Promise.resolve("Success"),
+    }));
+    global.fetch = fetchSpy as any;
+
+    // Clean DB in order
+    await db.importedTransaction.deleteMany({});
+    await db.transaction.deleteMany({});
+    await db.account.deleteMany({});
+    await db.importSetting.deleteMany({});
+    await db.user.deleteMany({});
+
+    // Create user
+    const user = await db.user.create({
+      data: {
+        email: "shortcut_test@budgetflow.ae",
+        passwordHash: "dummy-hash",
+        name: "Shortcut Tester",
+      },
+    });
+    userId = user.id;
+
+    // Update Telegram chat mapping
+    process.env.TELEGRAM_CHAT_USER_MAP = `987654:${userId}`;
+
+    // Setup base account balances
+    const oneHourAgo = new Date(Date.now() - 3600 * 1000);
+    await db.account.create({
+      data: {
+        userId,
+        name: "Emirates NBD",
+        type: AccountType.EMIRATES_NBD,
+        currentBalance: 1000,
+        latestImportedBalance: 1000,
+        lastSMSImportedAt: oneHourAgo,
+      }
+    });
+    await db.account.create({
+      data: {
+        userId,
+        name: "Mashreq",
+        type: AccountType.MASHREQ,
+        currentBalance: 2000,
+        latestImportedBalance: 2000,
+        lastSMSImportedAt: oneHourAgo,
+      }
+    });
+
+    // Create Uncategorized category
+    await db.category.upsert({
+      where: { userId_name: { userId, name: "Uncategorized" } },
+      update: {},
+      create: { userId, name: "Uncategorized", type: "VARIABLE_EXPENSE" }
+    });
+
+    // Create Groceries category
+    await db.category.upsert({
+      where: { userId_name: { userId, name: "Groceries" } },
+      update: {},
+      create: { userId, name: "Groceries", type: "VARIABLE_EXPENSE" }
+    });
+
+    // Create Salary category
+    await db.category.upsert({
+      where: { userId_name: { userId, name: "Salary" } },
+      update: {},
+      create: { userId, name: "Salary", type: "INCOME" }
+    });
+
+    // Enable import settings for the user
+    await db.importSetting.create({
+      data: {
+        userId,
+        enabled: true,
+        senderAllowlist: ["ENBD", "MASHREQ"],
+      },
+    });
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.restoreAllMocks();
+  });
+
+  const makeShortcutRequest = (payload: any, token = "test-shortcut-token") => {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["authorization"] = `Bearer ${token}`;
+    }
+    headers["content-type"] = "application/json";
+
+    return new NextRequest("http://localhost:3000/api/integrations/sms/shortcut", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+  };
+
+  it("1. Valid Mashreq debit SMS", async () => {
+    const payload = {
+      sender: "Mashreq",
+      message: "Mashreq Debit Card ending 3411 was used for a transaction of AED 100.00 at CARREFOUR on Tuesday, 14 July 2026. Available balance: AED 1900.00",
+    };
+
+    const req = makeShortcutRequest(payload);
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.outcome).toBe("processed");
+    expect(json.bank).toBe("Mashreq");
+    expect(json.type).toBe("EXPENSE");
+    expect(json.amount).toBe("100.00");
+    expect(json.balance).toBe("1900.00"); // overridden exactly by available balance
+
+    // Verify Telegram notification fetch was called
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it("2. Valid Emirates NBD credit SMS", async () => {
+    const payload = {
+      sender: "ENBD",
+      message: "AED 5,000.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. The available balance is AED 6,000.00.",
+    };
+
+    const req = makeShortcutRequest(payload);
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.outcome).toBe("processed");
+    expect(json.bank).toBe("Emirates NBD");
+    expect(json.type).toBe("INCOME");
+    expect(json.amount).toBe("5000.00");
+    expect(json.balance).toBe("6000.00");
+  });
+
+  it("3. Invalid token returns 401", async () => {
+    const payload = { sender: "Mashreq", message: "Any SMS" };
+    const req = makeShortcutRequest(payload, "wrong-token");
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+  });
+
+  it("4. Empty message returns 400", async () => {
+    const payload = { sender: "Mashreq", message: "" };
+    const req = makeShortcutRequest(payload);
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it("5. Duplicate submission check", async () => {
+    const payload = {
+      sender: "Mashreq",
+      message: "Mashreq Debit Card ending 3411 was used for a transaction of AED 50.00 at CARREFOUR on Tuesday, 14 July 2026. Available balance: AED 1950.00",
+    };
+
+    // First request
+    const req1 = makeShortcutRequest(payload);
+    const res1 = await POST(req1);
+    expect(res1.status).toBe(200);
+    const json1 = await res1.json();
+    expect(json1.outcome).toBe("processed");
+    expect(json1.balance).toBe("1950.00");
+
+    // Second request (duplicate)
+    const req2 = makeShortcutRequest(payload);
+    const res2 = await POST(req2);
+    expect(res2.status).toBe(200);
+    const json2 = await res2.json();
+    expect(json2.outcome).toBe("duplicate");
+
+    // Verify balance was only modified once
+    const acc = await db.account.findFirst({
+      where: { userId, type: AccountType.MASHREQ }
+    });
+    expect(acc?.currentBalance.toFixed(2)).toBe("1950.00");
+  });
+
+  it("6. Account isolation verification", async () => {
+    // ENBD balance is 1000, Mashreq balance is 2000
+    // Credit ENBD with 500 without available balance (should compute currentBalance = 1000 + 500 = 1500)
+    const payload = {
+      sender: "ENBD",
+      message: "AED 500.00 has been credited to your account.",
+    };
+
+    const req = makeShortcutRequest(payload);
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.outcome).toBe("processed");
+    expect(json.balance).toBe("1500.00");
+
+    // Check that Mashreq balance is still 2000
+    const accounts = await db.account.findMany({ where: { userId } });
+    const enbd = accounts.find(a => a.type === AccountType.EMIRATES_NBD)!;
+    const mashreq = accounts.find(a => a.type === AccountType.MASHREQ)!;
+
+    expect(enbd.currentBalance.toFixed(2)).toBe("1500.00");
+    expect(mashreq.currentBalance.toFixed(2)).toBe("2000.00"); // completely isolated!
+  });
+});
