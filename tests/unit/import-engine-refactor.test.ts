@@ -287,4 +287,43 @@ describe("SMS Import Engine Refactor Tests", () => {
     const data = await dashboardService.getDashboardData(userId);
     expect(data.totalAvailableMoney).toBe("8750.00"); // 5000.00 + 3750.00
   });
+
+  it("11. Verifies exact credit/debit balance sequence without available balance (fallback plus/minus)", async () => {
+    // 1. ENBD credit AED 5,750
+    await importService.processSms(userId, {
+      sender: "ENBD",
+      message: "AED 5,750.00 has been credited to your account ending 99.",
+      receivedAt: new Date("2026-07-16T00:00:00.000Z"),
+    });
+
+    // 2. ENBD debit AED 3,750
+    await importService.processSms(userId, {
+      sender: "ENBD",
+      message: "Your ENBD card ending 99 was charged AED 3,750.00 at CARREFOUR.",
+      receivedAt: new Date("2026-07-16T00:01:00.000Z"),
+    });
+
+    // 3. Mashreq credit AED 3,750
+    await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: "Dear Customer, you have received a transfer of AED 3,750.00.",
+      receivedAt: new Date("2026-07-16T00:02:00.000Z"),
+    });
+
+    // 4. Mashreq debit AED 10.61
+    await importService.processSms(userId, {
+      sender: "MASHREQ",
+      message: "Your Mashreq card ending 3411 was used for AED 10.61 at CARREFOUR.",
+      receivedAt: new Date("2026-07-16T00:03:00.000Z"),
+    });
+
+    // Verify balances
+    const accounts = await accountService.getAccounts(userId);
+    const enbd = accounts.find(a => a.type === AccountType.EMIRATES_NBD)!;
+    const mashreq = accounts.find(a => a.type === AccountType.MASHREQ)!;
+
+    expect(enbd.currentBalance.toFixed(2)).toBe("2000.00");
+    expect(mashreq.currentBalance.toFixed(2)).toBe("3739.39");
+  });
 });
+

@@ -48,7 +48,10 @@ export function classifyDirection(
     lowerMsg.includes("withdrawn") ||
     lowerMsg.includes("payment of") ||
     lowerMsg.includes("used for") ||
-    lowerMsg.includes("transaction of")
+    lowerMsg.includes("transaction of") ||
+    lowerMsg.includes("charged") ||
+    lowerMsg.includes("spent") ||
+    lowerMsg.includes("withdrew")
   ) {
     return TransactionDirection.OUTFLOW;
   }
