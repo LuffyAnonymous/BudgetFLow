@@ -13,6 +13,7 @@ enum ImportSource {
   EMAIL
   PDF
   OPEN_BANKING
+  APPLE_WALLET
 }
 
 enum ImportStatus {
@@ -22,6 +23,8 @@ enum ImportStatus {
   PROCESSED
   REJECTED
   FAILED
+  IGNORED
+  PENDING_EVENT
 }
 
 enum ImportConfidence {
@@ -84,6 +87,7 @@ enum TransactionOrigin {
   EMAIL_IMPORT
   CSV_IMPORT
   SYSTEM
+  APPLE_WALLET
 }
 
 model User {
@@ -115,29 +119,28 @@ model User {
 }
 
 model Account {
-  id                    String        @id @default(uuid())
+  id                    String      @id @default(uuid())
   type                  AccountType
   name                  String
-  currentBalance        Decimal       @db.Decimal(12, 2) @default(0)
-  latestImportedBalance Decimal?      @db.Decimal(12, 2)
+  currentBalance        Decimal     @default(0) @db.Decimal(12, 2)
+  latestImportedBalance Decimal?    @db.Decimal(12, 2)
   lastSMSImportedAt     DateTime?
   lastSuccessfulSyncAt  DateTime?
-  lastUpdated           DateTime      @default(now()) @updatedAt
+  lastUpdated           DateTime    @default(now()) @updatedAt
   userId                String
-  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  user                  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   // Relations
-  transactions          Transaction[] @relation("AccountTransactions")
+  transactions           Transaction[] @relation("AccountTransactions")
   transferToTransactions Transaction[] @relation("TransferToTransactions")
 
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, name])
   @@index([userId])
   @@index([userId, type])
 }
-
 
 model Category {
   id                 String              @id @default(uuid())
@@ -161,27 +164,27 @@ model Category {
 }
 
 model Transaction {
-  id                   String                @id @default(uuid())
-  date                 DateTime
-  categoryId           String
-  category             Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  description          String
-  amount               Decimal               @db.Decimal(12, 2)
-  paymentMethod        String
-  notes                String?
-  type                 TransactionType
-  cashFlowDirection    CashFlowDirection?
-  origin               TransactionOrigin     @default(MANUAL)
-  
+  id                String             @id @default(uuid())
+  date              DateTime
+  categoryId        String
+  category          Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  description       String
+  amount            Decimal            @db.Decimal(12, 2)
+  paymentMethod     String
+  notes             String?
+  type              TransactionType
+  cashFlowDirection CashFlowDirection?
+  origin            TransactionOrigin  @default(MANUAL)
+
   // Account tracking
-  accountId            String?
-  account              Account?              @relation("AccountTransactions", fields: [accountId], references: [id], onDelete: SetNull)
-  toAccountId          String?
-  toAccount            Account?              @relation("TransferToTransactions", fields: [toAccountId], references: [id], onDelete: SetNull)
+  accountId   String?
+  account     Account? @relation("AccountTransactions", fields: [accountId], references: [id], onDelete: SetNull)
+  toAccountId String?
+  toAccount   Account? @relation("TransferToTransactions", fields: [toAccountId], references: [id], onDelete: SetNull)
 
   // Import tracking
   importSource         ImportSource?
-  adjustedAt           DateTime?             // set when user edits an imported transaction
+  adjustedAt           DateTime? // set when user edits an imported transaction
   userId               String
   user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   debtPayment          DebtPayment?
@@ -208,7 +211,7 @@ model Budget {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   amount     Decimal  @db.Decimal(12, 2)
-  month      String   // stored in YYYY-MM format
+  month      String // stored in YYYY-MM format
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt  DateTime @default(now())
@@ -224,7 +227,7 @@ model Debt {
   originalBalance Decimal       @db.Decimal(12, 2)
   currentBalance  Decimal       @db.Decimal(12, 2)
   monthlyPayment  Decimal       @db.Decimal(12, 2)
-  dueDay          Int           // e.g. 25
+  dueDay          Int // e.g. 25
   rolloverFeeRate Decimal       @db.Decimal(7, 4) // percentage, e.g. 4.50
   status          DebtStatus    @default(ACTIVE)
   notes           String?
@@ -317,45 +320,45 @@ enum RemittanceStatus {
 }
 
 model Remittance {
-  id                    String           @id @default(uuid())
-  recipient             String?
-  amountSentAed         Decimal          @db.Decimal(12, 2)
-  cashOutflowAed        Decimal          @db.Decimal(12, 2) // Immutable cash outflow at creation
-  exchangeRate          Decimal?         @db.Decimal(18, 6) // Upgraded precision
-  amountReceivedPhp     Decimal?         @db.Decimal(12, 2)
-  transferFeeAed        Decimal?         @db.Decimal(12, 2)
-  transferProvider      String
-  transferDate          DateTime
-  referenceNumber       String?
-  notes                 String?
-  status                RemittanceStatus @default(COMPLETED)
-  archivedAt            DateTime?
+  id                String           @id @default(uuid())
+  recipient         String?
+  amountSentAed     Decimal          @db.Decimal(12, 2)
+  cashOutflowAed    Decimal          @db.Decimal(12, 2) // Immutable cash outflow at creation
+  exchangeRate      Decimal?         @db.Decimal(18, 6) // Upgraded precision
+  amountReceivedPhp Decimal?         @db.Decimal(12, 2)
+  transferFeeAed    Decimal?         @db.Decimal(12, 2)
+  transferProvider  String
+  transferDate      DateTime
+  referenceNumber   String?
+  notes             String?
+  status            RemittanceStatus @default(COMPLETED)
+  archivedAt        DateTime?
 
   // Reversal details
   reversedAt            DateTime?
   reversalReason        String?
-  reversalTransactionId String?          @unique
-  reversalTransaction   Transaction?     @relation("RemittanceReversal", fields: [reversalTransactionId], references: [id], onDelete: SetNull)
+  reversalTransactionId String?      @unique
+  reversalTransaction   Transaction? @relation("RemittanceReversal", fields: [reversalTransactionId], references: [id], onDelete: SetNull)
 
   // Original Transaction relation
-  transactionId         String?          @unique
-  transaction           Transaction?     @relation("RemittanceOriginal", fields: [transactionId], references: [id], onDelete: SetNull)
+  transactionId String?      @unique
+  transaction   Transaction? @relation("RemittanceOriginal", fields: [transactionId], references: [id], onDelete: SetNull)
 
   // Category relation
-  categoryId            String?
-  category              Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
-  userId                String
-  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   // Idempotency keys
-  idempotencyKey        String?
+  idempotencyKey         String?
   reversalIdempotencyKey String?
 
-  version               Int              @default(0)
-  attachments           Attachment[]
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
+  version     Int          @default(0)
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   @@unique([userId, idempotencyKey])
   @@unique([userId, reversalIdempotencyKey])
@@ -442,42 +445,42 @@ model RecurringTemplate {
   notes           String?
   status          RecurringStatus    @default(ACTIVE)
 
-  sourceType      RecurringSourceType @default(GENERAL)
-  sourceEntityId  String?
+  sourceType     RecurringSourceType @default(GENERAL)
+  sourceEntityId String?
 
-  categoryId      String?
-  category        Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  userId          String
-  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  occurrences     RecurringOccurrence[]
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  occurrences RecurringOccurrence[]
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
 
   @@index([userId, status])
   @@index([categoryId])
 }
 
 model RecurringOccurrence {
-  id                  String                    @id @default(uuid())
-  scheduledDate       DateTime
-  status              RecurringOccurrenceStatus @default(PENDING)
-  processedAt         DateTime?
-  handledAt           DateTime?
-  skippedAt           DateTime?
-  failureReason       String?
-  idempotencyKey      String
-  
+  id             String                    @id @default(uuid())
+  scheduledDate  DateTime
+  status         RecurringOccurrenceStatus @default(PENDING)
+  processedAt    DateTime?
+  handledAt      DateTime?
+  skippedAt      DateTime?
+  failureReason  String?
+  idempotencyKey String
+
   recurringTemplateId String
-  template            RecurringTemplate         @relation(fields: [recurringTemplateId], references: [id], onDelete: Restrict)
+  template            RecurringTemplate @relation(fields: [recurringTemplateId], references: [id], onDelete: Restrict)
   userId              String
-  user                User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  linkedTransactionId String?                   @unique
-  linkedTransaction   Transaction?              @relation(fields: [linkedTransactionId], references: [id], onDelete: SetNull)
-  
-  createdAt           DateTime                  @default(now())
-  updatedAt           DateTime                  @updatedAt
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  linkedTransactionId String?      @unique
+  linkedTransaction   Transaction? @relation(fields: [linkedTransactionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, idempotencyKey])
   @@unique([userId, recurringTemplateId, scheduledDate])
@@ -486,25 +489,25 @@ model RecurringOccurrence {
 }
 
 model Notification {
-  id                 String               @id @default(uuid())
-  type               NotificationType
-  title              String
-  message            String
-  severity           NotificationSeverity @default(INFO)
-  eventKey           String
-  
-  relatedEntityType  String?
-  relatedEntityId    String?
-  destinationPath    String?
-  
-  readAt             DateTime?
-  dismissedAt        DateTime?
-  
-  userId             String
-  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  id       String               @id @default(uuid())
+  type     NotificationType
+  title    String
+  message  String
+  severity NotificationSeverity @default(INFO)
+  eventKey String
+
+  relatedEntityType String?
+  relatedEntityId   String?
+  destinationPath   String?
+
+  readAt      DateTime?
+  dismissedAt DateTime?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, eventKey])
   @@index([userId, readAt, dismissedAt])
@@ -520,9 +523,9 @@ model MonthlyRollover {
   copiedBudgetCount Int
   confirmedAt       DateTime @default(now())
   idempotencyKey    String
-  
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, targetMonth])
   @@index([userId])
@@ -594,28 +597,28 @@ model AuditLog {
 }
 
 model Attachment {
-  id            String           @id @default(uuid())
-  originalName  String
-  storageKey    String           @unique
-  mimeType      String
-  fileSize      Int
-  checksum      String
-  status        AttachmentStatus @default(PENDING)
-  deletedAt     DateTime?
+  id           String           @id @default(uuid())
+  originalName String
+  storageKey   String           @unique
+  mimeType     String
+  fileSize     Int
+  checksum     String
+  status       AttachmentStatus @default(PENDING)
+  deletedAt    DateTime?
 
   transactionId String?
-  transaction   Transaction?     @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  transaction   Transaction?       @relation(fields: [transactionId], references: [id], onDelete: SetNull)
   debtPaymentId String?
-  debtPayment   DebtPayment?     @relation(fields: [debtPaymentId], references: [id], onDelete: SetNull)
+  debtPayment   DebtPayment?       @relation(fields: [debtPaymentId], references: [id], onDelete: SetNull)
   savingTxId    String?
   savingTx      SavingTransaction? @relation(fields: [savingTxId], references: [id], onDelete: SetNull)
   remittanceId  String?
-  remittance    Remittance?      @relation(fields: [remittanceId], references: [id], onDelete: SetNull)
+  remittance    Remittance?        @relation(fields: [remittanceId], references: [id], onDelete: SetNull)
 
-  userId        String
-  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId, createdAt])
   @@index([transactionId])
@@ -662,60 +665,60 @@ model ImportSetting {
 /// One canonical record per unique (userId, fingerprint).
 /// Duplicate webhook deliveries increment duplicateCount rather than inserting new rows.
 model ImportedTransaction {
-  id              String           @id @default(uuid())
-  source          ImportSource
-  institution     String
-  status          ImportStatus     @default(RECEIVED)
-  confidence      ImportConfidence?
-  parserKey       String?
-  parserVersion   String?
+  id            String            @id @default(uuid())
+  source        ImportSource
+  institution   String
+  status        ImportStatus      @default(RECEIVED)
+  confidence    ImportConfidence?
+  parserKey     String?
+  parserVersion String?
 
   /// Redacted SMS text — no raw account numbers stored.
   /// Set to null after rawPayloadRetentionDays per owning user's ImportSetting.
-  redactedPayload String?
+  redactedPayload  String?
   /// The raw, unmodified message received from the client.
-  rawPayload      String?
+  rawPayload       String?
   /// SHA-256 of the original raw message (for integrity verification, not display)
-  payloadHash     String
+  payloadHash      String
   /// Timestamp when redactedPayload was cleared by the retention cleanup job.
   payloadClearedAt DateTime?
-  maskedSender    String?
-  deviceId        String?
+  maskedSender     String?
+  deviceId         String?
 
   /// Parsed financial data
-  parsedAmount    Decimal?         @db.Decimal(12, 2)
-  parsedCurrency  String?
-  parsedReference String?
+  parsedAmount      Decimal? @db.Decimal(12, 2)
+  parsedCurrency    String?
+  parsedReference   String?
   parsedDescription String?
 
   /// Timestamps
-  receivedAt      DateTime
+  receivedAt       DateTime
   serverReceivedAt DateTime?
-  financialDate   DateTime?
-  processedAt     DateTime?
-  reviewedAt      DateTime?
+  financialDate    DateTime?
+  processedAt      DateTime?
+  reviewedAt       DateTime?
 
   /// Dedup — @@unique enforces one canonical record per fingerprint
   fingerprint     String
-  duplicateCount  Int              @default(0)
+  duplicateCount  Int       @default(0)
   lastDuplicateAt DateTime?
 
   /// Request-level idempotency (Idempotency-Key header)
-  idempotencyKey  String?
+  idempotencyKey String?
 
   /// Failure details — safe user-facing message only, never a stack trace
-  failureCode     String?
-  failureMessage  String?
+  failureCode    String?
+  failureMessage String?
 
   /// FK lives HERE
-  transactionId   String?
-  transaction     Transaction?     @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 
-  userId          String
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, fingerprint])
   @@unique([userId, idempotencyKey])
