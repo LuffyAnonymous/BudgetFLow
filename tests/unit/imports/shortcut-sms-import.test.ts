@@ -156,11 +156,20 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
     expect(json.balance).toBe("6000.00");
   });
 
-  it("3. Invalid token returns 401", async () => {
+  it("3. Invalid token returns 401 and diagnostics", async () => {
     const payload = { sender: "Mashreq", message: "Any SMS" };
     const req = makeShortcutRequest(payload, "wrong-token");
     const res = await POST(req);
     expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.error).toBe("Unauthorized");
+    expect(json.diagnostics).toBeDefined();
+    expect(json.diagnostics.envVariableExists).toBe(true);
+    expect(json.diagnostics.authorizationHeaderPresent).toBe(true);
+    expect(json.diagnostics.bearerPrefixPresent).toBe(true);
+    expect(json.diagnostics.receivedTokenLength).toBe(11);
+    expect(json.diagnostics.expectedTokenLength).toBe(19);
+    expect(json.diagnostics.tokenMatched).toBe(false);
   });
 
   it("4. Empty message returns 400", async () => {
@@ -168,6 +177,16 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
     const req = makeShortcutRequest(payload);
     const res = await POST(req);
     expect(res.status).toBe(400);
+  });
+
+  it("7. Missing environment variable returns 500 configuration error", async () => {
+    delete process.env.IOS_SHORTCUT_IMPORT_TOKEN;
+    const payload = { sender: "Mashreq", message: "Any SMS" };
+    const req = makeShortcutRequest(payload);
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe("IOS_SHORTCUT_IMPORT_TOKEN is not configured");
   });
 
   it("5. Duplicate submission check", async () => {

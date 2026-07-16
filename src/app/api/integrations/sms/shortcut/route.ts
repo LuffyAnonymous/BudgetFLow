@@ -105,21 +105,40 @@ async function sendTelegramConfirmation(userId: string, replyText: string): Prom
 export async function POST(req: NextRequest): Promise<NextResponse> {
   console.log("[Shortcut Ingestion] Request received");
 
-  // 1. Authenticate
-  const authHeader = req.headers.get("authorization") ?? "";
-  const rawToken = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7).trim()
-    : null;
+  const configuredToken = process.env.IOS_SHORTCUT_IMPORT_TOKEN;
+  const envVariableExists = !!configuredToken;
 
-  if (!rawToken) {
-    console.log("[Shortcut Ingestion] Unauthorized: missing or malformed Authorization header");
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!envVariableExists) {
+    console.error("[Shortcut Ingestion] Error: IOS_SHORTCUT_IMPORT_TOKEN is not set in environment.");
+    return NextResponse.json({ error: "IOS_SHORTCUT_IMPORT_TOKEN is not configured" }, { status: 500 });
   }
 
-  const userId = await resolveUserFromShortcutToken(rawToken);
-  if (!userId) {
-    console.log("[Shortcut Ingestion] Unauthorized: invalid token");
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // 1. Authenticate
+  const authHeader = req.headers.get("authorization") ?? "";
+  const authorizationHeaderPresent = !!authHeader;
+  const bearerPrefixPresent = authHeader.startsWith("Bearer ");
+  const rawToken = bearerPrefixPresent ? authHeader.slice(7).trim() : null;
+
+  const receivedTokenLength = rawToken ? rawToken.length : 0;
+  const expectedTokenLength = configuredToken.trim().length;
+
+  const userId = rawToken ? await resolveUserFromShortcutToken(rawToken) : null;
+  const tokenMatched = !!userId;
+
+  const diagnostics = {
+    envVariableExists,
+    authorizationHeaderPresent,
+    bearerPrefixPresent,
+    receivedTokenLength,
+    expectedTokenLength,
+    tokenMatched,
+  };
+
+  console.log("[Shortcut Ingestion] Authentication Diagnostics:", diagnostics);
+
+  if (!rawToken || !userId) {
+    console.log("[Shortcut Ingestion] Unauthorized request received with diagnostics", diagnostics);
+    return NextResponse.json({ error: "Unauthorized", diagnostics }, { status: 401 });
   }
 
   // 2. Rate limiting
