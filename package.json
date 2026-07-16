@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:e2e:setup": "npx tsx scripts/setup-e2e-database.ts",
     "db:e2e:reset": "npx tsx scripts/reset-e2e-database.ts",
+    "db:clean-financial": "npx tsx scripts/reset-financial-data.ts",
     "test:e2e": "cross-env E2E_ENABLED=1 playwright test"
   },
   "prisma": {
