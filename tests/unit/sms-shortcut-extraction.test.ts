@@ -57,7 +57,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
         userId,
         enabled: true,
         autoImportSalary: true,
-        senderAllowlist: ["ENBD", "MASHREQ"],
+        senderAllowlist: ["ENBD"],
       },
     });
 
@@ -82,23 +82,23 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
   describe("extractSmsText utility logic", () => {
     it("extracts from direct message string", () => {
-      const payload = { sender: "Mashreq", message: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
+      const payload = { sender: "ENBD", message: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
       expect(extractSmsText(payload)).toBe(payload.message);
     });
 
     it("extracts from text string", () => {
-      const payload = { sender: "Mashreq", text: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
+      const payload = { sender: "ENBD", text: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
       expect(extractSmsText(payload)).toBe(payload.text);
     });
 
     it("extracts from content string", () => {
-      const payload = { sender: "Mashreq", content: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
+      const payload = { sender: "ENBD", content: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
       expect(extractSmsText(payload)).toBe(payload.content);
     });
 
     it("extracts from nested message object", () => {
       const payload = {
-        sender: "Mashreq",
+        sender: "ENBD",
         input: {
           message: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00."
         }
@@ -108,7 +108,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("extracts from array payload", () => {
       const payload = {
-        sender: "Mashreq",
+        sender: "ENBD",
         input: [
           { value: "short" },
           { body: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." }
@@ -119,7 +119,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("rejects metadata-only or too short strings", () => {
       const payload = {
-        sender: "Mashreq",
+        sender: "ENBD",
         input: "short"
       };
       // "short" is too short (<= 15 chars) to be matched in generic search
@@ -139,7 +139,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
   describe("POST route behavior with varied iOS payloads", () => {
     it("processes direct message format successfully", async () => {
       const req = makeRequest({
-        sender: "Mashreq",
+        sender: "ENBD",
         message: "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. Available balance is AED 5,000.00.",
       });
 
@@ -152,7 +152,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("processes text format successfully", async () => {
       const req = makeRequest({
-        sender: "Mashreq",
+        sender: "ENBD",
         text: "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. Available balance is AED 5,000.00.",
       });
 
@@ -165,7 +165,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("processes input format successfully", async () => {
       const req = makeRequest({
-        sender: "Mashreq",
+        sender: "ENBD",
         input: "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. Available balance is AED 5,000.00.",
       });
 
@@ -178,7 +178,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("processes nested content format successfully", async () => {
       const req = makeRequest({
-        sender: "Mashreq",
+        sender: "ENBD",
         input: {
           content: "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. Available balance is AED 5,000.00.",
         }
@@ -193,7 +193,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("processes array containing message format successfully", async () => {
       const req = makeRequest({
-        sender: "Mashreq",
+        sender: "ENBD",
         input: [
           { message: "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. Available balance is AED 5,000.00." }
         ]
@@ -208,7 +208,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("returns HTTP 400 with receivedKeys when SMS text is empty or missing", async () => {
       const req = makeRequest({
-        sender: "Mashreq",
+        sender: "ENBD",
         someRandomKey: 12345,
       });
 
@@ -236,7 +236,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
         nested = { depth: nested };
       }
       const req = makeRequest({
-        sender: "Mashreq",
+        sender: "ENBD",
         input: nested,
       });
 
@@ -249,7 +249,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("handles duplicate transaction correctly", async () => {
       const payload = {
-        sender: "Mashreq",
+        sender: "ENBD",
         message: "AED 5,750.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. Available balance is AED 5,000.00.",
       };
 

@@ -27,7 +27,7 @@ export function SetupClient() {
   const [nolBudget, setNolBudget] = useState("400.00");
   const [savingsTarget, setSavingsTarget] = useState("10000.00");
   const [safetyBuffer, setSafetyBuffer] = useState("50.00");
-  const [senderAllowlist, setSenderAllowlist] = useState("ENBD, MASHREQ");
+  const [senderAllowlist, setSenderAllowlist] = useState("ENBD");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -168,7 +168,7 @@ export function SetupClient() {
             value={senderAllowlist}
             onChange={(e) => setSenderAllowlist(e.target.value)}
             className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm text-white focus:border-indigo-500 focus:outline-hidden"
-            placeholder="e.g. ENBD, MASHREQ"
+            placeholder="e.g. ENBD"
             required
           />
         </div>

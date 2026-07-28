@@ -17,13 +17,11 @@
 
 import type { ISmsParser, NormalizedSmsTransaction } from "./sms-parser.interface";
 import { emiratesNBDParser } from "./emirates-nbd.parser";
-import { mashreqParser } from "./mashreq.parser";
 
 // ─── Registry of all available parsers ──────────────────────────────────────
 
 const REGISTERED_PARSERS: ISmsParser[] = [
   emiratesNBDParser,
-  mashreqParser,
 ];
 
 // ─── Parser selection result ─────────────────────────────────────────────────
@@ -36,10 +34,6 @@ export type ParserSelectionResult =
 // ─── Aliases Mapping ─────────────────────────────────────────────────────────
 
 const SENDER_ALIASES: Record<string, string> = {
-  MASHREQ: "MASHREQ",
-  MASHREQBANK: "MASHREQ",
-  MASHREQSMS: "MASHREQ",
-  
   EMIRATESNBD: "ENBD",
   EMIRATES: "ENBD",
   ENBD: "ENBD",

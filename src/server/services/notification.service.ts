@@ -105,7 +105,6 @@ export class NotificationService {
 
     const pref = (userSettings?.notificationPref as any) || {};
     const safeDailyThreshold = new Decimal(pref.safeDailyThreshold ?? "50.00");
-    const minMashreqBalance = new Decimal(pref.minMashreqBalance ?? "1000.00");
     const largeExpenseThreshold = new Decimal(pref.largeExpenseThreshold ?? "1500.00");
 
     let createdCount = 0;
@@ -266,25 +265,7 @@ export class NotificationService {
       }
     }
 
-    // F. Mashreq balance falls below configured minimum
-    const mashreqAccount = await db.account.findFirst({
-      where: { userId, type: AccountType.MASHREQ },
-    });
-    if (mashreqAccount) {
-      evaluatedCount++;
-      const currentBal = new Decimal(mashreqAccount.currentBalance.toString());
-      if (currentBal.lessThan(minMashreqBalance)) {
-        const alert = await this.createNotificationIdempotent(userId, {
-          type: NotificationType.BUDGET_NEAR_LIMIT,
-          title: "Low Account Balance Warning",
-          message: `Your Mashreq account balance of AED ${currentBal.toFixed(2)} is below the minimum threshold of AED ${minMashreqBalance.toFixed(2)}.`,
-          severity: NotificationSeverity.WARNING,
-          eventKey: `low-balance:${mashreqAccount.id}:${minMashreqBalance.toFixed(0)}:${todayStr}`,
-          destinationPath: "/dashboard",
-        });
-        if (alert) createdCount++;
-      }
-    }
+
 
     // G. A single expense exceeds configured large-expense threshold
     for (const tx of transactions) {

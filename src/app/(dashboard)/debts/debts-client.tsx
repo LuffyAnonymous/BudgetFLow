@@ -133,11 +133,12 @@ export default function DebtsClient() {
   // Record payment mutation
   const paymentMutation = useMutation({
     mutationFn: async ({ debtId, amount, notes, sync }: { debtId: string; amount: string; notes: string; sync: boolean }) => {
+      const parsedVal = parseFloat(amount);
       const res = await fetch(`/api/debts/${debtId}/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount: parseFloat(amount),
+          amount: isNaN(parsedVal) ? 0 : parsedVal,
           paymentDate: new Date().toISOString(),
           notes: notes || null,
           syncLedger: sync,
@@ -145,13 +146,18 @@ export default function DebtsClient() {
         }),
       });
       const json = await res.json();
-      if (json.error) throw new Error(json.error.message);
+      if (!res.ok || json.error) {
+        const errorMsg = json.error?.message || json.error?.code || `HTTP ${res.status}: Failed to record payment`;
+        throw new Error(errorMsg);
+      }
       return json.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["debts"] });
       queryClient.invalidateQueries({ queryKey: ["debtPayments"] });
       queryClient.invalidateQueries({ queryKey: ["debtDetail"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       setShowPaymentDialog(null);
       setPaymentAmount("");
       setPaymentNotes("");

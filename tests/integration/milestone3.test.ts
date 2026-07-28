@@ -204,13 +204,12 @@ describe("Milestone 3 Integration Tests", () => {
         rolloverFeeRate: 0,
       });
 
-      await expect(
-        debtService.recordDebtPayment(userAId, debt.id, {
-          amount: 100,
-          paymentDate: new Date(),
-          syncLedger: true,
-        })
-      ).rejects.toThrow("MISSING_LEDGER_CATEGORY");
+      const payment = await debtService.recordDebtPayment(userAId, debt.id, {
+        amount: 100,
+        paymentDate: new Date(),
+        syncLedger: true,
+      });
+      expect(payment.transactionId).not.toBeNull();
     });
   });
 

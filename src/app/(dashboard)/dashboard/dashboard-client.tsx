@@ -89,7 +89,7 @@ interface DashboardData {
     dueDate: string;
     isOverdue: boolean;
   } | null;
-  accounts: {
+  accounts?: {
     id: string;
     type: string;
     name: string;
@@ -101,7 +101,7 @@ interface DashboardData {
     cacheDifference?: string;
     bankDifference?: string | null;
   }[];
-  totalAvailableMoney: string;
+  totalAvailableMoney?: string;
 }
 
 interface DashboardClientProps {
@@ -251,144 +251,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
       {/* Automation Status Panel — replaces quick actions */}
       <AutomationStatusPanel />
 
-      {/* Accounts & Available Money Section */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-          Accounts & Available Money
-        </h3>
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-          {(() => {
-            const enbd = data.accounts?.find((a) => a.type === "EMIRATES_NBD");
-            const mashreq = data.accounts?.find((a) => a.type === "MASHREQ");
-            const cash = data.accounts?.find((a) => a.type === "CASH");
 
-            return (
-              <>
-                {/* Emirates NBD */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-400">Emirates NBD</span>
-                      <div className="flex items-center gap-1.5">
-                        {enbd?.reconciliationStatus && enbd.reconciliationStatus !== "MATCHED" && (
-                          <span className="inline-flex items-center rounded-sm bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 text-[8px] font-extrabold text-rose-400" title={`Cache vs Ledger Difference: AED ${enbd.cacheDifference}`}>
-                            Balance needs review
-                          </span>
-                        )}
-                        <LucideBuilding className="h-4 w-4 text-indigo-400" />
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xl font-bold text-white tabular-nums">
-                      AED {parseFloat(enbd?.currentBalance || "0").toLocaleString("en-AE", {
-                        minimumFractionDigits: 2,
-                      })}
-                    </p>
-                  </div>
-                  <div className="mt-4 border-t border-slate-800/60 pt-2 text-[10px] text-slate-500 space-y-0.5">
-                    {enbd?.latestImportedBalance && (
-                      <p>SMS Balance: AED {parseFloat(enbd.latestImportedBalance).toFixed(2)}</p>
-                    )}
-                    <p>
-                      Sync:{" "}
-                      {enbd?.lastSMSImported
-                        ? new Date(enbd.lastSMSImported).toLocaleDateString("en-AE", {
-                            timeZone: "Asia/Dubai",
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        : "Never"}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Mashreq */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-400">Mashreq</span>
-                      <div className="flex items-center gap-1.5">
-                        {mashreq?.reconciliationStatus && mashreq.reconciliationStatus !== "MATCHED" && (
-                          <span className="inline-flex items-center rounded-sm bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 text-[8px] font-extrabold text-rose-400" title={`Cache vs Ledger Difference: AED ${mashreq.cacheDifference}`}>
-                            Balance needs review
-                          </span>
-                        )}
-                        <LucideBuilding className="h-4 w-4 text-emerald-400" />
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xl font-bold text-white tabular-nums">
-                      AED {parseFloat(mashreq?.currentBalance || "0").toLocaleString("en-AE", {
-                        minimumFractionDigits: 2,
-                      })}
-                    </p>
-                  </div>
-                  <div className="mt-4 border-t border-slate-800/60 pt-2 text-[10px] text-slate-500 space-y-0.5">
-                    {mashreq?.latestImportedBalance && (
-                      <p>SMS Balance: AED {parseFloat(mashreq.latestImportedBalance).toFixed(2)}</p>
-                    )}
-                    <p>
-                      Sync:{" "}
-                      {mashreq?.lastSMSImported
-                        ? new Date(mashreq.lastSMSImported).toLocaleDateString("en-AE", {
-                            timeZone: "Asia/Dubai",
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        : "Never"}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Cash */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-400">Physical Cash</span>
-                      <div className="flex items-center gap-1.5">
-                        {cash?.reconciliationStatus && cash.reconciliationStatus !== "MATCHED" && (
-                          <span className="inline-flex items-center rounded-sm bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 text-[8px] font-extrabold text-rose-400" title={`Cache vs Ledger Difference: AED ${cash.cacheDifference}`}>
-                            Balance needs review
-                          </span>
-                        )}
-                        <LucideCoins className="h-4 w-4 text-amber-400" />
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xl font-bold text-white tabular-nums">
-                      AED {parseFloat(cash?.currentBalance || "0").toLocaleString("en-AE", {
-                        minimumFractionDigits: 2,
-                      })}
-                    </p>
-                  </div>
-                  <div className="mt-4 border-t border-slate-800/60 pt-2 text-[10px] text-slate-500">
-                    <p>Liquid rent/expense cash</p>
-                  </div>
-                </div>
-
-                {/* Total Available Money */}
-                <div className="rounded-2xl border border-indigo-500/20 bg-indigo-950/20 p-6 flex flex-col justify-between shadow-lg shadow-indigo-950/10">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-indigo-300">Total Available Money</span>
-                      <LucideWallet className="h-4 w-4 text-indigo-400" />
-                    </div>
-                    <p className="mt-3 text-2xl font-black text-indigo-400 tabular-nums">
-                      AED {parseFloat(data.totalAvailableMoney || "0").toLocaleString("en-AE", {
-                        minimumFractionDigits: 2,
-                      })}
-                    </p>
-                  </div>
-                  <div className="mt-4 border-t border-indigo-950/40 pt-2 text-[10px] text-indigo-400/80">
-                    <p>Consolidated liquid balances</p>
-                  </div>
-                </div>
-              </>
-            );
-          })()}
-        </div>
-      </div>
 
       {/* Financial Health Summary */}
       {(() => {

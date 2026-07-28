@@ -2,34 +2,13 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { smsParserRegistry, getCanonicalSender } from "../../src/imports/sms/parser-registry";
 
 describe("Sender Alias and Case-Insensitive Matching", () => {
-  const allowlist = ["ENBD", "MASHREQ"];
+  const allowlist = ["ENBD"];
 
   it("getCanonicalSender helper resolves correctly", () => {
-    expect(getCanonicalSender("Mashreq")).toBe("MASHREQ");
-    expect(getCanonicalSender("mashreq")).toBe("MASHREQ");
-    expect(getCanonicalSender("MASHREQ")).toBe("MASHREQ");
-    expect(getCanonicalSender(" Mashreq ")).toBe("MASHREQ");
-
     expect(getCanonicalSender("EmiratesNBD")).toBe("ENBD");
     expect(getCanonicalSender("emiratesnbd")).toBe("ENBD");
     expect(getCanonicalSender("ENBD")).toBe("ENBD");
     expect(getCanonicalSender(" EmiratesNBD ")).toBe("ENBD");
-  });
-
-  it("Mashreq matches MASHREQ", () => {
-    const result = smsParserRegistry.select("Mashreq", "Test message", allowlist);
-    expect(result.outcome).not.toBe("no_match");
-    if (result.outcome === "no_match") {
-      expect(result.reason).not.toBe("Sender not in configured allowlist");
-    }
-  });
-
-  it("mashreq matches MASHREQ", () => {
-    const result = smsParserRegistry.select("mashreq", "Test message", allowlist);
-    expect(result.outcome).not.toBe("no_match");
-    if (result.outcome === "no_match") {
-      expect(result.reason).not.toBe("Sender not in configured allowlist");
-    }
   });
 
   it("EmiratesNBD matches ENBD", () => {
@@ -49,13 +28,10 @@ describe("Sender Alias and Case-Insensitive Matching", () => {
   });
 
   it("whitespace is ignored in both inputs and allowlist", () => {
-    const customAllowlist = ["  ENBD  ", " Mashreq "];
+    const customAllowlist = ["  ENBD  "];
     
     const res1 = smsParserRegistry.select("  EmiratesNBD  ", "Test message", customAllowlist);
     expect(res1.outcome).not.toBe("no_match");
-    
-    const res2 = smsParserRegistry.select(" Mashreq ", "Test message", customAllowlist);
-    expect(res2.outcome).not.toBe("no_match");
   });
 
   it("unknown senders are still rejected", () => {
@@ -86,24 +62,22 @@ describe("Sender Matching Integration with DB", () => {
     });
     userId = user.id;
 
-    // Create ImportSetting with "ENBD" and "MASHREQ" in the allowlist
     await db.importSetting.create({
       data: {
         userId,
         enabled: true,
-        senderAllowlist: ["ENBD", "MASHREQ"],
+        senderAllowlist: ["ENBD"],
       },
     });
   });
 
-  it("successfully processes 'Mashreq' payload and does not reject with allowlist error", async () => {
+  it("successfully processes 'ENBD' payload and does not reject with allowlist error", async () => {
     const result = await importService.processSms(userId, {
-      sender: "Mashreq",
+      sender: "ENBD",
       message: "Test transaction AED 50.00 at Carrefour",
       receivedAt: new Date("2026-07-15T04:52:00.000Z"),
     });
 
-    // It should not fail with "Sender not in configured allowlist"
     expect(result.outcome).not.toBe("rejected");
     if (result.outcome === "rejected") {
       expect(result.reason).not.toBe("Sender not in configured allowlist");

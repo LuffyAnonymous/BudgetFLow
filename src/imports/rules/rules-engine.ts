@@ -65,7 +65,7 @@ const BUILT_IN_RULES: ImportRule[] = [
   },
   {
     id: "builtin-transfer",
-    description: "Internal transfer from ENBD to Mashreq",
+    description: "Internal transfer",
     priority: 90,
     condition: (n) =>
       n.institution === "Emirates NBD" &&

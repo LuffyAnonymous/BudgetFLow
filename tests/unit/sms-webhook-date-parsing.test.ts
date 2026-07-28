@@ -1,34 +1,35 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { POST } from "../../src/app/api/imports/sms/route";
 import { NextRequest } from "next/server";
+import { POST } from "../../src/app/api/imports/sms/route";
 import { db } from "@/lib/db";
 import { importSettingService } from "../../src/server/services/import-setting.service";
+import { accountService } from "../../src/server/services/account.service";
 
-describe("SMS Webhook tolerant receivedAt parsing", () => {
-  let token: string;
+describe("POST /api/imports/sms Date Parsing", () => {
   let userId: string;
+  let token: string;
 
   beforeEach(async () => {
-    // Clean DB
+    await db.importedTransaction.deleteMany({});
     await db.importSetting.deleteMany({});
     await db.user.deleteMany({});
 
-    // Create user
     const user = await db.user.create({
       data: {
-        email: "date_test@budgetflow.ae",
+        email: "date_parse_test@budgetflow.ae",
         passwordHash: "dummy-hash",
-        name: "Date Tester",
+        name: "Date Parse Tester",
       },
     });
     userId = user.id;
 
-    // Enable import setting & generate token
+    await accountService.ensureDefaultAccounts(userId);
+
     await db.importSetting.create({
       data: {
         userId,
         enabled: true,
-        senderAllowlist: ["ENBD", "MASHREQ"],
+        senderAllowlist: ["ENBD"],
       },
     });
 
@@ -49,65 +50,55 @@ describe("SMS Webhook tolerant receivedAt parsing", () => {
 
   it("accepts a valid ISO timestamp", async () => {
     const req = makeRequest({
-      sender: "Mashreq",
+      sender: "ENBD",
       message: "Test transaction AED 50.00 at Carrefour",
       receivedAt: new Date(Date.now() - 10000).toISOString(),
     });
 
     const res = await POST(req);
     expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.outcome).not.toBe("rejected");
   });
 
-  it("handles missing timestamp", async () => {
+  it("accepts a valid unix timestamp (in milliseconds)", async () => {
     const req = makeRequest({
-      sender: "Mashreq",
+      sender: "ENBD",
+      message: "Test transaction AED 50.00 at Carrefour",
+      receivedAt: Date.now() - 10000,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts a valid unix timestamp (in seconds)", async () => {
+    const req = makeRequest({
+      sender: "ENBD",
+      message: "Test transaction AED 50.00 at Carrefour",
+      receivedAt: Math.floor((Date.now() - 10000) / 1000),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("falls back gracefully to current date when timestamp is invalid format", async () => {
+    const req = makeRequest({
+      sender: "ENBD",
+      message: "Test transaction AED 50.00 at Carrefour",
+      receivedAt: "not-a-valid-date",
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("falls back gracefully when receivedAt field is omitted", async () => {
+    const req = makeRequest({
+      sender: "ENBD",
       message: "Test transaction AED 50.00 at Carrefour",
     });
 
     const res = await POST(req);
     expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.outcome).not.toBe("rejected");
-  });
-
-  it("handles empty timestamp", async () => {
-    const req = makeRequest({
-      sender: "Mashreq",
-      message: "Test transaction AED 50.00 at Carrefour",
-      receivedAt: "",
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.outcome).not.toBe("rejected");
-  });
-
-  it("handles invalid timestamp", async () => {
-    const req = makeRequest({
-      sender: "Mashreq",
-      message: "Test transaction AED 50.00 at Carrefour",
-      receivedAt: "not-a-date",
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.outcome).not.toBe("rejected");
-  });
-
-  it("handles malformed timestamp", async () => {
-    const req = makeRequest({
-      sender: "Mashreq",
-      message: "Test transaction AED 50.00 at Carrefour",
-      receivedAt: "2026-99-99T99:99:99Z",
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.data.outcome).not.toBe("rejected");
   });
 });

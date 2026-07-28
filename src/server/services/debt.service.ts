@@ -4,7 +4,7 @@ import { CategoryRepository } from "../repositories/category.repository";
 import { TransactionRepository } from "../repositories/transaction.repository";
 import { db } from "@/lib/db";
 import { Decimal } from "decimal.js";
-import { Debt, DebtPayment, DebtStatus, CategoryType, TransactionType, Prisma, AuditAction, AuditEntityType } from "@prisma/client";
+import { Debt, DebtPayment, DebtStatus, CategoryType, TransactionType, CashFlowDirection, Prisma, AuditAction, AuditEntityType } from "@prisma/client";
 import { getDubaiCurrentDate, calculateNextPaymentDate } from "@/lib/dates";
 import { AuditLogService } from "./audit-log.service";
 
@@ -160,13 +160,28 @@ export class DebtService {
 
       // Category / Ledger sync rules
       if (data.syncLedger) {
-        if (!debt.categoryId) {
-          throw new Error("MISSING_LEDGER_CATEGORY: No category is configured. Configure a Category of type DEBT to link this payment to the ledger.");
+        let targetCategoryId: string | null = debt.categoryId;
+        if (targetCategoryId) {
+          const category = await this.categoryRepo.findByIdAndUserId(targetCategoryId, userId, tx);
+          if (!category || category.type !== CategoryType.DEBT) {
+            targetCategoryId = null;
+          }
         }
 
-        const category = await this.categoryRepo.findByIdAndUserId(debt.categoryId, userId, tx);
-        if (!category || category.type !== CategoryType.DEBT) {
-          throw new Error("INVALID_CATEGORY: Selected category is invalid or not of type DEBT.");
+        if (!targetCategoryId) {
+          let systemCat = await tx.category.findFirst({
+            where: { userId, name: "Debt Payment", type: CategoryType.DEBT },
+          });
+          if (!systemCat) {
+            systemCat = await tx.category.create({
+              data: {
+                userId,
+                name: "Debt Payment",
+                type: CategoryType.DEBT,
+              },
+            });
+          }
+          targetCategoryId = systemCat.id;
         }
 
         // Create transaction in main ledger
@@ -174,12 +189,13 @@ export class DebtService {
           data: {
             userId,
             date: paymentDateObj,
-            categoryId: debt.categoryId,
+            categoryId: targetCategoryId,
             description: `Payment to debt: ${debt.name}`,
             amount: amount,
             paymentMethod: "Bank Transfer",
             notes: data.notes ?? `Automated link from debt payment`,
             type: TransactionType.DEBT_PAYMENT,
+            cashFlowDirection: CashFlowDirection.OUTFLOW,
           },
         });
         transactionId = ledgerTx.id;

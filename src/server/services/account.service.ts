@@ -14,7 +14,6 @@ export class AccountService {
     const client = this.getClient(tx);
     const defaultAccounts = [
       { name: "Emirates NBD", type: AccountType.EMIRATES_NBD },
-      { name: "Mashreq", type: AccountType.MASHREQ },
       { name: "Cash", type: AccountType.CASH },
     ];
 

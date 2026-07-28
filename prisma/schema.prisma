@@ -77,7 +77,6 @@ enum CashFlowDirection {
 
 enum AccountType {
   EMIRATES_NBD
-  MASHREQ
   CASH
 }
 

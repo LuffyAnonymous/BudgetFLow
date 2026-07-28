@@ -51,7 +51,7 @@ describe("Import Engine Enabled/Disabled Account Gating", () => {
 
     const result = await importService.processSms(userId, {
       sender: "ENBD",
-      message: "Unrecognized message content that matches no bank schema",
+      message: "AED 5,750.00 has been credited to your account no. 014557001234501 DTB SALARY. The available balance is AED 5,752.56.",
       receivedAt: new Date(),
     });
 

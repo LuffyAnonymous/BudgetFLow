@@ -11,6 +11,7 @@ import {
   TransactionOrigin,
   CashFlowDirection,
   AccountType,
+  CategoryType,
   ImportConfidence,
   NotificationType,
   NotificationSeverity,
@@ -248,8 +249,7 @@ export class ImportService {
         await accountService.ensureDefaultAccounts(userId, tx);
         const accounts = await tx.account.findMany({ where: { userId } });
         const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
-        const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ)!;
-        const primaryAccId = bank === SupportedBank.MASHREQ ? mashreqAcc.id : enbdAcc.id;
+        const primaryAccId = enbdAcc.id;
 
         await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx);
 
@@ -270,11 +270,21 @@ export class ImportService {
                 txType = TransactionType.TRANSFER;
             }
 
-            const dbCategory = await tx.category.findFirst({
+            let dbCategory = await tx.category.findFirst({
               where: { userId, name: { equals: category, mode: "insensitive" } }
             }) || await tx.category.findFirst({
               where: { userId, name: { equals: KnownCategory.UNCATEGORIZED, mode: "insensitive" } }
             });
+
+            if (!dbCategory) {
+              dbCategory = await tx.category.create({
+                data: {
+                  userId,
+                  name: KnownCategory.UNCATEGORIZED,
+                  type: direction === TransactionDirection.INFLOW ? CategoryType.INCOME : CategoryType.VARIABLE_EXPENSE,
+                },
+              });
+            }
 
             const ledgerTx = await tx.transaction.create({
                 data: {
@@ -360,8 +370,7 @@ export class ImportService {
       const bank = normalizeSender(importedTx.maskedSender || "");
       
       const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
-      const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ)!;
-      const primaryAccId = bank === SupportedBank.MASHREQ ? mashreqAcc.id : enbdAcc.id;
+      const primaryAccId = enbdAcc.id;
 
       // Note: syncBalance was already called when the SMS was received (in processSms), 
       // so we don't need to call updateBalance here again. The available balance was already synced.
@@ -483,8 +492,7 @@ export class ImportService {
     await accountService.ensureDefaultAccounts(userId);
     const accounts = await db.account.findMany({ where: { userId } });
     const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD);
-    const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ);
-    const primaryAccId = bank === SupportedBank.MASHREQ ? mashreqAcc?.id : enbdAcc?.id;
+    const primaryAccId = enbdAcc?.id;
 
     if (!primaryAccId) return;
 

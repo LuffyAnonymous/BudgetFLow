@@ -41,7 +41,6 @@ type ImportHealth = "HEALTHY" | "NEEDS_REVIEW" | "NO_TOKEN" | "DISABLED";
 function getCanonicalDisplayName(sender: string): string {
   const normalized = sender.trim().toUpperCase();
   if (normalized === "ENBD" || normalized === "EMIRATESNBD") return "EmiratesNBD";
-  if (normalized === "MASHREQ" || normalized === "MASHREQBANK") return "Mashreq";
   return sender.trim();
 }
 

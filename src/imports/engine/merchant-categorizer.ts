@@ -36,7 +36,7 @@ export function categorizeMerchant(merchant: string | null): KnownCategory {
     return KnownCategory.DINING;
   }
 
-  if (m.includes("mashreq") || m.includes("emirates nbd") || m.includes("enbd")) {
+  if (m.includes("emirates nbd") || m.includes("enbd")) {
     return KnownCategory.TRANSFERS;
   }
 

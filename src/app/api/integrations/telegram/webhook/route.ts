@@ -16,16 +16,14 @@ function detectBankAndCleanText(text: string): { bank: string; cleanText: string
   const trimmed = text.trim();
   const lowerText = trimmed.toLowerCase();
 
-  // 1. Check for prefix override (e.g., "ENBD:\n...", "Mashreq: ...", "Tabby: ...")
-  const prefixMatch = trimmed.match(/^(enbd|emirates nbd|mashreq|tabby)\s*:\s*([\s\S]+)$/i);
+  // 1. Check for prefix override (e.g., "ENBD:\n...", "Tabby: ...")
+  const prefixMatch = trimmed.match(/^(enbd|emirates nbd|tabby)\s*:\s*([\s\S]+)$/i);
   if (prefixMatch) {
     const rawBank = prefixMatch[1].toLowerCase();
     const cleanText = prefixMatch[2].trim();
     let bank = "Unknown";
     if (rawBank === "enbd" || rawBank === "emirates nbd") {
       bank = "ENBD";
-    } else if (rawBank === "mashreq") {
-      bank = "MASHREQ";
     } else if (rawBank === "tabby") {
       bank = "Tabby";
     }
@@ -35,8 +33,6 @@ function detectBankAndCleanText(text: string): { bank: string; cleanText: string
   // 2. Automatic detection based on keywords
   if (lowerText.includes("emirates nbd") || lowerText.includes("enbd")) {
     return { bank: "ENBD", cleanText: trimmed };
-  } else if (lowerText.includes("mashreq")) {
-    return { bank: "MASHREQ", cleanText: trimmed };
   } else if (lowerText.includes("tabby")) {
     return { bank: "Tabby", cleanText: trimmed };
   }

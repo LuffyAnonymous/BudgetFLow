@@ -56,16 +56,7 @@ describe("Telegram Webhook Integration Endpoint", () => {
         lastSMSImportedAt: oneHourAgo,
       }
     });
-    await db.account.create({
-      data: {
-        userId,
-        name: "Mashreq",
-        type: AccountType.MASHREQ,
-        currentBalance: 2000,
-        latestImportedBalance: 2000,
-        lastSMSImportedAt: oneHourAgo,
-      }
-    });
+
 
     // Create Uncategorized category
     await db.category.upsert({
@@ -244,14 +235,14 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(body.text).toContain("Account: Emirates NBD");
   });
 
-  it("successfully parses prefix-overridden Mashreq debit message as review_required and replies", async () => {
+  it("successfully parses prefix-overridden ENBD debit message as review_required and replies", async () => {
     const req = makeWebhookRequest({
       update_id: 104,
       message: {
         message_id: 204,
         chat: { id: 12345 },
         date: Math.floor(Date.now() / 1000),
-        text: "Mashreq:\nAED 10.00 has been debited from your Mashreq account."
+        text: "ENBD:\nAED 10.00 has been debited from your account."
       }
     });
 

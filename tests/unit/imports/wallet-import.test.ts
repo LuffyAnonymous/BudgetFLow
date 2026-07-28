@@ -39,16 +39,7 @@ describe("Apple Wallet Import Endpoint", () => {
         lastSMSImportedAt: oneHourAgo,
       }
     });
-    await db.account.create({
-      data: {
-        userId,
-        name: "Mashreq",
-        type: AccountType.MASHREQ,
-        currentBalance: 2000,
-        latestImportedBalance: 2000,
-        lastSMSImportedAt: oneHourAgo,
-      }
-    });
+
 
     // Create default Category Uncategorized
     await db.category.upsert({
@@ -83,29 +74,7 @@ describe("Apple Wallet Import Endpoint", () => {
     });
   };
 
-  it("successfully processes a valid Apple Wallet transaction for Mashreq card", async () => {
-    const req = makeRequest({
-      merchant: "Carrefour",
-      amount: 45.75,
-      currency: "AED",
-      card: "Mashreq Debit",
-      date: new Date().toISOString()
-    });
 
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.success).toBe(true);
-    expect(json.outcome).toBe("processed");
-    expect(json.transactionId).toBeDefined();
-    expect(json.merchant).toBe("Carrefour");
-    expect(json.amount).toBe(45.75);
-    expect(json.currency).toBe("AED");
-
-    // Verify balance is updated (2000 - 45.75 = 1954.25)
-    const account = await db.account.findFirst({ where: { userId, type: AccountType.MASHREQ } });
-    expect(Number(account?.currentBalance)).toBe(1954.25);
-  });
 
   it("successfully processes a valid Apple Wallet transaction for Emirates NBD card", async () => {
     const req = makeRequest({
@@ -208,7 +177,7 @@ describe("Apple Wallet Import Endpoint", () => {
     const req = makeRequest({
       merchant: "Carrefour",
       amount: 50,
-      card: "Mashreq",
+      card: "Emirates NBD",
     });
 
     const res = await POST(req);
@@ -226,7 +195,7 @@ describe("Apple Wallet Import Endpoint", () => {
     const req = makeRequest({
       merchant: "Carrefour",
       amount: 50,
-      card: "Mashreq",
+      card: "Emirates NBD",
     }, "invalid-token");
 
     const res = await POST(req);
@@ -237,7 +206,7 @@ describe("Apple Wallet Import Endpoint", () => {
     const payload = {
       merchant: "Carrefour",
       amount: 50,
-      card: "Mashreq",
+      card: "Emirates NBD",
       idempotencyKey: "test-wallet-idem"
     };
 
@@ -254,7 +223,7 @@ describe("Apple Wallet Import Endpoint", () => {
     const payload = {
       merchant: "Carrefour",
       amount: 50,
-      card: "Mashreq",
+      card: "Emirates NBD",
       date: "2026-07-16T16:35:22+04:00"
     };
 

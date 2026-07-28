@@ -79,11 +79,11 @@ async function main() {
     create: {
       userId: user.id,
       enabled: true,
-      senderAllowlist: ["ENBD", "MASHREQ"],
+      senderAllowlist: ["ENBD"],
     },
     update: {
       enabled: true,
-      senderAllowlist: ["ENBD", "MASHREQ"],
+      senderAllowlist: ["ENBD"],
     },
   });
   console.log("Seeded import settings (enabled: true) for admin.");

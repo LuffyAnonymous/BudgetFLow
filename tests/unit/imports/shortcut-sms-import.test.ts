@@ -56,16 +56,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
         lastSMSImportedAt: oneHourAgo,
       }
     });
-    await db.account.create({
-      data: {
-        userId,
-        name: "Mashreq",
-        type: AccountType.MASHREQ,
-        currentBalance: 2000,
-        latestImportedBalance: 2000,
-        lastSMSImportedAt: oneHourAgo,
-      }
-    });
+
 
     // Create Uncategorized category
     await db.category.upsert({
@@ -93,7 +84,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
       data: {
         userId,
         enabled: true,
-        senderAllowlist: ["ENBD", "MASHREQ"],
+        senderAllowlist: ["ENBD"],
       },
     });
   });
@@ -117,27 +108,6 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
     });
   };
 
-  it("1. Valid Mashreq debit SMS", async () => {
-    const payload = {
-      sender: "Mashreq",
-      message: "Mashreq Debit Card ending 3411 was used for a transaction of AED 100.00 at CARREFOUR on Tuesday, 14 July 2026. Available balance: AED 1900.00",
-    };
-
-    const req = makeShortcutRequest(payload);
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-
-    const json = await res.json();
-    expect(json.outcome).toBe("processed");
-    expect(json.bank).toBe("Mashreq");
-    expect(json.type).toBe("EXPENSE");
-    expect(json.amount).toBe("100.00");
-    expect(json.balance).toBe("1900.00"); // overridden exactly by available balance
-
-    // Verify Telegram notification fetch was called
-    expect(fetchSpy).toHaveBeenCalled();
-  });
-
   it("2. Valid Emirates NBD credit SMS", async () => {
     const payload = {
       sender: "ENBD",
@@ -157,7 +127,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
   });
 
   it("3. Invalid token returns 401 and diagnostics", async () => {
-    const payload = { sender: "Mashreq", message: "Any SMS" };
+    const payload = { sender: "ENBD", message: "Any SMS" };
     const req = makeShortcutRequest(payload, "wrong-token");
     const res = await POST(req);
     expect(res.status).toBe(401);
@@ -173,7 +143,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
   });
 
   it("4. Empty message returns 400", async () => {
-    const payload = { sender: "Mashreq", message: "" };
+    const payload = { sender: "ENBD", message: "" };
     const req = makeShortcutRequest(payload);
     const res = await POST(req);
     expect(res.status).toBe(400);
@@ -181,7 +151,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
 
   it("7. Missing environment variable returns 500 configuration error", async () => {
     delete process.env.IOS_SHORTCUT_IMPORT_TOKEN;
-    const payload = { sender: "Mashreq", message: "Any SMS" };
+    const payload = { sender: "ENBD", message: "Any SMS" };
     const req = makeShortcutRequest(payload);
     const res = await POST(req);
     expect(res.status).toBe(500);
@@ -191,8 +161,8 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
 
   it("5. Duplicate submission check", async () => {
     const payload = {
-      sender: "Mashreq",
-      message: "Mashreq Debit Card ending 3411 was used for a transaction of AED 50.00 at CARREFOUR on Tuesday, 14 July 2026. Available balance: AED 1950.00",
+      sender: "ENBD",
+      message: "AED 5,000.00 has been credited to your account no. 014XXX70XXX01 DTB SALARY. The available balance is AED 6,000.00.",
     };
 
     // First request
@@ -201,7 +171,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
     expect(res1.status).toBe(200);
     const json1 = await res1.json();
     expect(json1.outcome).toBe("processed");
-    expect(json1.balance).toBe("1950.00");
+    expect(json1.balance).toBe("6000.00");
 
     // Second request (duplicate)
     const req2 = makeShortcutRequest(payload);
@@ -212,13 +182,13 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
 
     // Verify balance was only modified once
     const acc = await db.account.findFirst({
-      where: { userId, type: AccountType.MASHREQ }
+      where: { userId, type: AccountType.EMIRATES_NBD }
     });
-    expect(acc?.currentBalance.toFixed(2)).toBe("1950.00");
+    expect(acc?.currentBalance.toFixed(2)).toBe("6000.00");
   });
 
-  it("6. Account isolation verification", async () => {
-    // ENBD balance is 1000, Mashreq balance is 2000
+  it("6. Account balance update verification", async () => {
+    // ENBD base balance is 1000
     // Credit ENBD with 500 without available balance (should compute currentBalance = 1000 + 500 = 1500)
     const payload = {
       sender: "ENBD",
@@ -233,12 +203,8 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
     expect(json.outcome).toBe("processed");
     expect(json.balance).toBe("1500.00");
 
-    // Check that Mashreq balance is still 2000
     const accounts = await db.account.findMany({ where: { userId } });
     const enbd = accounts.find(a => a.type === AccountType.EMIRATES_NBD)!;
-    const mashreq = accounts.find(a => a.type === AccountType.MASHREQ)!;
-
     expect(enbd.currentBalance.toFixed(2)).toBe("1500.00");
-    expect(mashreq.currentBalance.toFixed(2)).toBe("2000.00"); // completely isolated!
   });
 });

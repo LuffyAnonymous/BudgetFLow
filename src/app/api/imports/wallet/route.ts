@@ -125,12 +125,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       await accountService.ensureDefaultAccounts(userId, tx);
       const accounts = await tx.account.findMany({ where: { userId } });
       const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
-      const mashreqAcc = accounts.find((a) => a.type === AccountType.MASHREQ)!;
 
       let primaryAccId: string | null = null;
-      if (cardLower.includes("mashreq")) {
-        primaryAccId = mashreqAcc.id;
-      } else if (cardLower.includes("emirates nbd") || cardLower.includes("enbd")) {
+      if (cardLower.includes("emirates nbd") || cardLower.includes("enbd")) {
         primaryAccId = enbdAcc.id;
       } else {
         const walletAcc = accounts.find((a) => a.name.toLowerCase() === "wallet import");

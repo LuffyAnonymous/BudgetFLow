@@ -212,22 +212,6 @@ export class DashboardService {
     // Next upcoming payment
     const nearestPayment = await this.debtService.getNearestUpcomingPayment(userId);
 
-    // Fetch account details for Dashboard
-    const accounts = await accountService.getAccounts(userId);
-    const serializedAccounts = accounts.map((acc) => ({
-      id: acc.id,
-      type: acc.type,
-      name: acc.name,
-      currentBalance: acc.currentBalance.toFixed(2),
-      latestImportedBalance: acc.latestImportedBalance ? acc.latestImportedBalance.toFixed(2) : null,
-      lastSMSImported: acc.lastSMSImportedAt ? acc.lastSMSImportedAt.toISOString() : null,
-      lastSuccessfulSync: acc.lastSuccessfulSyncAt ? acc.lastSuccessfulSyncAt.toISOString() : null,
-    }));
-
-    const totalAvailable = accounts
-      .filter((acc) => acc.type === AccountType.EMIRATES_NBD || acc.type === AccountType.MASHREQ)
-      .reduce((sum, acc) => sum.plus(acc.currentBalance), new Decimal(0));
-
     return {
       month: activeMonth,
       actual: {
@@ -266,8 +250,6 @@ export class DashboardService {
       totalSavings: totalSavings.toFixed(2),
       recentTransactions,
       nearestPayment,
-      accounts: serializedAccounts,
-      totalAvailableMoney: totalAvailable.toFixed(2),
     };
   }
 }
