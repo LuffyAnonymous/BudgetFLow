@@ -20,7 +20,8 @@ export class DashboardService {
   async getDashboardData(userId: string, monthStr?: string) {
     const nowDubai = getDubaiCurrentDate();
     const currentMonthDubai = `${nowDubai.year}-${String(nowDubai.month).padStart(2, "0")}`;
-    const activeMonth = monthStr || currentMonthDubai;
+    const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+    const activeMonth = monthStr || (await getActiveFinancialCycle(userId));
 
     // 1. Fetch user settings for monthly salary plan
     const settings = await db.setting.findUnique({

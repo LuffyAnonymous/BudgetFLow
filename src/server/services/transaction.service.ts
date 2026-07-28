@@ -64,6 +64,11 @@ export class TransactionService {
     // 2. Validate category type compatibility
     this.validateCategoryCompatibility(data.type, category.type);
 
+    if (!data.budgetMonth) {
+      const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+      data.budgetMonth = await getActiveFinancialCycle(userId, data.date);
+    }
+
     // 3. Create transaction, log audit, and update balances atomically
     const { accountService } = await import("./account.service");
     return db.$transaction(async (tx) => {

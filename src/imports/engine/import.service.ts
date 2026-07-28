@@ -256,6 +256,9 @@ export class ImportService {
 
         let ledgerTxId: string;
 
+        const isSalary = category.toLowerCase() === "salary" || (normalized.parserKey ?? "").toLowerCase().includes("salary");
+        const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+
         if (matchedTransferId) {
             ledgerTxId = matchedTransferId;
         } else {
@@ -287,11 +290,9 @@ export class ImportService {
               });
             }
 
-            const isSalary =
-              category.toLowerCase() === "salary" ||
-              (dbCategory?.name ?? "").toLowerCase() === "salary" ||
-              (normalized.parserKey ?? "").toLowerCase().includes("salary");
-            const computedBudgetMonth = determineBudgetMonth(financialDate, isSalary);
+            const computedBudgetMonth = isSalary
+              ? determineBudgetMonth(financialDate, true)
+              : await getActiveFinancialCycle(userId, financialDate, tx);
 
             const ledgerTx = await tx.transaction.create({
                 data: {
@@ -311,10 +312,9 @@ export class ImportService {
             ledgerTxId = ledgerTx.id;
         }
 
-        const isSalaryImport =
-          category.toLowerCase() === "salary" ||
-          (normalized.parserKey ?? "").toLowerCase().includes("salary");
-        const computedBudgetMonth = determineBudgetMonth(financialDate, isSalaryImport);
+        const computedBudgetMonth = isSalary
+          ? determineBudgetMonth(financialDate, true)
+          : await getActiveFinancialCycle(userId, financialDate, tx);
 
         const importedTx = await tx.importedTransaction.create({
             data: {
@@ -431,7 +431,12 @@ export class ImportService {
 
       const effectiveDate = overrides?.financialDate || importedTx.financialDate || importedTx.receivedAt;
       const isSalary = categoryStr.toLowerCase() === "salary" || (importedTx.parserKey ?? "").toLowerCase().includes("salary");
-      const computedBudgetMonth = importedTx.budgetMonth || determineBudgetMonth(effectiveDate, isSalary);
+      const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+      const computedBudgetMonth = importedTx.budgetMonth || (
+        isSalary
+          ? determineBudgetMonth(effectiveDate, true)
+          : await getActiveFinancialCycle(userId, effectiveDate, tx)
+      );
 
       const ledgerTx = await tx.transaction.create({
           data: {

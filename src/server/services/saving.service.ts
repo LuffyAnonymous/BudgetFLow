@@ -183,10 +183,14 @@ export class SavingService {
         const direction = data.type === SavingTxType.DEPOSIT ? CashFlowDirection.OUTFLOW : CashFlowDirection.INFLOW;
         const description = data.type === SavingTxType.DEPOSIT ? `Deposit to goal: ${goal.name}` : `Withdrawal from goal: ${goal.name}`;
 
+        const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+        const activeBudgetMonth = await getActiveFinancialCycle(userId, txDateObj, tx);
+
         const ledgerTx = await tx.transaction.create({
           data: {
             userId,
             date: txDateObj,
+            budgetMonth: activeBudgetMonth,
             categoryId: goal.categoryId,
             description,
             amount: amount,

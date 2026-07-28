@@ -184,11 +184,15 @@ export class DebtService {
           targetCategoryId = systemCat.id;
         }
 
+        const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+        const activeBudgetMonth = await getActiveFinancialCycle(userId, paymentDateObj, tx);
+
         // Create transaction in main ledger
         const ledgerTx = await tx.transaction.create({
           data: {
             userId,
             date: paymentDateObj,
+            budgetMonth: activeBudgetMonth,
             categoryId: targetCategoryId,
             description: `Payment to debt: ${debt.name}`,
             amount: amount,
