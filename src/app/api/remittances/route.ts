@@ -1,4 +1,5 @@
 import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { RemittanceService } from "@/server/services/remittance.service";
 import { createRemittanceSchema } from "@/features/remittances/schemas/remittance.schema";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
@@ -97,10 +98,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to create a remittance.", 401);
+    const authResult = await resolveRequestAuth(request, "remittances:write");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with remittances:write scope, to create a remittance.", 401);
     }
+    const userId = authResult.userId;
 
     const body = await request.json();
     const validationResult = createRemittanceSchema.safeParse(body);
@@ -111,7 +113,7 @@ export async function POST(request: Request) {
 
     const payload = validationResult.data;
 
-    const remittance = await remittanceService.createRemittance(session.user.id, {
+    const remittance = await remittanceService.createRemittance(userId, {
       recipient: payload.recipient,
       amountSentAed: payload.amountSentAed,
       exchangeRate: payload.exchangeRate,

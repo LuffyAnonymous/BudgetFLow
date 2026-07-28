@@ -1,17 +1,17 @@
-import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { CategoryRepository } from "@/server/repositories/category.repository";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
 
 const categoryRepo = new CategoryRepository();
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to perform this action.", 401);
+    const authResult = await resolveRequestAuth(request, "categories:read");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with categories:read scope, to perform this action.", 401);
     }
 
-    const categories = await categoryRepo.findManyByUserId(session.user.id);
+    const categories = await categoryRepo.findManyByUserId(authResult.userId);
     
     // Map to safe client format
     const data = categories.map((cat) => ({

@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { TransactionService } from "@/server/services/transaction.service";
 import { transactionFormSchema } from "@/features/transactions/schemas/transaction.schema";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
@@ -9,10 +9,11 @@ const transactionService = new TransactionService();
 
 export async function GET(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to view transactions.", 401);
+    const authResult = await resolveRequestAuth(request, "transactions:read");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with transactions:read scope, to view transactions.", 401);
     }
+    const userId = authResult.userId;
 
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search") || undefined;
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
     const startDate = startDateStr ? new Date(startDateStr) : undefined;
     const endDate = endDateStr ? new Date(endDateStr) : undefined;
 
-    const result = await transactionService.getTransactions(session.user.id, {
+    const result = await transactionService.getTransactions(userId, {
       search,
       categoryId,
       type,
@@ -78,10 +79,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to create a transaction.", 401);
+    const authResult = await resolveRequestAuth(request, "transactions:write");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with transactions:write scope, to create a transaction.", 401);
     }
+    const userId = authResult.userId;
 
     const body = await request.json();
     const validationResult = transactionFormSchema.safeParse(body);
@@ -91,7 +93,7 @@ export async function POST(request: Request) {
     }
 
     const valData = validationResult.data;
-    const transaction = await transactionService.createTransaction(session.user.id, {
+    const transaction = await transactionService.createTransaction(userId, {
       date: valData.date,
       budgetMonth: valData.budgetMonth,
       categoryId: valData.categoryId,

@@ -1,0 +1,70 @@
+{
+  "name": "05 - Utilities / API Authentication",
+  "nodes": [
+    {
+      "id": "node-0003",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -80
+      ],
+      "parameters": {
+        "content": "## API Authentication\n\nSingle Responsibility: validate that BUDGETFLOW_BASE_URL and BUDGETFLOW_SERVICE_API_KEY are configured as n8n environment variables, and fail fast with a clear error if not.\n\nMost workflows in 03-budgetflow-api-client reference $env.BUDGETFLOW_BASE_URL / $env.BUDGETFLOW_SERVICE_API_KEY directly in their HTTP Request nodes (simplest, no extra hop). Call this workflow first via Execute Workflow if you want an explicit preflight check with a clear error message instead of a generic HTTP 401 further downstream.\n\nGenerate a key: sign in to BudgetFlow, POST /api/settings/service-api-key with {name, scopes}. Store the returned key as the BUDGETFLOW_SERVICE_API_KEY environment variable in n8n (Settings > Environments, or .env for self-hosted).",
+        "height": 300,
+        "width": 460,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0002",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0004",
+      "name": "Validate & Build Auth Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const baseUrl = $env.BUDGETFLOW_BASE_URL;\nconst apiKey = $env.BUDGETFLOW_SERVICE_API_KEY;\n\nif (!baseUrl) {\n  throw new Error(\"BUDGETFLOW_BASE_URL is not set. Add it as an n8n environment variable, e.g. https://budgetflow.yourdomain.com\");\n}\nif (!apiKey) {\n  throw new Error(\"BUDGETFLOW_SERVICE_API_KEY is not set. Generate one via POST /api/settings/service-api-key while signed in to BudgetFlow, then add it as an n8n environment variable.\");\n}\n\nreturn [{\n  json: {\n    baseUrl: baseUrl.replace(/\\/$/, \"\"),\n    authHeader: `Bearer ${apiKey}`,\n  },\n}];"
+      }
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Validate & Build Auth Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

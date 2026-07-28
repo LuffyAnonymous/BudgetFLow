@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { MonthlyRolloverService } from "@/server/services/monthly-rollover.service";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
 import { z } from "zod";
@@ -12,9 +12,9 @@ const confirmRolloverSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to confirm rollover.", 401);
+    const authResult = await resolveRequestAuth(request, "automation:trigger");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with automation:trigger scope, to confirm rollover.", 401);
     }
 
     const body = await request.json();
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     }
 
     const payload = valResult.data;
-    const result = await rolloverService.confirmRollover(session.user.id, payload.from, payload.to);
+    const result = await rolloverService.confirmRollover(authResult.userId, payload.from, payload.to);
 
     return apiSuccess({
       id: result.id,

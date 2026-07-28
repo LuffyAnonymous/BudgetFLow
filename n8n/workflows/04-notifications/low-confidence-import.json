@@ -1,0 +1,189 @@
+{
+  "name": "04 - Notifications / Low Confidence Import",
+  "nodes": [
+    {
+      "id": "node-0007",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -100
+      ],
+      "parameters": {
+        "content": "## Low Confidence Import\n\nSingle Responsibility: alert when an import lands in review_required state (the import engine couldn't confidently auto-post it). This mirrors the outcome the app's own import.service already returns \u2014 this workflow does NOT re-decide confidence, it only relays the outcome for channels n8n owns.\n\nInput: { chatId?, source, reason, importedTransactionId? }",
+        "height": 260,
+        "width": 460,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0006",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0010",
+      "name": "Format Log Entry",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        140
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0011",
+              "name": "level",
+              "type": "string",
+              "value": "INFO"
+            },
+            {
+              "id": "node-0012",
+              "name": "workflow",
+              "type": "string",
+              "value": "04 - Notifications / Low Confidence Import"
+            },
+            {
+              "id": "node-0013",
+              "name": "message",
+              "type": "string",
+              "value": "={{ 'Source: ' + $json.source + ' — ' + $json.reason }}"
+            },
+            {
+              "id": "node-0014",
+              "name": "context",
+              "type": "object",
+              "value": "={{ { chatId: $json.chatId, source: $json.source, importedTransactionId: $json.importedTransactionId } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0008",
+      "name": "Log Entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:05 - Utilities / Logger",
+          "cachedResultName": "05 - Utilities / Logger"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"05 - Utilities / Logger\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0009",
+      "name": "Notify (Telegram)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": false
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ \"chat_id\": ($('On called').item.json.chatId || $env.N8N_OPS_TELEGRAM_CHAT_ID), \"text\": ('\u26a0\ufe0f Saved for review\\nSource: ' + $('On called').item.json.source + '\\nReason: ' + $('On called').item.json.reason + '\\nOpen BudgetFlow to confirm or reject.') }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Format Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Notify (Telegram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

@@ -1,0 +1,70 @@
+{
+  "name": "05 - Utilities / Retry Handler",
+  "nodes": [
+    {
+      "id": "node-0016",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -100
+      ],
+      "parameters": {
+        "content": "## Retry Handler\n\nSingle Responsibility: custom-backoff HTTP retry for calls that need more than n8n's native per-node retry (e.g. respecting a Retry-After header from BudgetFlow's rate limiter).\n\nMost workflows should just use the built-in retryOnFail / maxTries / waitBetweenTries settings already configured on each node in 03-budgetflow-api-client \u2014 that covers the common case with zero extra hops. Reach for this utility only when you need Retry-After-aware backoff or a longer retry budget than 3 attempts.\n\nInput: { method, url, headers?, body?, maxRetries? } (default maxRetries = 3)\nOutput: { ok, statusCode, body, attempts, error }",
+        "height": 300,
+        "width": 480,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0015",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0017",
+      "name": "Retry With Backoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const { method = \"GET\", url, headers = {}, body, maxRetries = 3 } = item.json;\n  let attempt = 0;\n  let lastError = null;\n  let response = null;\n\n  while (attempt < maxRetries) {\n    attempt += 1;\n    try {\n      response = await this.helpers.httpRequest({\n        method,\n        url,\n        headers,\n        body,\n        json: true,\n        returnFullResponse: true,\n        ignoreHttpStatusErrors: true,\n      });\n\n      const status = response.statusCode;\n      if (status && status < 500 && status !== 429) {\n        break; // success, or a non-retryable client error\n      }\n\n      const retryAfterHeader = response.headers && response.headers[\"retry-after\"];\n      const waitMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : Math.min(2 ** attempt * 500, 8000);\n      await new Promise((resolve) => setTimeout(resolve, waitMs));\n    } catch (err) {\n      lastError = err;\n      const waitMs = Math.min(2 ** attempt * 500, 8000);\n      await new Promise((resolve) => setTimeout(resolve, waitMs));\n    }\n  }\n\n  results.push({\n    json: {\n      ok: !!response && response.statusCode < 400,\n      statusCode: response ? response.statusCode : null,\n      body: response ? response.body : null,\n      attempts: attempt,\n      error: lastError\n        ? lastError.message\n        : response && response.statusCode >= 400\n        ? `HTTP ${response.statusCode}`\n        : null,\n    },\n  });\n}\n\nreturn results;"
+      }
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Retry With Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

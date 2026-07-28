@@ -1,18 +1,19 @@
-import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { accountService } from "@/server/services/account.service";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to view accounts.", 401);
+    const authResult = await resolveRequestAuth(request, "accounts:read");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with accounts:read scope, to view accounts.", 401);
     }
+    const userId = authResult.userId;
 
-    const accounts = await accountService.getAccounts(session.user.id);
+    const accounts = await accountService.getAccounts(userId);
     const serializedAccounts = await Promise.all(
       accounts.map(async (acc) => {
-        const recon = await accountService.reconcileAccountBalance(session.user.id, acc.id);
+        const recon = await accountService.reconcileAccountBalance(userId, acc.id);
         return {
           id: acc.id,
           type: acc.type,

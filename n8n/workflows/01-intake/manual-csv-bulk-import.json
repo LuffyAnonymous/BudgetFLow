@@ -1,0 +1,187 @@
+{
+  "name": "01 - Intake / Manual - CSV Bulk Import",
+  "nodes": [
+    {
+      "id": "node-0002",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -180
+      ],
+      "parameters": {
+        "content": "## Manual - CSV Bulk Import\n\nSingle Responsibility: accept an uploaded CSV (e.g. an exported bank statement) and create one BudgetFlow transaction per row, via 03 - Create Transaction (which re-validates everything server-side).\n\nNot needed for day-to-day entry — the app's own UI already has a manual transaction form. This exists for bulk backfills only.\n\nBefore using: edit 'Map CSV Row to Transaction Fields' to match your actual CSV column headers and resolve a real categoryId (this workflow does not guess categories).",
+        "height": 320,
+        "width": 520,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0003",
+      "name": "CSV Upload",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        320
+      ],
+      "webhookId": "node-0004",
+      "parameters": {
+        "path": "budgetflow/csv-import",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "extract-csv",
+      "name": "Parse CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        520,
+        320
+      ],
+      "parameters": {
+        "operation": "csv",
+        "binaryPropertyName": "data",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0005",
+      "name": "Map CSV Row to Transaction Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// EDIT ME: map your CSV's actual column headers to BudgetFlow's expected fields.\n// Example assumes headers: Date, CategoryId, Description, Amount, PaymentMethod, Type, Notes\nconst row = $json;\nreturn {\n  json: {\n    date: row.Date,\n    categoryId: row.CategoryId,\n    description: row.Description,\n    amount: row.Amount,\n    paymentMethod: row.PaymentMethod || \"Bank Transfer\",\n    type: row.Type || \"EXPENSE\",\n    notes: row.Notes || null,\n  },\n};"
+      }
+    },
+    {
+      "id": "node-0006",
+      "name": "Create Transaction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        320
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:03 - BudgetFlow API Client / Create Transaction",
+          "cachedResultName": "03 - BudgetFlow API Client / Create Transaction"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"03 - BudgetFlow API Client / Create Transaction\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0007",
+      "name": "Summarize Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst ok = items.filter((i) => i.json.ok).length;\nconst failed = items.length - ok;\nreturn [{ json: { totalRows: items.length, imported: ok, failed } }];"
+      }
+    },
+    {
+      "id": "node-0008",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1640,
+        320
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "CSV Upload": {
+      "main": [
+        [
+          {
+            "node": "Parse CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CSV": {
+      "main": [
+        [
+          {
+            "node": "Map CSV Row to Transaction Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map CSV Row to Transaction Fields": {
+      "main": [
+        [
+          {
+            "node": "Create Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Transaction": {
+      "main": [
+        [
+          {
+            "node": "Summarize Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Results": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

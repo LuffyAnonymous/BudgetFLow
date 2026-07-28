@@ -1,0 +1,189 @@
+{
+  "name": "04 - Notifications / System Error",
+  "nodes": [
+    {
+      "id": "node-0011",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -100
+      ],
+      "parameters": {
+        "content": "## System Error\n\nSingle Responsibility: the generic 'something broke' alert for orchestration/API-client failures (health check failures, a BudgetFlow API call returning an error after retries, etc). Always targets the ops chat, never a specific user \u2014 these are operational, not personal finance, alerts.\n\nInput: { workflow, message, statusCode?, context? }",
+        "height": 260,
+        "width": 460,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0010",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0014",
+      "name": "Format Log Entry",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        140
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0015",
+              "name": "level",
+              "type": "string",
+              "value": "ERROR"
+            },
+            {
+              "id": "node-0016",
+              "name": "workflow",
+              "type": "string",
+              "value": "={{ $json.workflow }}"
+            },
+            {
+              "id": "node-0017",
+              "name": "message",
+              "type": "string",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "id": "node-0018",
+              "name": "context",
+              "type": "object",
+              "value": "={{ { statusCode: $json.statusCode, context: $json.context } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0012",
+      "name": "Log Entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:05 - Utilities / Logger",
+          "cachedResultName": "05 - Utilities / Logger"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"05 - Utilities / Logger\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0013",
+      "name": "Notify Ops (Telegram)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": false
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ \"chat_id\": ($env.N8N_OPS_TELEGRAM_CHAT_ID), \"text\": ('\ud83d\udea8 System error in ' + $('On called').item.json.workflow + '\\n' + $('On called').item.json.message + ($('On called').item.json.statusCode ? ('\\nHTTP ' + $('On called').item.json.statusCode) : '')) }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Format Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Notify Ops (Telegram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

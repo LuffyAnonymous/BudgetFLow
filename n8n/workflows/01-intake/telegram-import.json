@@ -1,0 +1,303 @@
+{
+  "name": "01 - Intake / Telegram Import",
+  "nodes": [
+    {
+      "id": "node-0003",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -320
+      ],
+      "parameters": {
+        "content": "## Telegram Import\n\nSingle Responsibility: receive raw Telegram updates for a SEPARATE, n8n-only bot and hand them to 02 - Processing / Parse Transaction.\n\n⚠️ MUST use a bot token distinct from the app's own TELEGRAM_BOT_TOKEN. The app already registers a webhook on that bot at /api/integrations/telegram/webhook (with its own secret, chat allowlist, and chat→user mapping) — Telegram only allows one webhook URL per bot token, so pointing this workflow at the same token would silently hijack the app's existing integration.\n\nUses a plain Webhook node (not the native Telegram Trigger) so no n8n credential object is required — consistent with how 04-notifications calls the Telegram HTTP API directly.\n\nOne-time setup, after creating a second bot via @BotFather and setting N8N_TELEGRAM_BOT_TOKEN:\n  curl -X POST \"https://api.telegram.org/bot$N8N_TELEGRAM_BOT_TOKEN/setWebhook?url=<your-n8n-instance>/webhook/budgetflow/telegram-import\"\n\nOptional allowlist: set N8N_TELEGRAM_ALLOWED_CHAT_IDS (comma-separated chat IDs) to restrict who can post through this bot. If unset, ANY chat that messages this bot can create transactions — set it before relying on this in production.\n\nStays inactive until N8N_TELEGRAM_BOT_TOKEN is configured and the webhook above is registered.",
+        "height": 460,
+        "width": 640,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0004",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        360
+      ],
+      "webhookId": "node-0005",
+      "parameters": {
+        "path": "budgetflow/telegram-import",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0006",
+      "name": "Normalize Telegram Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const update = ($input.first() && $input.first().json && $input.first().json.body) || {};\nconst message = update.message || update.edited_message || {};\n\nreturn [{\n  json: {\n    source: \"TELEGRAM\",\n    rawText: message.text || \"\",\n    chatId: message.chat ? String(message.chat.id) : null,\n    senderHint: message.from ? (message.from.username || message.from.first_name || null) : null,\n    receivedAt: message.date ? new Date(message.date * 1000).toISOString() : new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "node-0007",
+      "name": "Has Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0008",
+              "leftValue": "={{ $json.rawText }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0009",
+      "name": "Allowed Chat?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0010",
+              "leftValue": "={{ $env.N8N_TELEGRAM_ALLOWED_CHAT_IDS }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            },
+            {
+              "id": "node-0011",
+              "leftValue": "={{ ($env.N8N_TELEGRAM_ALLOWED_CHAT_IDS || '').split(',').map(s => s.trim()).includes($json.chatId) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0012",
+      "name": "Parse Transaction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        260
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:02 - Processing / Parse Transaction",
+          "cachedResultName": "02 - Processing / Parse Transaction"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"02 - Processing / Parse Transaction\" workflow (n8n assigns IDs on import). Failures are relayed back into this same Telegram chat automatically — the chatId flows through the whole pipeline and 04-notifications replies to it directly."
+    },
+    {
+      "id": "node-0013",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0014",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0015",
+      "name": "Send Success Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        180
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.N8N_TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": false
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ \"chat_id\": $('Normalize Telegram Update').item.json.chatId, \"text\": ('✅ Imported: ' + $json.amount + ' — ' + $('Normalize Telegram Update').item.json.rawText) }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Telegram Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Telegram Update": {
+      "main": [
+        [
+          {
+            "node": "Has Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Text?": {
+      "main": [
+        [
+          {
+            "node": "Allowed Chat?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Allowed Chat?": {
+      "main": [
+        [
+          {
+            "node": "Parse Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Parse Transaction": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Send Success Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

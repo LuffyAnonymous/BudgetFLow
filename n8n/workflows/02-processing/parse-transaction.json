@@ -1,0 +1,107 @@
+{
+  "name": "02 - Processing / Parse Transaction",
+  "nodes": [
+    {
+      "id": "node-0003",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -180
+      ],
+      "parameters": {
+        "content": "## Parse Transaction\n\nSingle Responsibility: turn raw intake payload (free text from SMS/Telegram, or pre-structured fields from Manual/CSV) into a draft transaction shape. This is a generic, bank-agnostic heuristic parser \u2014 a deliberate parallel implementation to the app's own bank-specific `importService.processSms()`, built at explicit request even though it duplicates that logic. Extend the regexes here as needed; it will not track improvements made to the app's parser.\n\nInput: { source: 'SMS'|'TELEGRAM'|'MANUAL', rawText: string, receivedAt?: ISOString, chatId?: string, senderHint?: string } \u2014 OR pre-structured { source, amount, description, date?, type?, currency? } which skips heuristic parsing entirely.\n\nOutput: { source, rawText, receivedAt, chatId, senderHint, amount, currency, description, date, type, confidence (0-1), parseOk, parseNotes }\n\nAlways forwards to 02 - Processing / Validate Transaction \u2014 even on parseOk=false, so validation failure messaging stays centralized in one place.",
+        "height": 380,
+        "width": 560,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0002",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0004",
+      "name": "Parse Raw Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = ($input.first() && $input.first().json) || {};\nconst source = input.source || \"UNKNOWN\";\nconst rawText = (input.rawText || \"\").trim();\nconst receivedAt = input.receivedAt || new Date().toISOString();\nconst chatId = input.chatId || null;\nconst senderHint = input.senderHint || null;\n\n// Pre-structured input (e.g. Manual Import with explicit fields) skips heuristic parsing.\nif (input.amount && input.description) {\n  return [{\n    json: {\n      source, rawText, receivedAt, chatId, senderHint,\n      amount: String(input.amount),\n      currency: input.currency || \"AED\",\n      description: String(input.description).slice(0, 100),\n      date: input.date ? new Date(input.date).toISOString() : receivedAt,\n      type: input.type || \"EXPENSE\",\n      paymentMethod: input.paymentMethod || \"Bank Transfer\",\n      confidence: 1,\n      parseOk: true,\n      parseNotes: [\"pre-structured input, heuristic parsing skipped\"],\n    },\n  }];\n}\n\nconst notes = [];\nlet confidence = 0;\n\n// Amount: \"AED 45.50\", \"$12.00\", \"45.50 AED\", \"PHP1,250.00\"\nconst amountMatch = rawText.match(/(AED|USD|PHP|SAR|EUR|GBP|\\$|\u20b1)?\\s?([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?)\\s?(AED|USD|PHP|SAR|EUR|GBP)?/i);\nlet amount = null;\nlet currency = null;\nif (amountMatch) {\n  amount = amountMatch[2].replace(/,/g, \"\");\n  const rawCurrency = (amountMatch[1] || amountMatch[3] || \"AED\").toUpperCase();\n  currency = rawCurrency === \"$\" ? \"USD\" : rawCurrency === \"\u20b1\" ? \"PHP\" : rawCurrency;\n  confidence += 0.4;\n} else {\n  notes.push(\"no amount found\");\n}\n\n// Date: yyyy-mm-dd, dd/mm/yyyy, dd-mm-yyyy\nconst dateMatch = rawText.match(/(\\d{4}-\\d{2}-\\d{2})|(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4})/);\nlet date = receivedAt;\nif (dateMatch) {\n  const parsed = new Date(dateMatch[0]);\n  if (!isNaN(parsed.getTime())) {\n    date = parsed.toISOString();\n    confidence += 0.2;\n  } else {\n    notes.push(\"date pattern found but unparseable, using receivedAt\");\n  }\n} else {\n  notes.push(\"no date found, using receivedAt\");\n}\n\n// Type guess\nconst isIncome = /\\b(credit|received|refund|salary|deposit|payroll)\\b/i.test(rawText);\nconst type = isIncome ? \"INCOME\" : \"EXPENSE\";\n\n// Description: strip the matched amount/date substrings, collapse whitespace\nlet description = rawText;\nif (amountMatch) description = description.replace(amountMatch[0], \" \");\nif (dateMatch) description = description.replace(dateMatch[0], \" \");\ndescription = description.replace(/\\s+/g, \" \").trim();\nif (description.length > 0) {\n  confidence += 0.2;\n} else {\n  description = `Imported transaction (${source})`;\n  notes.push(\"no description text remained after stripping amount/date\");\n}\ndescription = description.slice(0, 100);\n\nif (currency) confidence += 0.2;\n\nconst parseOk = amount !== null;\nif (!parseOk) notes.push(\"parseOk=false: amount is required to proceed\");\n\nreturn [{\n  json: {\n    source, rawText, receivedAt, chatId, senderHint,\n    amount, currency: currency || \"AED\", description, date, type,\n    paymentMethod: input.paymentMethod || \"Bank Transfer\",\n    confidence: Math.round(confidence * 100) / 100,\n    parseOk,\n    parseNotes: notes,\n  },\n}];"
+      }
+    },
+    {
+      "id": "node-0005",
+      "name": "Validate Transaction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:02 - Processing / Validate Transaction",
+          "cachedResultName": "02 - Processing / Validate Transaction"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"02 - Processing / Validate Transaction\" workflow (n8n assigns IDs on import)."
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Parse Raw Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Raw Text": {
+      "main": [
+        [
+          {
+            "node": "Validate Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

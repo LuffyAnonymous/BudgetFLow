@@ -1,0 +1,401 @@
+{
+  "name": "06 - Scheduling & Orchestration / Monthly Rollover Trigger",
+  "nodes": [
+    {
+      "id": "node-0030",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -180
+      ],
+      "parameters": {
+        "content": "## Monthly Rollover Trigger\n\nSingle Responsibility: on the 1st of each month, compute the Dubai-local previous/current budgetMonth (via 05 - Date & Time Helpers), preview the rollover, then confirm it. Two HTTP calls because the app itself exposes rollover as preview-then-confirm — this workflow does not skip the preview step.\n\nRequires a service API key with the automation:trigger scope.",
+        "height": 300,
+        "width": 520,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0031",
+      "name": "Schedule (1st of month)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        320
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 1 * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-0032",
+      "name": "Get Budget Months",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        320
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:05 - Utilities / Date & Time Helpers",
+          "cachedResultName": "05 - Utilities / Date & Time Helpers"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"05 - Utilities / Date & Time Helpers\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0033",
+      "name": "Preview Rollover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/monthly-rollover/preview' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BUDGETFLOW_SERVICE_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "from",
+              "value": "={{ $json.previousBudgetMonth }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.budgetMonth }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
+        },
+        "sendBody": false
+      }
+    },
+    {
+      "id": "node-0034",
+      "name": "Preview OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0035",
+              "leftValue": "={{ $json.statusCode < 400 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0036",
+      "name": "Confirm Rollover",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/monthly-rollover/confirm' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BUDGETFLOW_SERVICE_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ \"from\": ($('Get Budget Months').item.json.previousBudgetMonth), \"to\": ($('Get Budget Months').item.json.budgetMonth) }) }}"
+      }
+    },
+    {
+      "id": "node-0037",
+      "name": "Confirm OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0038",
+              "leftValue": "={{ $json.statusCode < 400 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0039",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        80
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:05 - Utilities / Logger",
+          "cachedResultName": "05 - Utilities / Logger"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"05 - Utilities / Logger\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0040",
+      "name": "Notify: System Error (confirm)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        320
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0041",
+      "name": "Notify: System Error (preview)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        460
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
+    }
+  ],
+  "connections": {
+    "Schedule (1st of month)": {
+      "main": [
+        [
+          {
+            "node": "Get Budget Months",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Budget Months": {
+      "main": [
+        [
+          {
+            "node": "Preview Rollover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview Rollover": {
+      "main": [
+        [
+          {
+            "node": "Preview OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview OK?": {
+      "main": [
+        [
+          {
+            "node": "Confirm Rollover",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify: System Error (preview)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Rollover": {
+      "main": [
+        [
+          {
+            "node": "Confirm OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm OK?": {
+      "main": [
+        [
+          {
+            "node": "Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify: System Error (confirm)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

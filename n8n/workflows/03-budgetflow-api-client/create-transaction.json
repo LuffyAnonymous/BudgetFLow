@@ -1,0 +1,310 @@
+{
+  "name": "03 - BudgetFlow API Client / Create Transaction",
+  "nodes": [
+    {
+      "id": "node-0003",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -140
+      ],
+      "parameters": {
+        "content": "## Create Transaction\n\nSingle Responsibility: call POST /api/transactions and normalize the result. Does not parse, validate business rules, or decide categorization \u2014 that already happened upstream (either in the caller, or inside BudgetFlow's own service layer, which re-validates everything server-side regardless of what this workflow sends).\n\nRequires a BudgetFlow service API key with the `transactions:write` scope (BUDGETFLOW_SERVICE_API_KEY env var).\n\nInput fields mirror transactionFormSchema: date, categoryId, description, amount, paymentMethod, type (INCOME|EXPENSE|SAVINGS|DEBT_PAYMENT|TRANSFER|REMITTANCE), notes?, budgetMonth?. Resolve categoryId ahead of time \u2014 there is no category-lookup step here by design (keep this workflow single-purpose).\n\nOn success, chains to 03 - Update Account Balance (confirmation/logging only \u2014 the balance write already happened atomically server-side).",
+        "height": 340,
+        "width": 520,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0002",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        320
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0004",
+      "name": "Create Transaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/transactions' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BUDGETFLOW_SERVICE_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ \"date\": ($json.date), \"budgetMonth\": ($json.budgetMonth || undefined), \"categoryId\": ($json.categoryId), \"description\": ($json.description), \"amount\": ($json.amount), \"paymentMethod\": ($json.paymentMethod), \"type\": ($json.type), \"notes\": ($json.notes || null) }) }}"
+      }
+    },
+    {
+      "id": "node-0005",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0006",
+              "leftValue": "={{ $json.statusCode < 400 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0007",
+      "name": "Format Success Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1080,
+        200
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0008",
+              "name": "ok",
+              "type": "boolean",
+              "value": "={{ true }}"
+            },
+            {
+              "id": "node-0009",
+              "name": "transactionId",
+              "type": "string",
+              "value": "={{ $json.body.data.id }}"
+            },
+            {
+              "id": "node-0010",
+              "name": "amount",
+              "type": "string",
+              "value": "={{ $json.body.data.amount }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0011",
+      "name": "Notify: System Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        440
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0012",
+      "name": "Format System Error Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1080,
+        440
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0013",
+              "name": "workflow",
+              "type": "string",
+              "value": "03 - BudgetFlow API Client / Create Transaction"
+            },
+            {
+              "id": "node-0014",
+              "name": "message",
+              "type": "string",
+              "value": "={{ ($json.body && $json.body.error) ? $json.body.error : 'POST /api/transactions failed' }}"
+            },
+            {
+              "id": "node-0015",
+              "name": "statusCode",
+              "type": "number",
+              "value": "={{ $json.statusCode }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0016",
+      "name": "Update Account Balance",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        200
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:03 - BudgetFlow API Client / Update Account Balance",
+          "cachedResultName": "03 - BudgetFlow API Client / Update Account Balance"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"03 - BudgetFlow API Client / Update Account Balance\" workflow (n8n assigns IDs on import)."
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Create Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Transaction": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Format Success Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format System Error Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Output": {
+      "main": [
+        [
+          {
+            "node": "Update Account Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format System Error Context": {
+      "main": [
+        [
+          {
+            "node": "Notify: System Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

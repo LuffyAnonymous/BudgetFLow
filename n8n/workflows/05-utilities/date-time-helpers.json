@@ -1,0 +1,70 @@
+{
+  "name": "05 - Utilities / Date & Time Helpers",
+  "nodes": [
+    {
+      "id": "node-0006",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -80
+      ],
+      "parameters": {
+        "content": "## Date & Time Helpers\n\nSingle Responsibility: compute Dubai-local (Asia/Dubai, UTC+4, no DST) date parts and the current budgetMonth (YYYY-MM), mirroring the app's own src/lib/dates.ts (getDubaiCurrentDate / getDubaiMonthRange).\n\nInput (optional): { date: ISOString } \u2014 defaults to now.\nOutput: { isoDate, dubaiYear, dubaiMonth, dubaiDay, budgetMonth, previousBudgetMonth }\n\nUsed by: Monthly Rollover Trigger (02) to compute from/to months without hardcoding.",
+        "height": 260,
+        "width": 460,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0005",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0007",
+      "name": "Compute Dubai Date",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const DUBAI_OFFSET_MS = 4 * 60 * 60 * 1000; // UTC+4, no DST\nconst input = ($input.first() && $input.first().json) || {};\nconst now = input.date ? new Date(input.date) : new Date();\nconst dubai = new Date(now.getTime() + DUBAI_OFFSET_MS);\n\nconst year = dubai.getUTCFullYear();\nconst month = dubai.getUTCMonth() + 1;\nconst day = dubai.getUTCDate();\nconst budgetMonth = `${year}-${String(month).padStart(2, \"0\")}`;\n\nconst prev = new Date(Date.UTC(year, month - 2, 1));\nconst previousBudgetMonth = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, \"0\")}`;\n\nreturn [{\n  json: { isoDate: now.toISOString(), dubaiYear: year, dubaiMonth: month, dubaiDay: day, budgetMonth, previousBudgetMonth },\n}];"
+      }
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Compute Dubai Date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

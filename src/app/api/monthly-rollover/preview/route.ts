@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { MonthlyRolloverService } from "@/server/services/monthly-rollover.service";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
 
@@ -6,9 +6,9 @@ const rolloverService = new MonthlyRolloverService();
 
 export async function GET(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to view rollover preview.", 401);
+    const authResult = await resolveRequestAuth(request, "automation:trigger");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with automation:trigger scope, to view rollover preview.", 401);
     }
 
     const { searchParams } = new URL(request.url);
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
       return apiError("BAD_REQUEST", "Missing 'from' or 'to' parameters. Format: YYYY-MM", 400);
     }
 
-    const preview = await rolloverService.getRolloverPreview(session.user.id, sourceMonth, targetMonth);
+    const preview = await rolloverService.getRolloverPreview(authResult.userId, sourceMonth, targetMonth);
     return apiSuccess(preview);
   } catch (error) {
     return handleApiError(error);

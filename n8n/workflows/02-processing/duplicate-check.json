@@ -1,0 +1,420 @@
+{
+  "name": "02 - Processing / Duplicate Check",
+  "nodes": [
+    {
+      "id": "node-0003",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -260
+      ],
+      "parameters": {
+        "content": "## Duplicate Check\n\nSingle Responsibility: look for an existing transaction within \u00b11 day that matches on amount to catch re-imports (e.g. the same SMS forwarded twice). Not a fuzzy matcher \u2014 amount + same-day date only.\n\nRequires a BudgetFlow service API key with the `transactions:read` scope (BUDGETFLOW_SERVICE_API_KEY env var) \u2014 this scope must be added to the key alongside the write scopes.\n\nInput: output of 02 - Processing / Validate Transaction.\nOutput (not a duplicate): passthrough + { isDuplicate: false } \u2192 forwarded to Categorize Transaction.\nOutput (duplicate found): routes to 04 - Notifications / Import Failed and stops here.\nOutput (API call failed): routes to 04 - Notifications / System Error and stops here.",
+        "height": 340,
+        "width": 560,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0002",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0004",
+      "name": "GET Transactions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/transactions' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BUDGETFLOW_SERVICE_API_KEY }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "startDate",
+              "value": "={{ new Date(new Date($json.date).getTime() - 86400000).toISOString() }}"
+            },
+            {
+              "name": "endDate",
+              "value": "={{ new Date(new Date($json.date).getTime() + 86400000).toISOString() }}"
+            },
+            {
+              "name": "pageSize",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "node-0005",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0006",
+              "leftValue": "={{ $json.statusCode < 400 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0007",
+      "name": "Check Fingerprint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        180
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const original = ($('On called').first() && $('On called').first().json) || {};\nconst httpResponse = ($input.first() && $input.first().json) || {};\nconst items = (httpResponse.body && httpResponse.body.data && httpResponse.body.data.items) || [];\n\nconst targetAmount = parseFloat(original.amount);\nconst targetDate = original.date ? new Date(original.date) : null;\n\nfunction sameDay(a, b) {\n  if (!a || !b) return false;\n  return a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10);\n}\n\nconst match = items.find((tx) => {\n  const txAmount = parseFloat(tx.amount);\n  const txDate = tx.date ? new Date(tx.date) : null;\n  return Math.abs(txAmount - targetAmount) < 0.01 && sameDay(txDate, targetDate);\n});\n\nreturn [{\n  json: {\n    ...original,\n    isDuplicate: !!match,\n    duplicateTransactionId: match ? match.id : null,\n  },\n}];"
+      }
+    },
+    {
+      "id": "node-0008",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0009",
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0010",
+      "name": "Categorize Transaction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1640,
+        60
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:02 - Processing / Categorize Transaction",
+          "cachedResultName": "02 - Processing / Categorize Transaction"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"02 - Processing / Categorize Transaction\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0011",
+      "name": "Format Duplicate Reason",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1640,
+        320
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0012",
+              "name": "chatId",
+              "type": "string",
+              "value": "={{ $json.chatId }}"
+            },
+            {
+              "id": "node-0013",
+              "name": "source",
+              "type": "string",
+              "value": "={{ $json.source }}"
+            },
+            {
+              "id": "node-0014",
+              "name": "reason",
+              "type": "string",
+              "value": "={{ 'Duplicate of transaction ' + $json.duplicateTransactionId + ' (same amount and day)' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0015",
+      "name": "Notify: Import Failed",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        320
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / Import Failed",
+          "cachedResultName": "04 - Notifications / Import Failed"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"04 - Notifications / Import Failed\" workflow (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0016",
+      "name": "Format System Error Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1080,
+        480
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0017",
+              "name": "workflow",
+              "type": "string",
+              "value": "02 - Processing / Duplicate Check"
+            },
+            {
+              "id": "node-0018",
+              "name": "message",
+              "type": "string",
+              "value": "={{ ($json.body && $json.body.error) ? $json.body.error : 'GET /api/transactions failed' }}"
+            },
+            {
+              "id": "node-0019",
+              "name": "statusCode",
+              "type": "number",
+              "value": "={{ $json.statusCode }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0020",
+      "name": "Notify: System Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        480
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "GET Transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Transactions": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Check Fingerprint",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format System Error Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Fingerprint": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Format Duplicate Reason",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Categorize Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Duplicate Reason": {
+      "main": [
+        [
+          {
+            "node": "Notify: Import Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format System Error Context": {
+      "main": [
+        [
+          {
+            "node": "Notify: System Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

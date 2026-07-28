@@ -115,6 +115,7 @@ model User {
   monthlyRollovers     MonthlyRollover[]
   auditLogs            AuditLog[]
   attachments          Attachment[]
+  serviceApiKeys       ServiceApiKey[]
 }
 
 model Account {
@@ -560,6 +561,9 @@ enum AuditAction {
   IMPORT_TOKEN_REVOKED
   IMPORT_CONFIRMED
   IMPORT_REJECTED_MANUAL
+  // Service API Keys (automation / n8n)
+  SERVICE_KEY_GENERATED
+  SERVICE_KEY_REVOKED
 }
 
 enum AuditEntityType {
@@ -577,6 +581,8 @@ enum AuditEntityType {
   // Import Engine
   IMPORTED_TRANSACTION
   IMPORT_SETTING
+  // Automation
+  SERVICE_API_KEY
 }
 
 model AuditLog {
@@ -728,4 +734,36 @@ model ImportedTransaction {
   @@index([userId, source, createdAt])
   @@index([userId, receivedAt])
   @@index([userId, fingerprint])
+}
+
+// ─── Automation / Service-to-Service Access ────────────────────────────────────
+
+/// Per-user API keys for trusted automation clients (e.g. n8n) that need to call
+/// authenticated BudgetFlow endpoints without a browser session.
+///
+/// Mirrors the ImportSetting token design: only the SHA-256 hash is ever stored,
+/// the plaintext key is returned exactly once (on generate/rotate), and
+/// resolution uses a timing-safe comparison. Unlike the import token (which is
+/// scoped to the SMS import webhook only), a ServiceApiKey may be granted
+/// `scopes` to authorize specific write actions (transactions, debts, savings,
+/// remittances, automation triggers).
+model ServiceApiKey {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Human-readable label, e.g. "n8n production"
+  name       String
+  /// Hashed key (SHA-256 hex). @unique ensures no two keys ever collide.
+  keyHash    String    @unique
+  /// Least-privilege scopes this key is authorized for. Empty = no write access.
+  scopes     String[]  @default([])
+  createdAt  DateTime  @default(now())
+  /// Optional expiry. After this date, resolution always fails.
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  /// Throttle-updated: only written when stored value is >5 minutes old.
+  lastUsedAt DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
 }

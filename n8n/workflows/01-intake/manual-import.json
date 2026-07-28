@@ -1,0 +1,136 @@
+{
+  "name": "01 - Intake / Manual Import",
+  "nodes": [
+    {
+      "id": "node-0003",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -220
+      ],
+      "parameters": {
+        "content": "## Manual Import\n\nSingle Responsibility: a lightweight webhook for a single quick-add entry, e.g. from an iOS/Android Shortcut, a bookmarklet, or curl. Distinct from 01 - Intake / Manual - CSV Bulk Import, which handles batch backfills — this is for one transaction at a time. Also distinct from the app's own manual transaction form in the UI, which doesn't need n8n at all; this exists for automation clients outside the browser.\n\nAccepts EITHER free text (routed through the same heuristic parser as SMS/Telegram) OR pre-structured fields (skips parsing entirely — see Parse Transaction's own note).\n\nExpected POST body — either:\n  { rawText: string }\nor:\n  { amount: string, description: string, date?: ISOString, type?: string, currency?: string }\n\nWebhook URL (after import, self-hosted): <your-n8n-instance>/webhook/budgetflow/manual-import",
+        "height": 400,
+        "width": 620,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0004",
+      "name": "Manual Entry Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        280
+      ],
+      "webhookId": "node-0005",
+      "parameters": {
+        "path": "budgetflow/manual-import",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0006",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = ($input.first() && $input.first().json && $input.first().json.body) || {};\n\nif (b.amount && b.description) {\n  return [{\n    json: {\n      source: \"MANUAL\",\n      rawText: \"\",\n      chatId: null,\n      senderHint: null,\n      receivedAt: new Date().toISOString(),\n      amount: b.amount,\n      description: b.description,\n      date: b.date || null,\n      type: b.type || \"EXPENSE\",\n      currency: b.currency || \"AED\",\n    },\n  }];\n}\n\nreturn [{\n  json: {\n    source: \"MANUAL\",\n    rawText: b.rawText || \"\",\n    chatId: null,\n    senderHint: null,\n    receivedAt: new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "node-0007",
+      "name": "Parse Transaction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        800,
+        280
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:02 - Processing / Parse Transaction",
+          "cachedResultName": "02 - Processing / Parse Transaction"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"02 - Processing / Parse Transaction\" workflow (n8n assigns IDs on import). This one call cascades through the whole pipeline (Validate → Duplicate Check → Categorize → Create Transaction → Update Account Balance)."
+    },
+    {
+      "id": "node-0008",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        280
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Entry Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "Parse Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Transaction": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

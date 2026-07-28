@@ -1,0 +1,226 @@
+{
+  "name": "03 - BudgetFlow API Client / Create Remittance",
+  "nodes": [
+    {
+      "id": "node-0033",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -140
+      ],
+      "parameters": {
+        "content": "## Create Remittance\n\nSingle Responsibility: call POST /api/remittances and normalize the result. Does not parse, validate business rules, or decide categorization \u2014 that already happened upstream (either in the caller, or inside BudgetFlow's own service layer, which re-validates everything server-side regardless of what this workflow sends).\n\nRequires a BudgetFlow service API key with the `remittances:write` scope (BUDGETFLOW_SERVICE_API_KEY env var).\n\nPass idempotencyKey when calling from an automated source (e.g. a recurring remittance schedule) to make retries safe.",
+        "height": 340,
+        "width": 520,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0032",
+      "name": "On called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        320
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": []
+        },
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "node-0034",
+      "name": "Create Remittance",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true,
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/remittances' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.BUDGETFLOW_SERVICE_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": false,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ \"recipient\": ($json.recipient || null), \"amountSentAed\": ($json.amountSentAed), \"exchangeRate\": ($json.exchangeRate || null), \"transferFeeAed\": ($json.transferFeeAed || null), \"transferProvider\": ($json.transferProvider), \"transferDate\": ($json.transferDate), \"referenceNumber\": ($json.referenceNumber || null), \"notes\": ($json.notes || null), \"categoryId\": ($json.categoryId || null), \"syncLedger\": ($json.syncLedger !== undefined ? $json.syncLedger : true), \"idempotencyKey\": ($json.idempotencyKey || undefined) }) }}"
+      }
+    },
+    {
+      "id": "node-0035",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0036",
+              "leftValue": "={{ $json.statusCode < 400 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0037",
+      "name": "Format Success Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1080,
+        200
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0038",
+              "name": "ok",
+              "type": "boolean",
+              "value": "={{ true }}"
+            },
+            {
+              "id": "node-0039",
+              "name": "remittanceId",
+              "type": "string",
+              "value": "={{ $json.body.data.id }}"
+            },
+            {
+              "id": "node-0040",
+              "name": "cashOutflowAed",
+              "type": "string",
+              "value": "={{ $json.body.data.cashOutflowAed }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0041",
+      "name": "Notify: System Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        440
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
+    }
+  ],
+  "connections": {
+    "On called": {
+      "main": [
+        [
+          {
+            "node": "Create Remittance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Remittance": {
+      "main": [
+        [
+          {
+            "node": "Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [
+          {
+            "node": "Format Success Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify: System Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

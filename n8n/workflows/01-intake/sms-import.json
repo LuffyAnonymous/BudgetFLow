@@ -1,0 +1,136 @@
+{
+  "name": "01 - Intake / SMS Import",
+  "nodes": [
+    {
+      "id": "node-0003",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -220
+      ],
+      "parameters": {
+        "content": "## SMS Import\n\nSingle Responsibility: webhook entrypoint for any SMS-forwarding tool (e.g. MacroDroid, Tasker, a Twilio inbound webhook) that posts a raw SMS into this n8n instance. Normalizes the payload, then hands off to 02 - Processing / Parse Transaction. The whole pipeline result is returned in the HTTP response.\n\nThis is a parallel, n8n-native path — independent of the app's own /api/imports/sms endpoint (which uses a different, already-battle-tested pipeline). Built at explicit request even though it duplicates that logic; the two will not stay in sync automatically.\n\nExpected POST body: { from?: string, body: string, receivedAt?: ISOString }. Adjust 'Normalize Payload' if your SMS forwarder uses different field names (e.g. Twilio sends { From, Body }).\n\nWebhook URL (after import, self-hosted): <your-n8n-instance>/webhook/budgetflow/sms-import",
+        "height": 400,
+        "width": 600,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0004",
+      "name": "SMS Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        280
+      ],
+      "webhookId": "node-0005",
+      "parameters": {
+        "path": "budgetflow/sms-import",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0006",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = ($input.first() && $input.first().json && $input.first().json.body) || {};\nreturn [{\n  json: {\n    source: \"SMS\",\n    rawText: b.body || b.Body || b.text || \"\",\n    chatId: null,\n    senderHint: b.from || b.From || null,\n    receivedAt: b.receivedAt || new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "node-0007",
+      "name": "Parse Transaction",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        800,
+        280
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:02 - Processing / Parse Transaction",
+          "cachedResultName": "02 - Processing / Parse Transaction"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"02 - Processing / Parse Transaction\" workflow (n8n assigns IDs on import). This one call cascades through the whole pipeline (Validate → Duplicate Check → Categorize → Create Transaction → Update Account Balance)."
+    },
+    {
+      "id": "node-0008",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        280
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "SMS Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "Parse Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Transaction": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

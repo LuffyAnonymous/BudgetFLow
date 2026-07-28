@@ -1,4 +1,5 @@
 import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { DebtService } from "@/server/services/debt.service";
 import { recordPaymentSchema } from "@/features/debts/schemas/debt.schema";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
@@ -56,10 +57,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to record a payment.", 401);
+    const authResult = await resolveRequestAuth(request, "debts:write");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with debts:write scope, to record a payment.", 401);
     }
+    const userId = authResult.userId;
 
     const { id } = await params;
     const body = await request.json();
@@ -70,7 +72,7 @@ export async function POST(
     }
 
     const valData = validationResult.data;
-    const payment = await debtService.recordDebtPayment(session.user.id, id, valData);
+    const payment = await debtService.recordDebtPayment(userId, id, valData);
 
     return apiSuccess({
       id: payment.id,

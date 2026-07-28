@@ -1,17 +1,17 @@
-import { auth } from "@/auth";
+import { resolveRequestAuth } from "@/lib/service-auth";
 import { NotificationService } from "@/server/services/notification.service";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
 
 const notificationService = new NotificationService();
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return apiError("UNAUTHORIZED", "You must be signed in to evaluate notifications.", 401);
+    const authResult = await resolveRequestAuth(request, "automation:trigger");
+    if (!authResult) {
+      return apiError("UNAUTHORIZED", "You must be signed in, or provide a service API key with automation:trigger scope, to evaluate notifications.", 401);
     }
 
-    const result = await notificationService.evaluateNotifications(session.user.id);
+    const result = await notificationService.evaluateNotifications(authResult.userId);
     return apiSuccess({
       message: "Notifications evaluated successfully.",
       ...result,
