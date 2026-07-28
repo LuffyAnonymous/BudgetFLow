@@ -7,6 +7,11 @@ export const transactionFormSchema = z.object({
     (val) => (typeof val === "string" ? new Date(val) : val),
     z.date()
   ),
+  budgetMonth: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/, "Invalid budget month format (YYYY-MM).")
+    .nullable()
+    .optional(),
   categoryId: z.string().uuid("Invalid category ID format."),
   description: z
     .string()

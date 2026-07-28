@@ -74,10 +74,16 @@ export class DashboardService {
     const transactions = await db.transaction.findMany({
       where: {
         userId,
-        date: {
-          gte: start,
-          lt: nextMonthStart,
-        },
+        OR: [
+          { budgetMonth: activeMonth },
+          {
+            budgetMonth: null,
+            date: {
+              gte: start,
+              lt: nextMonthStart,
+            },
+          },
+        ],
       },
       include: {
         category: true,

@@ -29,6 +29,7 @@ export async function PUT(
     const valData = validationResult.data;
     const updateData: import("@/features/transactions/types/transaction.types").UpdateTransactionData = {};
     if (valData.date) updateData.date = valData.date;
+    if (valData.budgetMonth !== undefined) updateData.budgetMonth = valData.budgetMonth;
     if (valData.categoryId) updateData.categoryId = valData.categoryId;
     if (valData.description) updateData.description = valData.description;
     if (valData.amount) updateData.amount = new Decimal(valData.amount);
@@ -39,7 +40,7 @@ export async function PUT(
     const transaction = await transactionService.updateTransaction(id, session.user.id, updateData);
 
     // If this is an imported transaction, stamp adjustedAt to preserve import provenance
-    const extendedTx = transaction as typeof transaction & { importSource?: string | null; adjustedAt?: Date | null };
+    const extendedTx = transaction as typeof transaction & { importSource?: string | null; adjustedAt?: Date | null; budgetMonth?: string | null };
     if (extendedTx.importSource && !extendedTx.adjustedAt) {
       const { db } = await import("@/lib/db");
       await db.transaction.update({
@@ -51,6 +52,7 @@ export async function PUT(
     return apiSuccess({
       id: transaction.id,
       date: transaction.date.toISOString(),
+      budgetMonth: extendedTx.budgetMonth ?? null,
       categoryId: transaction.categoryId,
       description: transaction.description,
       amount: transaction.amount.toFixed(2),

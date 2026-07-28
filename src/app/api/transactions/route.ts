@@ -48,6 +48,7 @@ export async function GET(request: Request) {
       return {
         id: extendedTx.id,
         date: extendedTx.date.toISOString(),
+        budgetMonth: (extendedTx as Record<string, unknown>).budgetMonth as string | null ?? null,
         categoryId: extendedTx.categoryId,
         categoryName: extendedTx.category?.name || "Unknown",
         categoryType: extendedTx.category?.type || "EXPENSE",
@@ -92,6 +93,7 @@ export async function POST(request: Request) {
     const valData = validationResult.data;
     const transaction = await transactionService.createTransaction(session.user.id, {
       date: valData.date,
+      budgetMonth: valData.budgetMonth,
       categoryId: valData.categoryId,
       description: valData.description,
       amount: new Decimal(valData.amount),
@@ -103,6 +105,7 @@ export async function POST(request: Request) {
     return apiSuccess({
       id: transaction.id,
       date: transaction.date.toISOString(),
+      budgetMonth: (transaction as Record<string, unknown>).budgetMonth as string | null ?? null,
       categoryId: transaction.categoryId,
       description: transaction.description,
       amount: transaction.amount.toFixed(2),

@@ -69,6 +69,7 @@ export class TransactionRepository {
       data: {
         userId,
         date: data.date,
+        budgetMonth: data.budgetMonth !== undefined ? data.budgetMonth : undefined,
         categoryId: data.categoryId,
         description: data.description,
         amount: data.amount,
@@ -109,6 +110,7 @@ export class TransactionRepository {
       where: { id, userId },
       data: {
         date: data.date,
+        budgetMonth: data.budgetMonth !== undefined ? data.budgetMonth : undefined,
         categoryId: data.categoryId,
         description: data.description,
         amount: data.amount,
@@ -144,17 +146,28 @@ export class TransactionRepository {
   }
 
   /**
-   * Finds transactions inside a specific UTC Date range.
+   * Finds transactions inside a specific UTC Date range or budgetMonth.
    */
-  async findManyInRange(userId: string, start: Date, end: Date, tx?: Prisma.TransactionClient): Promise<Transaction[]> {
+  async findManyInRange(userId: string, start: Date, end: Date, monthStr?: string, tx?: Prisma.TransactionClient): Promise<Transaction[]> {
+    const where: Prisma.TransactionWhereInput = {
+      userId,
+      ...(monthStr
+        ? {
+            OR: [
+              { budgetMonth: monthStr },
+              {
+                budgetMonth: null,
+                date: { gte: start, lt: end },
+              },
+            ],
+          }
+        : {
+            date: { gte: start, lt: end },
+          }),
+    };
+
     return this.getClient(tx).transaction.findMany({
-      where: {
-        userId,
-        date: {
-          gte: start,
-          lt: end,
-        },
-      },
+      where,
       include: {
         category: true,
       },
@@ -173,15 +186,22 @@ export class TransactionRepository {
       userId,
     };
 
-    if (filters.categoryId) {
-      where.categoryId = filters.categoryId;
-    }
-
-    if (filters.type) {
-      where.type = filters.type;
-    }
-
-    if (filters.startDate || filters.endDate) {
+    if (filters.budgetMonth) {
+      where.OR = [
+        { budgetMonth: filters.budgetMonth },
+        {
+          budgetMonth: null,
+          ...(filters.startDate || filters.endDate
+            ? {
+                date: {
+                  ...(filters.startDate ? { gte: filters.startDate } : {}),
+                  ...(filters.endDate ? { lte: filters.endDate } : {}),
+                },
+              }
+            : {}),
+        },
+      ];
+    } else if (filters.startDate || filters.endDate) {
       where.date = {};
       if (filters.startDate) {
         where.date.gte = filters.startDate;
@@ -191,14 +211,32 @@ export class TransactionRepository {
       }
     }
 
+    if (filters.categoryId) {
+      where.categoryId = filters.categoryId;
+    }
+
+    if (filters.type) {
+      where.type = filters.type;
+    }
+
     if (filters.search) {
       const trimmedSearch = filters.search.trim().slice(0, 50);
       if (trimmedSearch) {
-        where.OR = [
+        const searchConditions: Prisma.TransactionWhereInput[] = [
           { description: { contains: trimmedSearch, mode: "insensitive" } },
           { notes: { contains: trimmedSearch, mode: "insensitive" } },
           { paymentMethod: { contains: trimmedSearch, mode: "insensitive" } },
         ];
+
+        if (where.OR) {
+          where.AND = [
+            { OR: where.OR },
+            { OR: searchConditions },
+          ];
+          delete where.OR;
+        } else {
+          where.OR = searchConditions;
+        }
       }
     }
 

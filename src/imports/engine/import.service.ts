@@ -22,6 +22,7 @@ import { smsParserRegistry } from "../sms/parser-registry";
 import { buildFingerprint } from "./duplicate-detector";
 import { accountService } from "../../server/services/account.service";
 import { NotificationService } from "../../server/services/notification.service";
+import { determineBudgetMonth } from "@/lib/salary-month";
 import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
 
 import { normalizeSender, SupportedBank } from "./sender-normalizer";
@@ -286,9 +287,16 @@ export class ImportService {
               });
             }
 
+            const isSalary =
+              category.toLowerCase() === "salary" ||
+              (dbCategory?.name ?? "").toLowerCase() === "salary" ||
+              (normalized.parserKey ?? "").toLowerCase().includes("salary");
+            const computedBudgetMonth = determineBudgetMonth(financialDate, isSalary);
+
             const ledgerTx = await tx.transaction.create({
                 data: {
                     date: financialDate,
+                    budgetMonth: computedBudgetMonth,
                     categoryId: dbCategory!.id,
                     description: normalized.merchant || "Auto-imported",
                     amount: normalized.amount,
@@ -302,6 +310,11 @@ export class ImportService {
             });
             ledgerTxId = ledgerTx.id;
         }
+
+        const isSalaryImport =
+          category.toLowerCase() === "salary" ||
+          (normalized.parserKey ?? "").toLowerCase().includes("salary");
+        const computedBudgetMonth = determineBudgetMonth(financialDate, isSalaryImport);
 
         const importedTx = await tx.importedTransaction.create({
             data: {
@@ -320,6 +333,7 @@ export class ImportService {
               parsedCurrency: normalized.currency,
               parsedReference: normalized.reference,
               parsedDescription: normalized.merchant || "Auto-imported",
+              budgetMonth: computedBudgetMonth,
               fingerprint,
               receivedAt,
               financialDate,
@@ -415,9 +429,14 @@ export class ImportService {
           txType = TransactionType.TRANSFER;
       }
 
+      const effectiveDate = overrides?.financialDate || importedTx.financialDate || importedTx.receivedAt;
+      const isSalary = categoryStr.toLowerCase() === "salary" || (importedTx.parserKey ?? "").toLowerCase().includes("salary");
+      const computedBudgetMonth = importedTx.budgetMonth || determineBudgetMonth(effectiveDate, isSalary);
+
       const ledgerTx = await tx.transaction.create({
           data: {
-              date: overrides?.financialDate || importedTx.financialDate || importedTx.receivedAt,
+              date: effectiveDate,
+              budgetMonth: computedBudgetMonth,
               categoryId,
               description: importedTx.parsedDescription || "Manually confirmed",
               amount: importedTx.parsedAmount!,

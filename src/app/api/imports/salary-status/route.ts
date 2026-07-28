@@ -60,7 +60,13 @@ export async function GET(): Promise<NextResponse> {
     where: {
       userId,
       status: { in: [ImportStatus.PROCESSED, ImportStatus.REVIEW_REQUIRED] },
-      receivedAt: { gte: start, lt: nextMonthStart },
+      OR: [
+        { budgetMonth: monthStr },
+        {
+          budgetMonth: null,
+          receivedAt: { gte: start, lt: nextMonthStart },
+        },
+      ],
     },
     orderBy: { receivedAt: "desc" },
     select: {

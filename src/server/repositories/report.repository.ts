@@ -2,9 +2,24 @@ import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 
 export class ReportRepository {
-  async getTransactions(userId: string, startDate?: Date, endDate?: Date) {
+  async getTransactions(userId: string, startDate?: Date, endDate?: Date, monthStr?: string) {
     const where: Prisma.TransactionWhereInput = { userId };
-    if (startDate || endDate) {
+    if (monthStr) {
+      where.OR = [
+        { budgetMonth: monthStr },
+        {
+          budgetMonth: null,
+          ...(startDate || endDate
+            ? {
+                date: {
+                  ...(startDate ? { gte: startDate } : {}),
+                  ...(endDate ? { lt: endDate } : {}),
+                },
+              }
+            : {}),
+        },
+      ];
+    } else if (startDate || endDate) {
       const dateFilter: Prisma.DateTimeFilter = {};
       if (startDate) dateFilter.gte = startDate;
       if (endDate) dateFilter.lt = endDate;
@@ -68,20 +83,15 @@ export class ReportRepository {
     }
     return db.remittance.findMany({
       where,
-      include: { category: true },
       orderBy: { transferDate: "asc" },
     });
   }
 
   async getDebts(userId: string) {
-    return db.debt.findMany({
-      where: { userId },
-    });
+    return db.debt.findMany({ where: { userId } });
   }
 
   async getSavingGoals(userId: string) {
-    return db.savingGoal.findMany({
-      where: { userId },
-    });
+    return db.savingGoal.findMany({ where: { userId } });
   }
 }

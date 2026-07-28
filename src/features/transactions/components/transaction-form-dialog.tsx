@@ -4,22 +4,6 @@
  * TransactionFormDialog
  *
  * Reusable dialog for creating and editing INCOME/EXPENSE transactions.
- *
- * Can be mounted from:
- *   - /transactions page (as the primary add/edit form)
- *   - Dashboard quick actions (Add Income, Add Expense)
- *
- * All form validation, category compatibility enforcement, and mutation
- * logic are encapsulated here. The transactions page replaces its own
- * form with this component; it does NOT maintain two versions.
- *
- * Props:
- *   isOpen            Whether the dialog is visible.
- *   onClose           Called when the dialog is closed (cancel or success).
- *   onSuccess         Called after a successful create or update. Callers
- *                     use this to invalidate their own queries.
- *   defaultType       Pre-select "INCOME" or "EXPENSE" (for quick actions).
- *   editingTransaction If set, the form renders in edit mode.
  */
 
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -42,6 +26,7 @@ interface CategoryOption {
 export interface EditableTransaction {
   id: string;
   date: string;
+  budgetMonth?: string | null;
   categoryId: string;
   description: string;
   amount: string;
@@ -53,11 +38,8 @@ export interface EditableTransaction {
 interface TransactionFormDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Called after a successful create or update. Invalidate queries here. */
   onSuccess?: () => void;
-  /** For quick actions: pre-select the transaction type */
   defaultType?: "INCOME" | "EXPENSE";
-  /** If provided, the dialog renders in edit mode */
   editingTransaction?: EditableTransaction | null;
 }
 
@@ -73,7 +55,6 @@ export function TransactionFormDialog({
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, isOpen);
 
-  // Load categories (shared cache via queryClient)
   const { data: categories = [] } = useQuery<CategoryOption[]>({
     queryKey: ["categories"],
     queryFn: async () => {
@@ -96,6 +77,7 @@ export function TransactionFormDialog({
     resolver: zodResolver(transactionFormSchema),
     defaultValues: {
       date: new Date().toISOString().split("T")[0],
+      budgetMonth: "",
       categoryId: "",
       description: "",
       amount: "",
@@ -105,13 +87,9 @@ export function TransactionFormDialog({
     },
   });
 
-  // useWatch() is the React Compiler-compatible alternative to watch() —
-  // it uses the same subscription model but is declared as a React hook,
-  // which React Compiler can safely analyze.
   const selectedType = useWatch({ control, name: "type" });
   const watchedCategoryId = useWatch({ control, name: "categoryId" });
 
-  // Category compatibility filtering
   const filteredCategories = useMemo(() => {
     return categories.filter((cat) => {
       if (selectedType === "INCOME") return cat.type === "INCOME";
@@ -119,7 +97,6 @@ export function TransactionFormDialog({
     });
   }, [categories, selectedType]);
 
-  // Reset category when type changes and current selection becomes incompatible
   useEffect(() => {
     if (watchedCategoryId) {
       const stillValid = filteredCategories.some((c) => c.id === watchedCategoryId);
@@ -129,12 +106,12 @@ export function TransactionFormDialog({
     }
   }, [selectedType, watchedCategoryId, filteredCategories, setValue]);
 
-  // Populate form when editingTransaction or defaultType changes
   useEffect(() => {
     if (!isOpen) return;
     if (editingTransaction) {
       reset({
         date: editingTransaction.date.split("T")[0],
+        budgetMonth: editingTransaction.budgetMonth || "",
         categoryId: editingTransaction.categoryId,
         description: editingTransaction.description,
         amount: editingTransaction.amount,
@@ -145,6 +122,7 @@ export function TransactionFormDialog({
     } else {
       reset({
         date: new Date().toISOString().split("T")[0],
+        budgetMonth: "",
         categoryId: "",
         description: "",
         amount: "",
@@ -153,8 +131,6 @@ export function TransactionFormDialog({
         type: defaultType,
       });
     }
-    // Note: formError is cleared by mutation onSuccess handlers, not here.
-    // Clearing state inside an effect triggers cascading renders (react-hooks/set-state-in-effect).
   }, [isOpen, editingTransaction, defaultType, reset]);
 
   const createMutation = useMutation({
@@ -162,14 +138,16 @@ export function TransactionFormDialog({
       const res = await fetch("/api/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          ...data,
+          budgetMonth: data.budgetMonth || null,
+        }),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error.message);
       return json.data;
     },
     onSuccess: () => {
-      // Invalidate transactions + dashboard (quick action on dashboard must refresh cards)
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       onSuccess?.();
@@ -183,7 +161,10 @@ export function TransactionFormDialog({
       const res = await fetch(`/api/transactions/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          ...data,
+          budgetMonth: data.budgetMonth !== undefined ? (data.budgetMonth || null) : undefined,
+        }),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error.message);
@@ -200,54 +181,35 @@ export function TransactionFormDialog({
 
   const onSubmit = (data: FormValues) => {
     setFormError(null);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const payload: any = { ...data };
     if (editingTransaction) {
-      updateMutation.mutate({ id: editingTransaction.id, data: payload });
+      updateMutation.mutate({ id: editingTransaction.id, data });
     } else {
-      createMutation.mutate(payload);
+      createMutation.mutate(data);
     }
   };
-
-  const handleClose = () => {
-    setFormError(null);
-    onClose();
-  };
-
-  // Focus trap: close on Escape
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
   return (
     <div
-      aria-hidden={!isOpen}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200"
-      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tx-dialog-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200"
     >
       <div
         ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={editingTransaction ? "Edit Transaction" : "Record Transaction"}
-        className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+        className="relative w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
+      >
         <button
-          onClick={handleClose}
+          onClick={onClose}
           aria-label="Close dialog"
-          className="absolute top-4 right-4 rounded-lg p-1 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+          className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
         >
-          <LucideX className="h-5 w-5" aria-hidden="true" />
+          <LucideX className="h-5 w-5" />
         </button>
 
-        <h2 className="text-xl font-bold text-white mb-4">
+        <h2 id="tx-dialog-title" className="text-xl font-bold text-white mb-4">
           {editingTransaction ? "Edit Transaction" : "Record Transaction"}
         </h2>
 
@@ -281,7 +243,7 @@ export function TransactionFormDialog({
             {/* Date */}
             <div className="space-y-1.5">
               <label htmlFor="tx-date" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Date
+                Bank Transaction Date
               </label>
               <input
                 id="tx-date"
@@ -292,6 +254,23 @@ export function TransactionFormDialog({
               {errors.date && <span className="text-xs text-red-400" role="alert">{String(errors.date.message)}</span>}
             </div>
 
+            {/* Applicable Budget Month */}
+            <div className="space-y-1.5">
+              <label htmlFor="tx-budgetMonth" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Applicable Budget Month
+              </label>
+              <input
+                id="tx-budgetMonth"
+                type="month"
+                placeholder="YYYY-MM"
+                {...register("budgetMonth")}
+                className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              />
+              {errors.budgetMonth && <span className="text-xs text-red-400" role="alert">{String(errors.budgetMonth.message)}</span>}
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
             {/* Amount */}
             <div className="space-y-1.5">
               <label htmlFor="tx-amount" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -307,24 +286,24 @@ export function TransactionFormDialog({
               />
               {errors.amount && <span className="text-xs text-red-400" role="alert">{String(errors.amount.message)}</span>}
             </div>
-          </div>
 
-          {/* Category */}
-          <div className="space-y-1.5">
-            <label htmlFor="tx-category" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Category
-            </label>
-            <select
-              id="tx-category"
-              {...register("categoryId")}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
-            >
-              <option value="">Select Category</option>
-              {filteredCategories.map((cat) => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
-            {errors.categoryId && <span className="text-xs text-red-400" role="alert">{String(errors.categoryId.message)}</span>}
+            {/* Category */}
+            <div className="space-y-1.5">
+              <label htmlFor="tx-category" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Category
+              </label>
+              <select
+                id="tx-category"
+                {...register("categoryId")}
+                className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              >
+                <option value="">Select Category</option>
+                {filteredCategories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+              {errors.categoryId && <span className="text-xs text-red-400" role="alert">{String(errors.categoryId.message)}</span>}
+            </div>
           </div>
 
           {/* Description */}
@@ -335,7 +314,7 @@ export function TransactionFormDialog({
             <input
               id="tx-description"
               type="text"
-              placeholder="e.g. Lunch at Dubai Mall"
+              placeholder="e.g. Salary or Lunch"
               {...register("description")}
               className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
             />
@@ -350,7 +329,7 @@ export function TransactionFormDialog({
             <input
               id="tx-method"
               type="text"
-              placeholder="e.g. Emirates NBD Credit Card, Cash"
+              placeholder="e.g. Card, Cash, Bank Transfer"
               {...register("paymentMethod")}
               className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
             />
@@ -364,29 +343,32 @@ export function TransactionFormDialog({
             </label>
             <textarea
               id="tx-notes"
-              placeholder="Add additional notes here..."
-              {...register("notes")}
               rows={2}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500 resize-none"
+              placeholder="Additional notes..."
+              {...register("notes")}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500 resize-none"
             />
             {errors.notes && <span className="text-xs text-red-400" role="alert">{String(errors.notes.message)}</span>}
           </div>
 
-          <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+          {/* Actions */}
+          <div className="flex items-center justify-end space-x-3 pt-2">
             <button
               type="button"
-              onClick={handleClose}
-              className="rounded-xl border border-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+              onClick={onClose}
+              className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-500 active:scale-95 disabled:opacity-50"
+              disabled={isSubmitting || createMutation.isPending || updateMutation.isPending}
+              className="inline-flex items-center space-x-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-500 transition-colors disabled:opacity-50"
             >
-              {isSubmitting && <LucideLoader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {editingTransaction ? "Save Changes" : "Record Transaction"}
+              {(isSubmitting || createMutation.isPending || updateMutation.isPending) && (
+                <LucideLoader2 className="h-4 w-4 animate-spin" />
+              )}
+              <span>{editingTransaction ? "Save Changes" : "Create Transaction"}</span>
             </button>
           </div>
         </form>

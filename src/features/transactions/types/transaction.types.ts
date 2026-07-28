@@ -3,6 +3,7 @@ import { TransactionType, CashFlowDirection, TransactionOrigin } from "@prisma/c
 
 export interface CreateTransactionData {
   date: Date;
+  budgetMonth?: string | null;
   categoryId: string;
   description: string;
   amount: Decimal;
@@ -17,6 +18,7 @@ export interface CreateTransactionData {
 
 export interface UpdateTransactionData {
   date?: Date;
+  budgetMonth?: string | null;
   categoryId?: string;
   description?: string;
   amount?: Decimal;
@@ -35,6 +37,7 @@ export interface TransactionFilters {
   type?: TransactionType;
   startDate?: Date;
   endDate?: Date;
+  budgetMonth?: string;
   page?: number;
   pageSize?: number;
 }

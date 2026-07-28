@@ -184,6 +184,7 @@ model Transaction {
   // Import tracking
   importSource         ImportSource?
   adjustedAt           DateTime? // set when user edits an imported transaction
+  budgetMonth          String?   // e.g. "2026-08" for reporting/budget month attribution
   userId               String
   user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   debtPayment          DebtPayment?
@@ -197,6 +198,7 @@ model Transaction {
   updatedAt            DateTime              @updatedAt
 
   @@index([userId, date])
+  @@index([userId, budgetMonth])
   @@index([categoryId])
   @@index([accountId])
   @@index([toAccountId])
@@ -694,6 +696,7 @@ model ImportedTransaction {
   receivedAt       DateTime
   serverReceivedAt DateTime?
   financialDate    DateTime?
+  budgetMonth      String?   // e.g. "2026-08"
   processedAt      DateTime?
   reviewedAt       DateTime?
 

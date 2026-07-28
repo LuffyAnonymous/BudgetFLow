@@ -25,6 +25,7 @@ interface CategoryOption {
 interface TransactionItem {
   id: string;
   date: string;
+  budgetMonth: string | null;
   categoryId: string;
   categoryName: string;
   categoryType: string;

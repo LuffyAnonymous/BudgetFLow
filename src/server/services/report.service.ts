@@ -102,7 +102,7 @@ export class ReportService {
     );
 
     // Fetch datasets from repository
-    const transactions = await this.reportRepo.getTransactions(userId, startDate, endDate);
+    const transactions = await this.reportRepo.getTransactions(userId, startDate, endDate, monthStr);
     const budgets = await this.reportRepo.getBudgets(userId, monthStr);
     const remittances = await this.reportRepo.getRemittances(userId, startDate, endDate);
     const debtPayments = await this.reportRepo.getDebtPayments(userId, startDate, endDate);
@@ -295,7 +295,7 @@ export class ReportService {
     });
 
     transactions.forEach((tx) => {
-      const mStr = this.getDubaiYearMonth(tx.date);
+      const mStr = tx.budgetMonth || this.getDubaiYearMonth(tx.date);
       if (cashFlowByMonth[mStr]) {
         const isInflow = this.isTransactionInflow(tx);
         if (isInflow) {
@@ -319,7 +319,7 @@ export class ReportService {
       debtBalancesByMonth[m] = new Decimal(0);
     });
 
-    allDebts.forEach((debt) => {
+    allDebts.forEach((debt: { id: string; currentBalance: Decimal }) => {
       const debtPayments = allDebtPayments.filter((p) => p.debtId === debt.id);
 
       monthsList.forEach((monthStr) => {
@@ -359,7 +359,7 @@ export class ReportService {
       savingsBalancesByMonth[m] = new Decimal(0);
     });
 
-    allSavingGoals.forEach((goal) => {
+    allSavingGoals.forEach((goal: { id: string; currentAmount: Decimal }) => {
       const goalTxs = allSavingTransactions.filter((t) => t.savingGoalId === goal.id);
 
       monthsList.forEach((monthStr) => {
