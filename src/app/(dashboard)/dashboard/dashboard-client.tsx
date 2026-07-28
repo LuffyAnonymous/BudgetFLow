@@ -249,7 +249,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
       <SalarySafetyAlert />
       
       {/* Automation Status Panel — replaces quick actions */}
-      <AutomationStatusPanel />
+      <AutomationStatusPanel activeMonth={selectedMonth} />
 
 
 

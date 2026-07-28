@@ -4,24 +4,6 @@
  * Consolidated automation dashboard endpoint.
  * Returns salary status, token status, import counts, and system health
  * in ONE response to avoid duplicate queries from separate components.
- *
- * importHealth deterministic rules (correction #13):
- *   DISABLED:       ImportSetting.enabled === false
- *   NO_TOKEN:       enabled but no active token (missing, revoked, or expired)
- *   NEEDS_REVIEW:   pending REVIEW_REQUIRED imports OR recent failures
- *   HEALTHY:        enabled + active non-expired token + no pending review + no recent failures
- *
- * duplicateActivity (correction #3):
- *   Calculated from records where duplicateCount > 0 AND lastDuplicateAt >= start-of-today-dubai.
- *   This shows "imports with duplicate activity today" (not "duplicate requests today").
- *   Labeled clearly in the response to match UI copy.
- *
- * Connected bank (correction #14):
- *   Derived from ImportSetting configuration (senderAllowlist + parserKey inference).
- *   Never hard-coded.
- *
- * Dubai timezone:
- *   "Today" is calculated in Asia/Dubai (UTC+4) local time.
  */
 
 import { NextResponse } from "next/server";
@@ -32,8 +14,6 @@ import { getDubaiCurrentDate, getDubaiMonthRange } from "@/lib/dates";
 
 const DUBAI_OFFSET_HOURS = 4;
 const RECENT_FAILURE_WINDOW_HOURS = 24;
-
-/** Token expiry warning threshold: 30 days */
 const TOKEN_EXPIRY_WARN_DAYS = 30;
 
 type ImportHealth = "HEALTHY" | "NEEDS_REVIEW" | "NO_TOKEN" | "DISABLED";
@@ -49,12 +29,15 @@ function toDubaiStartOfDay(date: { year: number; month: number; day: number }): 
   return new Date(localMs - DUBAI_OFFSET_HOURS * 60 * 60 * 1000);
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+
+  const { searchParams } = new URL(request.url);
+  const requestedMonth = searchParams.get("month");
 
   // ── 1. Load settings ─────────────────────────────────────────────────────────
   const [importSetting, userSetting] = await Promise.all([
@@ -138,9 +121,8 @@ export async function GET(): Promise<NextResponse> {
   ).length;
   const autoImportedToday = todayImports.filter(
     (r) => r.status === ImportStatus.PROCESSED && !r.transactionId
-  ).length; // auto-imported = PROCESSED without manual confirm
+  ).length;
 
-  // Imports with duplicate activity today (correction #3)
   const importsWithDuplicateActivityToday = todayImports.filter(
     (r) =>
       r.duplicateCount > 0 &&
@@ -148,7 +130,7 @@ export async function GET(): Promise<NextResponse> {
       r.lastDuplicateAt >= todayStart
   ).length;
 
-  // ── 5. Latest import (any time) ──────────────────────────────────────────────
+  // ── 5. Latest import (global bank import - any time) ────────────────────────
   const latestImport = await db.importedTransaction.findFirst({
     where: {
       userId,
@@ -165,20 +147,31 @@ export async function GET(): Promise<NextResponse> {
       institution: true,
       source: true,
       receivedAt: true,
+      budgetMonth: true,
       transactionId: true,
       parserKey: true,
     },
   });
 
-  // ── 6. Salary status (current month) ─────────────────────────────────────────
-  const monthStr = `${today.year}-${String(today.month).padStart(2, "0")}`;
+  // ── 6. Salary status (scoped to requested/active budget month) ───────────────
+  const currentMonthStr = `${today.year}-${String(today.month).padStart(2, "0")}`;
+  const monthStr = (requestedMonth && /^\d{4}-\d{2}$/.test(requestedMonth))
+    ? requestedMonth
+    : currentMonthStr;
   const { start: monthStart, nextMonthStart } = getDubaiMonthRange(monthStr);
+  const [targetYear, targetMonth] = monthStr.split("-").map(Number);
 
   const salaryImport = await db.importedTransaction.findFirst({
     where: {
       userId,
       status: { in: [ImportStatus.PROCESSED, ImportStatus.REVIEW_REQUIRED] },
-      receivedAt: { gte: monthStart, lt: nextMonthStart },
+      OR: [
+        { budgetMonth: monthStr },
+        {
+          budgetMonth: null,
+          receivedAt: { gte: monthStart, lt: nextMonthStart },
+        },
+      ],
     },
     orderBy: { receivedAt: "desc" },
     select: {
@@ -189,6 +182,7 @@ export async function GET(): Promise<NextResponse> {
       institution: true,
       receivedAt: true,
       financialDate: true,
+      budgetMonth: true,
       transactionId: true,
       parsedReference: true,
     },
@@ -204,11 +198,24 @@ export async function GET(): Promise<NextResponse> {
   } else {
     if (userSetting?.payday) {
       const daysInMonth = new Date(
-        Date.UTC(today.year, today.month, 0)
+        Date.UTC(targetYear, targetMonth, 0)
       ).getUTCDate();
       const paydayDay = Math.min(userSetting.payday, daysInMonth);
-      expectedPayday = `${today.year}-${String(today.month).padStart(2, "0")}-${String(paydayDay).padStart(2, "0")}`;
-      if (!salaryImport && today.day > paydayDay + 2) isLate = true;
+      expectedPayday = `${targetYear}-${String(targetMonth).padStart(2, "0")}-${String(paydayDay).padStart(2, "0")}`;
+      
+      const paydayUTC = new Date(
+        Date.UTC(targetYear, targetMonth - 1, paydayDay) -
+          DUBAI_OFFSET_HOURS * 60 * 60 * 1000
+      );
+      const graceCutoffMs = paydayUTC.getTime() + 2 * 24 * 60 * 60 * 1000;
+      const nowMs = Date.now();
+
+      const isPastMonth = targetYear < today.year || (targetYear === today.year && targetMonth < today.month);
+      const isCurrentMonthPastGrace = targetYear === today.year && targetMonth === today.month && nowMs > graceCutoffMs && today.day > paydayDay + 2;
+
+      if (!salaryImport && (isPastMonth || isCurrentMonthPastGrace)) {
+        isLate = true;
+      }
     }
 
     if (!salaryImport) {
@@ -220,8 +227,7 @@ export async function GET(): Promise<NextResponse> {
     }
   }
 
-  // ── 7. Connected institution (from parser key / sender allowlist) ─────────────
-  // Correction #14: derive from configuration, never hard-code
+  // ── 7. Connected institution ─────────────────────────────────────────────────
   const senderAllowlist = importSetting?.senderAllowlist ?? [];
   const parserKeys = [
     ...new Set(
@@ -234,7 +240,7 @@ export async function GET(): Promise<NextResponse> {
     senderAllowlist.length > 0                          ? `Bank (sender: ${getCanonicalDisplayName(senderAllowlist[0])})` :
     null;
 
-  // ── 8. Import health (deterministic — correction #13) ────────────────────────
+  // ── 8. Import health ─────────────────────────────────────────────────────────
   let importHealth: ImportHealth;
   if (!importSetting?.enabled) {
     importHealth = "DISABLED";
@@ -249,11 +255,9 @@ export async function GET(): Promise<NextResponse> {
   // ── 9. Build response ─────────────────────────────────────────────────────────
   return NextResponse.json({
     data: {
-      // Import system status
       importEnabled: importSetting?.enabled ?? false,
       autoImportEnabled: importSetting?.autoImportSalary ?? false,
 
-      // Token status
       token: {
         hasToken,
         isActive: hasActiveToken,
@@ -264,14 +268,12 @@ export async function GET(): Promise<NextResponse> {
         expiresAt: importSetting?.tokenExpiresAt ?? null,
       },
 
-      // Institution (correction #14)
       connectedInstitution: {
         name: supportedInstitution,
         configuredSenders: senderAllowlist.map(getCanonicalDisplayName),
         parserKeys,
       },
 
-      // Today's stats
       todayStats: {
         total: todayImports.length,
         processed: processedToday,
@@ -283,12 +285,10 @@ export async function GET(): Promise<NextResponse> {
         autoImported: autoImportedToday,
       },
 
-      // Queue
       queueStats: {
         pendingReview,
       },
 
-      // Latest import
       latestImport: latestImport
         ? {
             id: latestImport.id,
@@ -298,13 +298,14 @@ export async function GET(): Promise<NextResponse> {
             institution: latestImport.institution,
             source: latestImport.source,
             receivedAt: latestImport.receivedAt,
+            budgetMonth: latestImport.budgetMonth,
             transactionId: latestImport.transactionId,
           }
         : null,
 
-      // Salary status (consolidated — avoids second endpoint call)
       salaryStatus: {
         status: salaryStatus,
+        month: monthStr,
         expectedPayday,
         latestImport: salaryImport
           ? {
@@ -315,17 +316,15 @@ export async function GET(): Promise<NextResponse> {
               institution: salaryImport.institution,
               receivedAt: salaryImport.receivedAt,
               financialDate: salaryImport.financialDate,
+              budgetMonth: salaryImport.budgetMonth,
               transactionId: salaryImport.transactionId,
               reference: salaryImport.parsedReference,
             }
           : null,
       },
 
-      // System health
       importHealth,
-
-      // Retention
-      rawPayloadRetentionDays: importSetting?.rawPayloadRetentionDays ?? 30,
+      rawPayloadRetentionDays: importSetting?.rawPayloadRetentionDays ?? 90,
     },
   });
 }

@@ -5,24 +5,6 @@
  *
  * Compact monitoring panel for the SMS import automation system.
  * Replaces the Quick Actions section on the dashboard.
- *
- * Sections (correction #2, #16):
- *   - Salary Status (compact, review alert at top if needed)
- *   - Bank Import status (enabled/disabled/setup required/token expired/revoked)
- *   - Import Queue (pending review, processed today, failed today)
- *   - Latest Import (amount, bank, date, status)
- *   - Quick Links (text links, no large buttons)
- *
- * importHealth labels (correction #13):
- *   HEALTHY       → "Operating normally"
- *   NEEDS_REVIEW  → "Review needed"
- *   NO_TOKEN      → "Setup required"
- *   DISABLED      → "Disabled"
- *
- * Accessibility:
- *   - All status indicators have text labels (not color alone)
- *   - aria-label on the panel section
- *   - Reduced motion: no animations that convey state
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -32,16 +14,13 @@ import {
   LucideXCircle,
   LucideCircleDashed,
   LucideArrowRight,
-  LucideRefreshCw,
-  LucideClock,
   LucideDownload,
 } from "lucide-react";
 import Link from "next/link";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface SalaryStatusData {
   status: "waiting" | "review_required" | "received" | "late" | "disabled";
+  month?: string;
   expectedPayday: string | null;
   latestImport: {
     id: string;
@@ -50,6 +29,7 @@ interface SalaryStatusData {
     institution: string;
     receivedAt: string;
     financialDate: string | null;
+    budgetMonth?: string | null;
     transactionId: string | null;
     reference: string | null;
   } | null;
@@ -89,6 +69,7 @@ interface AutomationMetrics {
     institution: string;
     source: string;
     receivedAt: string;
+    budgetMonth?: string | null;
     transactionId: string | null;
   } | null;
   salaryStatus: SalaryStatusData;
@@ -96,7 +77,49 @@ interface AutomationMetrics {
   rawPayloadRetentionDays: number;
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+interface AutomationStatusPanelProps {
+  activeMonth?: string;
+}
+
+function getMonthLongLabel(monthStr?: string): string {
+  if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return "";
+  const [y, m] = monthStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, 1));
+  return date.toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function getMonthNameOnly(monthStr?: string): string {
+  if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return "";
+  const [y, m] = monthStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, 1));
+  return date.toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "long",
+  });
+}
+
+function formatReceivedDate(receivedAtIso: string): string {
+  const d = new Date(receivedAtIso);
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Dubai",
+  });
+}
+
+function isEarlySalary(receivedAtIso: string, budgetMonthStr?: string | null): boolean {
+  if (!receivedAtIso || !budgetMonthStr) return false;
+  const recDate = new Date(receivedAtIso);
+  const recY = recDate.getUTCFullYear();
+  const recM = String(recDate.getUTCMonth() + 1).padStart(2, "0");
+  const recMonthStr = `${recY}-${recM}`;
+  return recMonthStr < budgetMonthStr;
+}
 
 function StatusDot({
   color,
@@ -149,12 +172,17 @@ function healthColor(health: AutomationMetrics["importHealth"]): string {
   return "text-slate-400";
 }
 
-function salaryStatusDisplay(s: SalaryStatusData["status"]) {
+function salaryStatusDisplay(s: SalaryStatusData["status"], amount?: string | null) {
   const map: Record<
     SalaryStatusData["status"],
     { label: string; color: "green" | "amber" | "red" | "slate" }
   > = {
-    received: { label: "Received", color: "green" },
+    received: {
+      label: amount
+        ? `Received — AED ${parseFloat(amount).toLocaleString("en-AE", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+        : "Received",
+      color: "green",
+    },
     review_required: { label: "Review Required", color: "amber" },
     waiting: { label: "Waiting", color: "slate" },
     late: { label: "Late", color: "red" },
@@ -176,17 +204,18 @@ function importStatusBadge(status: string): string {
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
-export function AutomationStatusPanel() {
+export function AutomationStatusPanel({ activeMonth }: AutomationStatusPanelProps) {
   const { data, isLoading } = useQuery<AutomationMetrics>({
-    queryKey: ["automation-metrics"],
+    queryKey: ["automation-metrics", activeMonth],
     queryFn: async () => {
-      const res = await fetch("/api/imports/automation-metrics");
+      const url = activeMonth
+        ? `/api/imports/automation-metrics?month=${activeMonth}`
+        : "/api/imports/automation-metrics";
+      const res = await fetch(url);
       const json = await res.json();
       return json.data;
     },
-    refetchInterval: 2 * 60 * 1000, // refresh every 2 minutes
+    refetchInterval: 2 * 60 * 1000,
   });
 
   if (isLoading || !data) {
@@ -205,12 +234,18 @@ export function AutomationStatusPanel() {
     );
   }
 
-  const { importHealth, token, connectedInstitution, todayStats, queueStats, latestImport, salaryStatus } = data;
-  const salary = salaryStatusDisplay(salaryStatus.status);
+  const { importHealth, token, connectedInstitution, queueStats, latestImport, salaryStatus } = data;
+  const salary = salaryStatusDisplay(salaryStatus.status, salaryStatus.latestImport?.amount);
 
-  // ── Review alert: compact warning shown near top
   const showReviewAlert =
     salaryStatus.status === "review_required" || queueStats.pendingReview > 0;
+
+  const activeMonthStr = salaryStatus.month || activeMonth || "";
+  const monthShortName = getMonthNameOnly(activeMonthStr);
+  const salaryTargetMonthLabel = getMonthLongLabel(salaryStatus.latestImport?.budgetMonth || activeMonthStr);
+  const isSalaryEarly = salaryStatus.latestImport
+    ? isEarlySalary(salaryStatus.latestImport.receivedAt, salaryStatus.latestImport.budgetMonth || activeMonthStr)
+    : false;
 
   return (
     <section
@@ -295,36 +330,34 @@ export function AutomationStatusPanel() {
           </div>
         </div>
 
-        {/* Salary Status */}
+        {/* Salary Status (Scoped to activeMonth) */}
         <div className="space-y-2">
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-            Salary
+            Salary Status ({monthShortName || "Active Month"})
           </p>
           <div className="space-y-1 text-xs text-slate-300">
             <StatusDot color={salary.color} label={salary.label} />
-            {salaryStatus.latestImport?.amount && (
-              <p className="font-bold text-white text-sm">
-                {salaryStatus.latestImport.currency ?? "AED"}{" "}
-                {parseFloat(salaryStatus.latestImport.amount).toLocaleString("en-AE", {
-                  minimumFractionDigits: 2,
-                })}
-              </p>
-            )}
-            {salaryStatus.latestImport?.receivedAt && (
-              <p className="text-slate-400 text-[10px]">
-                {new Date(salaryStatus.latestImport.receivedAt).toLocaleDateString("en-AE", {
-                  timeZone: "Asia/Dubai",
-                  month: "short",
-                  day: "numeric",
-                })}
-                {salaryStatus.latestImport.institution
-                  ? ` · ${salaryStatus.latestImport.institution}`
-                  : ""}
-              </p>
-            )}
-            {salaryStatus.latestImport?.reference && (
-              <p className="text-slate-500 text-[10px] font-mono truncate">
-                {salaryStatus.latestImport.reference}
+            {salaryStatus.latestImport ? (
+              <>
+                {salaryTargetMonthLabel && (
+                  <p className="text-[11px] font-semibold text-emerald-300">
+                    {salaryTargetMonthLabel} salary
+                  </p>
+                )}
+                {isSalaryEarly ? (
+                  <p className="text-amber-300 font-semibold text-[10px]">
+                    Received early on {formatReceivedDate(salaryStatus.latestImport.receivedAt)}
+                  </p>
+                ) : (
+                  <p className="text-slate-400 text-[10px]">
+                    Received {formatReceivedDate(salaryStatus.latestImport.receivedAt)}
+                    {salaryStatus.latestImport.institution ? ` · ${salaryStatus.latestImport.institution}` : ""}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-slate-400 text-[11px]">
+                {monthShortName ? `No salary recorded for ${monthShortName}` : "No salary recorded for selected month"}
               </p>
             )}
             {!salaryStatus.latestImport && salaryStatus.expectedPayday && (
@@ -348,103 +381,73 @@ export function AutomationStatusPanel() {
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Pending review</span>
               <span
-                className={`font-bold tabular-nums ${
-                  queueStats.pendingReview > 0 ? "text-amber-400" : "text-slate-500"
+                className={`font-semibold ${
+                  queueStats.pendingReview > 0 ? "text-amber-400 font-bold" : "text-slate-300"
                 }`}
-                aria-label={`${queueStats.pendingReview} pending review`}
               >
                 {queueStats.pendingReview}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Processed today</span>
-              <span className="font-bold tabular-nums text-emerald-400">
-                {todayStats.processed}
-              </span>
+              <span className="font-semibold text-slate-300">{data.todayStats.processed}</span>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400">Failed today</span>
-              <span
-                className={`font-bold tabular-nums ${
-                  todayStats.failed > 0 ? "text-rose-400" : "text-slate-500"
-                }`}
-              >
-                {todayStats.failed}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-400" title="Imports where the same message was delivered more than once">
-                Duplicate activity
-              </span>
-              <span className="font-bold tabular-nums text-slate-500">
-                {todayStats.importsWithDuplicateActivityToday}
-              </span>
-            </div>
+            {data.todayStats.failed > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-rose-400">Failed today</span>
+                <span className="font-bold text-rose-400">{data.todayStats.failed}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Latest Import */}
+        {/* Global Latest Bank Import */}
         <div className="space-y-2">
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-            Latest Import
+            Latest Bank Import
           </p>
           {latestImport ? (
-            <div className="space-y-1 text-xs">
-              {latestImport.amount && (
-                <p className="font-bold text-white text-sm">
-                  {latestImport.currency ?? "AED"}{" "}
-                  {parseFloat(latestImport.amount).toLocaleString("en-AE", {
-                    minimumFractionDigits: 2,
-                  })}
-                </p>
-              )}
-              <p className="text-slate-400">{latestImport.institution}</p>
-              <p className="text-slate-500 text-[10px]">
+            <div className="space-y-1 text-xs text-slate-300">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${importStatusBadge(
+                    latestImport.status
+                  )}`}
+                >
+                  {latestImport.status === "PROCESSED"
+                    ? "Imported"
+                    : latestImport.status === "REVIEW_REQUIRED"
+                    ? "Pending"
+                    : latestImport.status}
+                </span>
+                {latestImport.amount && (
+                  <span className="font-bold text-white">
+                    {latestImport.currency ?? "AED"}{" "}
+                    {parseFloat(latestImport.amount).toLocaleString("en-AE", {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                )}
+              </div>
+              <p className="text-slate-400 text-[10px]">
+                {latestImport.institution} ·{" "}
                 {new Date(latestImport.receivedAt).toLocaleDateString("en-AE", {
                   timeZone: "Asia/Dubai",
                   month: "short",
                   day: "numeric",
                 })}
               </p>
-              <span
-                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${importStatusBadge(latestImport.status)}`}
-              >
-                {latestImport.status.replace("_", " ")}
-              </span>
+              {latestImport.budgetMonth && (
+                <p className="text-indigo-300 font-semibold text-[10px]">
+                  Applicable to {getMonthLongLabel(latestImport.budgetMonth)}
+                </p>
+              )}
             </div>
           ) : (
-            <p className="text-xs text-slate-600">No imports yet</p>
+            <p className="text-xs text-slate-500">No imports received yet</p>
           )}
         </div>
-      </div>
 
-      {/* Quick links — text only, no large buttons (correction #2) */}
-      <div
-        className="flex flex-wrap gap-x-4 gap-y-1.5 border-t border-slate-800 pt-3"
-        role="navigation"
-        aria-label="Import navigation"
-      >
-        <Link
-          href="/imports"
-          className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-        >
-          <LucideRefreshCw className="h-3 w-3" aria-hidden="true" />
-          Review imports
-        </Link>
-        <Link
-          href="/settings"
-          className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-300 transition-colors"
-        >
-          <LucideClock className="h-3 w-3" aria-hidden="true" />
-          Import settings
-        </Link>
-        <Link
-          href="/imports?status=all"
-          className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-300 transition-colors"
-        >
-          <LucideArrowRight className="h-3 w-3" aria-hidden="true" />
-          Import history
-        </Link>
       </div>
     </section>
   );

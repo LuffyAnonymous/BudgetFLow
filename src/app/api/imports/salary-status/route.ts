@@ -1,14 +1,14 @@
 /**
  * GET /api/imports/salary-status
  *
- * Returns the salary import status for the current month.
+ * Returns the salary import status for a specified budget month (defaults to current Dubai month).
  * Used by the dashboard Salary Status card.
  *
  * Status values:
- *   "waiting"          — no salary processed this month (within grace period)
+ *   "waiting"          — no salary processed for this budget month (within grace period)
  *   "review_required"  — a salary SMS is pending user review
  *   "received"         — salary imported and confirmed
- *   "late"             — past payday + 2 grace days with no salary
+ *   "late"             — past payday + 2 grace days with no salary for this budget month
  *   "disabled"         — import engine not enabled
  */
 
@@ -21,12 +21,24 @@ import { getDubaiCurrentDate, getDubaiMonthRange } from "@/lib/dates";
 const GRACE_DAYS = 2;
 const DUBAI_OFFSET_HOURS = 4;
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+
+  const { searchParams } = new URL(request.url);
+  const requestedMonth = searchParams.get("month");
+
+  const today = getDubaiCurrentDate();
+  const currentMonthStr = `${today.year}-${String(today.month).padStart(2, "0")}`;
+  const monthStr = (requestedMonth && /^\d{4}-\d{2}$/.test(requestedMonth))
+    ? requestedMonth
+    : currentMonthStr;
+
+  const { start, nextMonthStart } = getDubaiMonthRange(monthStr);
+  const [targetYear, targetMonth] = monthStr.split("-").map(Number);
 
   const [importSetting, settings] = await Promise.all([
     db.importSetting.findUnique({
@@ -43,6 +55,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({
       data: {
         status: "disabled",
+        month: monthStr,
         latestImport: null,
         expectedPayday: null,
         importEnabled: false,
@@ -51,11 +64,7 @@ export async function GET(): Promise<NextResponse> {
     });
   }
 
-  // Current month in Dubai time
-  const today = getDubaiCurrentDate();
-  const monthStr = `${today.year}-${String(today.month).padStart(2, "0")}`;
-  const { start, nextMonthStart } = getDubaiMonthRange(monthStr);
-
+  // Query salary import matching the specified budgetMonth (or un-attributed in calendar range)
   const latestImport = await db.importedTransaction.findFirst({
     where: {
       userId,
@@ -78,6 +87,7 @@ export async function GET(): Promise<NextResponse> {
       source: true,
       receivedAt: true,
       financialDate: true,
+      budgetMonth: true,
       transactionId: true,
     },
   });
@@ -88,25 +98,23 @@ export async function GET(): Promise<NextResponse> {
 
   if (settings?.payday) {
     const daysInMonth = new Date(
-      Date.UTC(today.year, today.month, 0)
+      Date.UTC(targetYear, targetMonth, 0)
     ).getUTCDate();
     const paydayDay = Math.min(settings.payday, daysInMonth);
 
-    // Payday date as UTC midnight of Dubai local date
     const paydayUTC = new Date(
-      Date.UTC(today.year, today.month - 1, paydayDay) -
+      Date.UTC(targetYear, targetMonth - 1, paydayDay) -
         DUBAI_OFFSET_HOURS * 60 * 60 * 1000
     );
-    // Format as YYYY-MM-DD using Dubai local date
-    expectedPayday = `${today.year}-${String(today.month).padStart(2, "0")}-${String(paydayDay).padStart(2, "0")}`;
+    expectedPayday = `${targetYear}-${String(targetMonth).padStart(2, "0")}-${String(paydayDay).padStart(2, "0")}`;
 
-    // Grace cutoff = payday + GRACE_DAYS
-    const graceCutoffMs =
-      paydayUTC.getTime() +
-      GRACE_DAYS * 24 * 60 * 60 * 1000;
+    const graceCutoffMs = paydayUTC.getTime() + GRACE_DAYS * 24 * 60 * 60 * 1000;
     const nowMs = Date.now();
 
-    if (!latestImport && nowMs > graceCutoffMs && today.day > paydayDay + GRACE_DAYS) {
+    const isPastMonth = targetYear < today.year || (targetYear === today.year && targetMonth < today.month);
+    const isCurrentMonthPastGrace = targetYear === today.year && targetMonth === today.month && nowMs > graceCutoffMs && today.day > paydayDay + GRACE_DAYS;
+
+    if (!latestImport && (isPastMonth || isCurrentMonthPastGrace)) {
       isLate = true;
     }
   }
@@ -123,6 +131,7 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     data: {
       status,
+      month: monthStr,
       latestImport: latestImport
         ? {
             id: latestImport.id,
@@ -133,6 +142,7 @@ export async function GET(): Promise<NextResponse> {
             source: latestImport.source,
             receivedAt: latestImport.receivedAt,
             financialDate: latestImport.financialDate,
+            budgetMonth: latestImport.budgetMonth,
             transactionId: latestImport.transactionId,
           }
         : null,
