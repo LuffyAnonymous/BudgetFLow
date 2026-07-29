@@ -13,8 +13,11 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# shellcheck disable=SC1091
-source <(grep -E '^(N8N_BUDGETFLOW_BASE_URL|N8N_BUDGETFLOW_SERVICE_API_KEY|CRON_SECRET|IMPORT_CLEANUP_SECRET)=' .env)
+# Note: avoid `source <(...)` process substitution here — flaky on macOS's
+# stock bash 3.2 (variable assignments don't reliably propagate). eval on the
+# grep output is simpler and portable since .env lines are already valid
+# KEY="value" shell assignment syntax.
+eval "$(grep -E '^(N8N_BUDGETFLOW_BASE_URL|N8N_BUDGETFLOW_SERVICE_API_KEY|CRON_SECRET|IMPORT_CLEANUP_SECRET|N8N_SMS_WEBHOOK_SECRET)=' .env)"
 
 if [ -z "${N8N_BUDGETFLOW_SERVICE_API_KEY:-}" ]; then
   echo "N8N_BUDGETFLOW_SERVICE_API_KEY is not set in .env — generate one via" >&2
@@ -28,5 +31,6 @@ env BUDGETFLOW_BASE_URL="$N8N_BUDGETFLOW_BASE_URL" \
     BUDGETFLOW_SERVICE_API_KEY="$N8N_BUDGETFLOW_SERVICE_API_KEY" \
     CRON_SECRET="$CRON_SECRET" \
     IMPORT_CLEANUP_SECRET="$IMPORT_CLEANUP_SECRET" \
+    N8N_SMS_WEBHOOK_SECRET="${N8N_SMS_WEBHOOK_SECRET:-}" \
     N8N_BLOCK_ENV_ACCESS_IN_NODE="false" \
     n8n start

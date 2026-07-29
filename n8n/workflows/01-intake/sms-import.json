@@ -11,7 +11,7 @@
         -220
       ],
       "parameters": {
-        "content": "## SMS Import\n\nSingle Responsibility: webhook entrypoint for any SMS-forwarding tool (e.g. MacroDroid, Tasker, a Twilio inbound webhook) that posts a raw SMS into this n8n instance. Normalizes the payload, then hands off to 02 - Processing / Parse Transaction. The whole pipeline result is returned in the HTTP response.\n\nThis is a parallel, n8n-native path — independent of the app's own /api/imports/sms endpoint (which uses a different, already-battle-tested pipeline). Built at explicit request even though it duplicates that logic; the two will not stay in sync automatically.\n\nExpected POST body: { from?: string, body: string, receivedAt?: ISOString }. Adjust 'Normalize Payload' if your SMS forwarder uses different field names (e.g. Twilio sends { From, Body }).\n\nWebhook URL (after import, self-hosted): <your-n8n-instance>/webhook/budgetflow/sms-import",
+        "content": "## SMS Import\n\nSingle Responsibility: webhook entrypoint for any SMS-forwarding tool (e.g. MacroDroid, Tasker, an iPhone Shortcut, a Twilio inbound webhook) that posts a raw SMS into this n8n instance. Checks a secret header, normalizes the payload, filters out obvious non-transaction messages (OTPs, promos), then hands off to 02 - Processing / Parse Transaction. The whole pipeline result is returned in the HTTP response.\n\nThis is a parallel, n8n-native path — independent of the app's own /api/imports/sms endpoint (which uses a different, already-battle-tested pipeline). Built at explicit request even though it duplicates that logic; the two will not stay in sync automatically.\n\nSECURITY: requires header `X-BudgetFlow-Webhook-Secret` matching the `N8N_SMS_WEBHOOK_SECRET` n8n environment variable. Missing or mismatched → HTTP 401 `{ ok: false, error: \"Unauthorized\" }`, rejected before Parse Transaction ever runs. This secret is intentionally separate from BUDGETFLOW_SERVICE_API_KEY — do not reuse it. In production, reached via the BudgetFlow app's own relay (POST /api/integrations/n8n/sms-relay), not called directly from the public internet.\n\nNON-TRANSACTION FILTER: messages matching common OTP/promo phrasing (otp, one time password, verification code, do not share, login code, promotional offer) are recognized after normalization and short-circuited straight to a 200 `{ ok: true, ignored: true, reason: \"not_a_transaction\" }` response — they never reach Parse Transaction, Duplicate Check, Categorize Transaction, Create Transaction, or Import Failed.\n\nExpected POST body (once authenticated): { from?: string, body: string, receivedAt?: ISOString }. Adjust 'Normalize Payload' if your SMS forwarder uses different field names (e.g. Twilio sends { From, Body }).\n\nWebhook URL (after import, self-hosted): <your-n8n-instance>/webhook/budgetflow/sms-import",
         "height": 400,
         "width": 600,
         "color": 4
@@ -35,17 +35,204 @@
       }
     },
     {
-      "id": "node-0006",
-      "name": "Normalize Payload",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "node-0009",
+      "name": "Check Secret",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
       "position": [
         520,
         280
       ],
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0010",
+              "leftValue": "={{ $env.N8N_SMS_WEBHOOK_SECRET }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "node-0011",
+              "leftValue": "={{ $json.headers['x-budgetflow-webhook-secret'] }}",
+              "rightValue": "={{ $env.N8N_SMS_WEBHOOK_SECRET }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0012",
+      "name": "Format 401 Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        800,
+        460
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0013",
+              "name": "ok",
+              "type": "boolean",
+              "value": "={{ false }}"
+            },
+            {
+              "id": "node-0014",
+              "name": "error",
+              "type": "string",
+              "value": "Unauthorized"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0015",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "node-0006",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        100
+      ],
+      "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "const b = ($input.first() && $input.first().json && $input.first().json.body) || {};\nreturn [{\n  json: {\n    source: \"SMS\",\n    rawText: b.body || b.Body || b.text || \"\",\n    chatId: null,\n    senderHint: b.from || b.From || null,\n    receivedAt: b.receivedAt || new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "node-0016",
+      "name": "Filter Non-Transaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        280
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = ($input.first() && $input.first().json) || {};\nconst text = (input.rawText || \"\").toLowerCase();\n\n// EDIT ME: add more non-transaction phrases as you encounter them.\nconst ignorePatterns = [\n  \"otp\",\n  \"one time password\",\n  \"one-time password\",\n  \"verification code\",\n  \"do not share\",\n  \"login code\",\n  \"promotional offer\",\n];\n\nconst isIgnorable = ignorePatterns.some((p) => text.includes(p));\n\nreturn [{\n  json: {\n    ...input,\n    isIgnorable,\n  },\n}];"
+      }
+    },
+    {
+      "id": "node-0017",
+      "name": "Is Ignorable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1360,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0018",
+              "leftValue": "={{ $json.isIgnorable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0019",
+      "name": "Format Ignored Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1640,
+        380
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0020",
+              "name": "ok",
+              "type": "boolean",
+              "value": "={{ true }}"
+            },
+            {
+              "id": "node-0021",
+              "name": "ignored",
+              "type": "boolean",
+              "value": "={{ true }}"
+            },
+            {
+              "id": "node-0022",
+              "name": "reason",
+              "type": "string",
+              "value": "not_a_transaction"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0023",
+      "name": "Respond Ignored",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        380
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
       }
     },
     {
@@ -54,8 +241,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        800,
-        280
+        1640,
+        100
       ],
       "parameters": {
         "source": "database",
@@ -80,8 +267,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.2,
       "position": [
-        1080,
-        280
+        1920,
+        100
       ],
       "parameters": {
         "respondWith": "json",
@@ -97,7 +284,36 @@
       "main": [
         [
           {
+            "node": "Check Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Secret": {
+      "main": [
+        [
+          {
             "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format 401 Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format 401 Response": {
+      "main": [
+        [
+          {
+            "node": "Respond 401",
             "type": "main",
             "index": 0
           }
@@ -108,7 +324,47 @@
       "main": [
         [
           {
+            "node": "Filter Non-Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Non-Transaction": {
+      "main": [
+        [
+          {
+            "node": "Is Ignorable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Ignorable?": {
+      "main": [
+        [
+          {
+            "node": "Format Ignored Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Parse Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Ignored Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Ignored",
             "type": "main",
             "index": 0
           }
