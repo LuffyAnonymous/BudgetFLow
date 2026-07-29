@@ -1,5 +1,5 @@
 {
-  "name": "03 - BudgetFlow API Client / Create Transaction",
+  "name": "03 - BudgetFlow API Client / Get Categories",
   "nodes": [
     {
       "id": "node-0003",
@@ -8,12 +8,12 @@
       "typeVersion": 1,
       "position": [
         240,
-        -140
+        -160
       ],
       "parameters": {
-        "content": "## Create Transaction\n\nSingle Responsibility: call POST /api/transactions and normalize the result. Does not parse, validate business rules, or decide categorization \u2014 that already happened upstream (either in the caller, or inside BudgetFlow's own service layer, which re-validates everything server-side regardless of what this workflow sends).\n\nRequires a BudgetFlow service API key with the `transactions:write` scope (BUDGETFLOW_SERVICE_API_KEY env var).\n\nInput fields mirror transactionFormSchema: date, categoryId, description, amount, paymentMethod, type (INCOME|EXPENSE|SAVINGS|DEBT_PAYMENT|TRANSFER|REMITTANCE), notes?, budgetMonth?. Resolve categoryId ahead of time \u2014 there is no category-lookup step here by design (keep this workflow single-purpose).\n\nBudgetFlow is the single source of truth: on success, this workflow does NOT chain to anything else. BudgetFlow's own service layer already updated account balances, debt balances, savings goals, and audit logs atomically inside the same DB transaction as the insert \u2014 n8n has no further role once this call succeeds.",
+        "content": "## Get Categories\n\nSingle Responsibility: call GET /api/categories and return a clean { ok, categories } contract. On failure, notifies 04 - Notifications / System Error itself — callers just check `ok`, they never see raw HTTP status codes.\n\nRequires a BudgetFlow service API key with the `categories:read` scope (BUDGETFLOW_SERVICE_API_KEY env var).\n\nConsumer: 02 - Processing / Categorize Transaction.\n\nInput: none required.\nOutput (ok=true): { ok: true, categories: [{ id, name, type, budgetGroupKey }] }\nOutput (ok=false): routes to System Error; caller sees whatever System Error's chain returns.",
         "height": 340,
-        "width": 520,
+        "width": 580,
         "color": 4
       }
     },
@@ -24,7 +24,7 @@
       "typeVersion": 1.1,
       "position": [
         240,
-        320
+        300
       ],
       "parameters": {
         "workflowInputs": {
@@ -35,12 +35,12 @@
     },
     {
       "id": "node-0004",
-      "name": "Create Transaction",
+      "name": "GET Categories",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         520,
-        320
+        300
       ],
       "retryOnFail": true,
       "maxTries": 3,
@@ -48,8 +48,8 @@
       "continueOnFail": true,
       "alwaysOutputData": true,
       "parameters": {
-        "method": "POST",
-        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/transactions' }}",
+        "method": "GET",
+        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/categories' }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
@@ -57,10 +57,6 @@
             {
               "name": "Authorization",
               "value": "={{ 'Bearer ' + $env.BUDGETFLOW_SERVICE_API_KEY }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
             }
           ]
         },
@@ -74,10 +70,7 @@
               "fullResponse": true
             }
           }
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ ({ \"date\": ($json.date), \"budgetMonth\": ($json.budgetMonth || undefined), \"categoryId\": ($json.categoryId), \"description\": ($json.description), \"amount\": ($json.amount), \"paymentMethod\": ($json.paymentMethod), \"type\": ($json.type), \"notes\": ($json.notes || null) }) }}"
+        }
       }
     },
     {
@@ -87,7 +80,7 @@
       "typeVersion": 2.2,
       "position": [
         800,
-        320
+        300
       ],
       "parameters": {
         "conditions": {
@@ -133,15 +126,9 @@
             },
             {
               "id": "node-0009",
-              "name": "transactionId",
-              "type": "string",
-              "value": "={{ $json.body.data.id }}"
-            },
-            {
-              "id": "node-0010",
-              "name": "amount",
-              "type": "string",
-              "value": "={{ $json.body.data.amount }}"
+              "name": "categories",
+              "type": "array",
+              "value": "={{ $json.body.data }}"
             }
           ]
         },
@@ -149,7 +136,43 @@
       }
     },
     {
-      "id": "node-0011",
+      "id": "node-0010",
+      "name": "Format System Error Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1080,
+        440
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0011",
+              "name": "workflow",
+              "type": "string",
+              "value": "03 - BudgetFlow API Client / Get Categories"
+            },
+            {
+              "id": "node-0012",
+              "name": "message",
+              "type": "string",
+              "value": "={{ ($json.body && $json.body.error) ? $json.body.error : 'GET /api/categories failed' }}"
+            },
+            {
+              "id": "node-0013",
+              "name": "statusCode",
+              "type": "number",
+              "value": "={{ $json.statusCode }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0014",
       "name": "Notify: System Error",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
@@ -173,42 +196,6 @@
       },
       "notesInFlow": true,
       "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
-    },
-    {
-      "id": "node-0012",
-      "name": "Format System Error Context",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        1080,
-        440
-      ],
-      "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {
-              "id": "node-0013",
-              "name": "workflow",
-              "type": "string",
-              "value": "03 - BudgetFlow API Client / Create Transaction"
-            },
-            {
-              "id": "node-0014",
-              "name": "message",
-              "type": "string",
-              "value": "={{ ($json.body && $json.body.error) ? $json.body.error : 'POST /api/transactions failed' }}"
-            },
-            {
-              "id": "node-0015",
-              "name": "statusCode",
-              "type": "number",
-              "value": "={{ $json.statusCode }}"
-            }
-          ]
-        },
-        "options": {}
-      }
     }
   ],
   "connections": {
@@ -216,14 +203,14 @@
       "main": [
         [
           {
-            "node": "Create Transaction",
+            "node": "GET Categories",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Create Transaction": {
+    "GET Categories": {
       "main": [
         [
           {

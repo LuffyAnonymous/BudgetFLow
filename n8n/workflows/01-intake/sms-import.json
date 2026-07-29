@@ -72,7 +72,7 @@
         "options": {}
       },
       "notesInFlow": true,
-      "notes": "After importing, point this at the \"02 - Processing / Parse Transaction\" workflow (n8n assigns IDs on import). This one call cascades through the whole pipeline (Validate → Duplicate Check → Categorize → Create Transaction → Update Account Balance)."
+      "notes": "After importing, point this at the \"02 - Processing / Parse Transaction\" workflow (n8n assigns IDs on import). This one call cascades through the whole pipeline (Validate → Duplicate Check → Categorize → Create Transaction → BudgetFlow handles all downstream business logic)."
     },
     {
       "id": "node-0008",

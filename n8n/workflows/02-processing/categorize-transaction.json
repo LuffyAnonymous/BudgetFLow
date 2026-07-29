@@ -11,8 +11,8 @@
         -300
       ],
       "parameters": {
-        "content": "## Categorize Transaction\n\nSingle Responsibility: resolve description \u2192 categoryId via keyword matching against your real categories (fetched live, never hardcoded IDs). Falls back to a category literally named \"Uncategorized\" if present, then to the first category of the right type, in that order.\n\nRequires a BudgetFlow service API key with the `categories:read` scope (BUDGETFLOW_SERVICE_API_KEY env var).\n\nEdit the keywordMap in 'Match Category by Keyword' to match your own category names/vocabulary.\n\nInput: output of 02 - Processing / Duplicate Check.\nOutput (category resolved): passthrough + { categoryId, categoryName, categorizeConfidence } \u2192 forwarded to 03 - Create Transaction. If categorizeConfidence < 0.5, ALSO (in parallel, non-blocking) notifies 04 - Notifications / Low Confidence Import so you can review it later without stopping the import.\nOutput (no category could be resolved at all): routes to 04 - Notifications / Import Failed and stops here.\nOutput (API call failed): routes to 04 - Notifications / System Error and stops here.",
-        "height": 420,
+        "content": "## Categorize Transaction\n\nSingle Responsibility: resolve description → categoryId via keyword matching against your real categories (fetched live, never hardcoded IDs). Falls back to a category literally named \"Uncategorized\" if present, then to the first category of the right type, in that order.\n\nDoes not call the BudgetFlow API directly — delegates to 03 - BudgetFlow API Client / Get Categories, which owns auth, retries, and error notification for that call. This workflow only owns the keyword-matching logic.\n\nEdit the keywordMap in 'Match Category by Keyword' to match your own category names/vocabulary.\n\nInput: output of 02 - Processing / Duplicate Check.\nOutput (category resolved): passthrough + { categoryId, categoryName, categorizeConfidence } → forwarded to 03 - Create Transaction. If categorizeConfidence < 0.5, ALSO (in parallel, non-blocking) notifies 04 - Notifications / Low Confidence Import so you can review it later without stopping the import.\nOutput (no category could be resolved at all): routes to 04 - Notifications / Import Failed and stops here.\nOutput (Get Categories failed): Get Categories has already notified System Error; this workflow simply stops.",
+        "height": 440,
         "width": 600,
         "color": 4
       }
@@ -35,43 +35,29 @@
     },
     {
       "id": "node-0004",
-      "name": "GET Categories",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "Get Categories",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
       "position": [
         520,
         340
       ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000,
-      "continueOnFail": true,
-      "alwaysOutputData": true,
       "parameters": {
-        "method": "GET",
-        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/categories' }}",
-        "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "={{ 'Bearer ' + $env.BUDGETFLOW_SERVICE_API_KEY }}"
-            }
-          ]
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:03 - BudgetFlow API Client / Get Categories",
+          "cachedResultName": "03 - BudgetFlow API Client / Get Categories"
         },
-        "sendQuery": false,
-        "options": {
-          "timeout": 15000,
-          "response": {
-            "response": {
-              "neverError": true,
-              "responseFormat": "json",
-              "fullResponse": true
-            }
-          }
-        }
-      }
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"03 - BudgetFlow API Client / Get Categories\" workflow (n8n assigns IDs on import)."
     },
     {
       "id": "node-0005",
@@ -92,7 +78,7 @@
           "conditions": [
             {
               "id": "node-0006",
-              "leftValue": "={{ $json.statusCode < 400 }}",
+              "leftValue": "={{ $json.ok }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -116,7 +102,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const original = ($('On called').first() && $('On called').first().json) || {};\nconst httpResponse = ($input.first() && $input.first().json) || {};\nconst categories = (httpResponse.body && httpResponse.body.data) || [];\n\nconst description = (original.description || \"\").toLowerCase();\n\n// BudgetFlow's CategoryType enum (INCOME/FIXED_EXPENSE/VARIABLE_EXPENSE/SAVINGS/DEBT/REMITTANCE)\n// does not match TransactionType (INCOME/EXPENSE/SAVINGS/DEBT_PAYMENT/TRANSFER/REMITTANCE) 1:1.\nconst TYPE_MAP = {\n  INCOME: [\"INCOME\"],\n  EXPENSE: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n  SAVINGS: [\"SAVINGS\"],\n  DEBT_PAYMENT: [\"DEBT\"],\n  REMITTANCE: [\"REMITTANCE\"],\n  TRANSFER: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n};\nconst wantTypes = TYPE_MAP[original.type] || [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"];\n\n// EDIT ME: adjust keywords/category-name fragments to match your own categories.\nconst keywordMap = [\n  { keywords: [\"grocery\", \"groceries\", \"supermarket\", \"carrefour\", \"lulu\", \"spinneys\", \"market\"], name: \"groceries\" },\n  { keywords: [\"restaurant\", \"cafe\", \"coffee\", \"starbucks\", \"dining\", \"food\"], name: \"dining\" },\n  { keywords: [\"uber\", \"careem\", \"taxi\", \"fuel\", \"petrol\", \"parking\", \"transport\"], name: \"transport\" },\n  { keywords: [\"electricity\", \"water\", \"dewa\", \"internet\", \"etisalat\", \"utility\", \"utilities\"], name: \"utilities\" },\n  { keywords: [\"netflix\", \"spotify\", \"cinema\", \"movie\", \"entertainment\"], name: \"entertainment\" },\n  { keywords: [\"pharmacy\", \"hospital\", \"clinic\", \"doctor\", \"health\"], name: \"health\" },\n  { keywords: [\"salary\", \"payroll\", \"deposit\", \"income\"], name: \"salary\" },\n];\n\nfunction findByKeyword() {\n  for (const rule of keywordMap) {\n    if (rule.keywords.some((kw) => description.includes(kw))) {\n      const match = categories.find(\n        (c) => wantTypes.includes(c.type) && c.name.toLowerCase().includes(rule.name)\n      );\n      if (match) return { category: match, confidence: 0.9 };\n    }\n  }\n  return null;\n}\n\nlet result = findByKeyword();\n\nif (!result) {\n  const uncategorized = categories.find(\n    (c) => wantTypes.includes(c.type) && c.name.toLowerCase() === \"uncategorized\"\n  );\n  if (uncategorized) result = { category: uncategorized, confidence: 0.2 };\n}\n\nif (!result) {\n  const fallback = categories.find((c) => wantTypes.includes(c.type));\n  if (fallback) result = { category: fallback, confidence: 0.1 };\n}\n\nif (!result && categories.length > 0) {\n  // Absolute last resort (e.g. TRANSFER with no matching category type): any category, very low confidence.\n  result = { category: categories[0], confidence: 0.05 };\n}\n\nreturn [{\n  json: {\n    ...original,\n    categoryId: result ? result.category.id : null,\n    categoryName: result ? result.category.name : null,\n    categorizeConfidence: result ? result.confidence : 0,\n  },\n}];"
+        "jsCode": "const original = ($('On called').first() && $('On called').first().json) || {};\nconst getCategoriesResult = ($input.first() && $input.first().json) || {};\nconst categories = getCategoriesResult.categories || [];\n\nconst description = (original.description || \"\").toLowerCase();\n\n// BudgetFlow's CategoryType enum (INCOME/FIXED_EXPENSE/VARIABLE_EXPENSE/SAVINGS/DEBT/REMITTANCE)\n// does not match TransactionType (INCOME/EXPENSE/SAVINGS/DEBT_PAYMENT/TRANSFER/REMITTANCE) 1:1.\nconst TYPE_MAP = {\n  INCOME: [\"INCOME\"],\n  EXPENSE: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n  SAVINGS: [\"SAVINGS\"],\n  DEBT_PAYMENT: [\"DEBT\"],\n  REMITTANCE: [\"REMITTANCE\"],\n  TRANSFER: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n};\nconst wantTypes = TYPE_MAP[original.type] || [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"];\n\n// EDIT ME: adjust keywords/category-name fragments to match your own categories.\nconst keywordMap = [\n  { keywords: [\"grocery\", \"groceries\", \"supermarket\", \"carrefour\", \"lulu\", \"spinneys\", \"market\"], name: \"groceries\" },\n  { keywords: [\"restaurant\", \"cafe\", \"coffee\", \"starbucks\", \"dining\", \"food\"], name: \"dining\" },\n  { keywords: [\"uber\", \"careem\", \"taxi\", \"fuel\", \"petrol\", \"parking\", \"transport\"], name: \"transport\" },\n  { keywords: [\"electricity\", \"water\", \"dewa\", \"internet\", \"etisalat\", \"utility\", \"utilities\"], name: \"utilities\" },\n  { keywords: [\"netflix\", \"spotify\", \"cinema\", \"movie\", \"entertainment\"], name: \"entertainment\" },\n  { keywords: [\"pharmacy\", \"hospital\", \"clinic\", \"doctor\", \"health\"], name: \"health\" },\n  { keywords: [\"salary\", \"payroll\", \"deposit\", \"income\"], name: \"salary\" },\n];\n\nfunction findByKeyword() {\n  for (const rule of keywordMap) {\n    if (rule.keywords.some((kw) => description.includes(kw))) {\n      const match = categories.find(\n        (c) => wantTypes.includes(c.type) && c.name.toLowerCase().includes(rule.name)\n      );\n      if (match) return { category: match, confidence: 0.9 };\n    }\n  }\n  return null;\n}\n\nlet result = findByKeyword();\n\nif (!result) {\n  const uncategorized = categories.find(\n    (c) => wantTypes.includes(c.type) && c.name.toLowerCase() === \"uncategorized\"\n  );\n  if (uncategorized) result = { category: uncategorized, confidence: 0.2 };\n}\n\nif (!result) {\n  const fallback = categories.find((c) => wantTypes.includes(c.type));\n  if (fallback) result = { category: fallback, confidence: 0.1 };\n}\n\nif (!result && categories.length > 0) {\n  // Absolute last resort (e.g. TRANSFER with no matching category type): any category, very low confidence.\n  result = { category: categories[0], confidence: 0.05 };\n}\n\nreturn [{\n  json: {\n    ...original,\n    categoryId: result ? result.category.id : null,\n    categoryName: result ? result.category.name : null,\n    categorizeConfidence: result ? result.confidence : 0,\n  },\n}];"
       }
     },
     {
@@ -341,68 +327,6 @@
       },
       "notesInFlow": true,
       "notes": "After importing, point this at the \"04 - Notifications / Low Confidence Import\" workflow (n8n assigns IDs on import). This branch runs in parallel and does not block the Create Transaction branch above."
-    },
-    {
-      "id": "node-0024",
-      "name": "Format System Error Context",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        1080,
-        640
-      ],
-      "parameters": {
-        "mode": "manual",
-        "assignments": {
-          "assignments": [
-            {
-              "id": "node-0025",
-              "name": "workflow",
-              "type": "string",
-              "value": "02 - Processing / Categorize Transaction"
-            },
-            {
-              "id": "node-0026",
-              "name": "message",
-              "type": "string",
-              "value": "={{ ($json.body && $json.body.error) ? $json.body.error : 'GET /api/categories failed' }}"
-            },
-            {
-              "id": "node-0027",
-              "name": "statusCode",
-              "type": "number",
-              "value": "={{ $json.statusCode }}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "node-0028",
-      "name": "Notify: System Error",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.2,
-      "position": [
-        1360,
-        640
-      ],
-      "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
-          "cachedResultName": "04 - Notifications / System Error"
-        },
-        "workflowInputs": {
-          "mappingMode": "autoMapInputData",
-          "value": {}
-        },
-        "options": {}
-      },
-      "notesInFlow": true,
-      "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
     }
   ],
   "connections": {
@@ -410,14 +334,14 @@
       "main": [
         [
           {
-            "node": "GET Categories",
+            "node": "Get Categories",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "GET Categories": {
+    "Get Categories": {
       "main": [
         [
           {
@@ -437,13 +361,7 @@
             "index": 0
           }
         ],
-        [
-          {
-            "node": "Format System Error Context",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Match Category by Keyword": {
@@ -508,17 +426,6 @@
         [
           {
             "node": "Notify: Low Confidence Import",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Format System Error Context": {
-      "main": [
-        [
-          {
-            "node": "Notify: System Error",
             "type": "main",
             "index": 0
           }
