@@ -8,12 +8,12 @@
       "typeVersion": 1,
       "position": [
         240,
-        -300
+        -340
       ],
       "parameters": {
-        "content": "## Categorize Transaction\n\nSingle Responsibility: resolve description → categoryId via keyword matching against your real categories (fetched live, never hardcoded IDs). Falls back to a category literally named \"Uncategorized\" if present, then to the first category of the right type, in that order.\n\nDoes not call the BudgetFlow API directly — delegates to 03 - BudgetFlow API Client / Get Categories, which owns auth, retries, and error notification for that call. This workflow only owns the keyword-matching logic.\n\nEdit the keywordMap in 'Match Category by Keyword' to match your own category names/vocabulary.\n\nInput: output of 02 - Processing / Duplicate Check.\nOutput (category resolved): passthrough + { categoryId, categoryName, categorizeConfidence } → forwarded to 03 - Create Transaction. If categorizeConfidence < 0.5, ALSO (in parallel, non-blocking) notifies 04 - Notifications / Low Confidence Import so you can review it later without stopping the import.\nOutput (no category could be resolved at all): routes to 04 - Notifications / Import Failed and stops here.\nOutput (Get Categories failed): Get Categories has already notified System Error; this workflow simply stops.",
-        "height": 440,
-        "width": 600,
+        "content": "## Categorize Transaction\n\nSingle Responsibility: resolve a categoryId without guessing at merchant identity — bank SMS text usually doesn't say what a purchase was for, so this deliberately does NOT try to keyword-match descriptions anymore (that produced unreliable, sometimes-wrong category picks). Three rules, in order:\n\n1. EXPENSE transactions worth ≥20% of your most recent Salary-category transaction amount → \"Rent Cash\" (large one-off debits are plausibly rent/a big fixed cost; small ones tell us nothing about category from amount alone).\n2. If exactly one existing category matches this transaction's type (e.g. only one INCOME category, only one SAVINGS category) → use it directly. Not a guess — deterministic given your category list.\n3. Otherwise (ordinary EXPENSE with no strong signal) → \"Uncategorized\", honestly, for you to re-categorize in the app rather than risk a wrong auto-pick.\n\nDoes not call the BudgetFlow API directly — delegates to 03 - BudgetFlow API Client / Get Categories and / Search Transactions (for the salary lookup), which own auth, retries, and error notification for those calls.\n\nInput: output of 02 - Processing / Duplicate Check.\nOutput (category resolved): passthrough + { categoryId, categoryName } → forwarded to 03 - Create Transaction.\nOutput (no category could be resolved at all — rare, e.g. an ambiguous DEBT_PAYMENT type with 3+ possible debt categories): routes to 04 - Notifications / Import Failed and stops here.\nOutput (Get Categories failed): Get Categories has already notified System Error; this workflow simply stops. A failed salary lookup does NOT block categorization — it just skips rule 1 and falls through to rules 2/3.",
+        "height": 560,
+        "width": 640,
         "color": 4
       }
     },
@@ -92,17 +92,79 @@
       }
     },
     {
-      "id": "node-0007",
-      "name": "Match Category by Keyword",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "node-0024",
+      "name": "Prepare Salary Query",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
       "position": [
         1080,
         220
       ],
       "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0025",
+              "name": "type",
+              "type": "string",
+              "value": "INCOME"
+            },
+            {
+              "id": "node-0026",
+              "name": "pageSize",
+              "type": "number",
+              "value": 1
+            },
+            {
+              "id": "node-0027",
+              "name": "startDate",
+              "type": "string",
+              "value": "={{ new Date(Date.now() - 45 * 86400000).toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0028",
+      "name": "Get Salary Baseline",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        220
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:03 - BudgetFlow API Client / Search Transactions",
+          "cachedResultName": "03 - BudgetFlow API Client / Search Transactions"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at the \"03 - BudgetFlow API Client / Search Transactions\" workflow (n8n assigns IDs on import). Looks up your most recent Salary-type transaction (last 45 days) as the ratio baseline for rule 1. A failure here is non-fatal — Compute Category treats a missing/failed lookup the same as \"no salary baseline available\" and just skips rule 1."
+    },
+    {
+      "id": "node-0007",
+      "name": "Compute Category",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1640,
+        220
+      ],
+      "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const original = ($('On called').first() && $('On called').first().json) || {};\nconst getCategoriesResult = ($input.first() && $input.first().json) || {};\nconst categories = getCategoriesResult.categories || [];\n\nconst description = (original.description || \"\").toLowerCase();\n\n// BudgetFlow's CategoryType enum (INCOME/FIXED_EXPENSE/VARIABLE_EXPENSE/SAVINGS/DEBT/REMITTANCE)\n// does not match TransactionType (INCOME/EXPENSE/SAVINGS/DEBT_PAYMENT/TRANSFER/REMITTANCE) 1:1.\nconst TYPE_MAP = {\n  INCOME: [\"INCOME\"],\n  EXPENSE: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n  SAVINGS: [\"SAVINGS\"],\n  DEBT_PAYMENT: [\"DEBT\"],\n  REMITTANCE: [\"REMITTANCE\"],\n  TRANSFER: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n};\nconst wantTypes = TYPE_MAP[original.type] || [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"];\n\n// EDIT ME: adjust keywords/category-name fragments to match your own categories.\nconst keywordMap = [\n  { keywords: [\"grocery\", \"groceries\", \"supermarket\", \"carrefour\", \"lulu\", \"spinneys\", \"market\"], name: \"groceries\" },\n  { keywords: [\"restaurant\", \"cafe\", \"coffee\", \"starbucks\", \"dining\", \"food\"], name: \"dining\" },\n  { keywords: [\"uber\", \"careem\", \"taxi\", \"fuel\", \"petrol\", \"parking\", \"transport\"], name: \"transport\" },\n  { keywords: [\"electricity\", \"water\", \"dewa\", \"internet\", \"etisalat\", \"utility\", \"utilities\"], name: \"utilities\" },\n  { keywords: [\"netflix\", \"spotify\", \"cinema\", \"movie\", \"entertainment\"], name: \"entertainment\" },\n  { keywords: [\"pharmacy\", \"hospital\", \"clinic\", \"doctor\", \"health\"], name: \"health\" },\n  { keywords: [\"salary\", \"payroll\", \"deposit\", \"income\"], name: \"salary\" },\n];\n\nfunction findByKeyword() {\n  for (const rule of keywordMap) {\n    if (rule.keywords.some((kw) => description.includes(kw))) {\n      const match = categories.find(\n        (c) => wantTypes.includes(c.type) && c.name.toLowerCase().includes(rule.name)\n      );\n      if (match) return { category: match, confidence: 0.9 };\n    }\n  }\n  return null;\n}\n\nlet result = findByKeyword();\n\nif (!result) {\n  const uncategorized = categories.find(\n    (c) => wantTypes.includes(c.type) && c.name.toLowerCase() === \"uncategorized\"\n  );\n  if (uncategorized) result = { category: uncategorized, confidence: 0.2 };\n}\n\nif (!result) {\n  const fallback = categories.find((c) => wantTypes.includes(c.type));\n  if (fallback) result = { category: fallback, confidence: 0.1 };\n}\n\nif (!result && categories.length > 0) {\n  // Absolute last resort (e.g. TRANSFER with no matching category type): any category, very low confidence.\n  result = { category: categories[0], confidence: 0.05 };\n}\n\nreturn [{\n  json: {\n    ...original,\n    categoryId: result ? result.category.id : null,\n    categoryName: result ? result.category.name : null,\n    categorizeConfidence: result ? result.confidence : 0,\n  },\n}];"
+        "jsCode": "const original = ($('On called').first() && $('On called').first().json) || {};\nconst catResult = ($('Get Categories').first() && $('Get Categories').first().json) || {};\nconst categories = catResult.categories || [];\nconst salaryResult = ($input.first() && $input.first().json) || {};\n\n// BudgetFlow's CategoryType enum (INCOME/FIXED_EXPENSE/VARIABLE_EXPENSE/SAVINGS/DEBT/REMITTANCE)\n// does not match TransactionType (INCOME/EXPENSE/SAVINGS/DEBT_PAYMENT/TRANSFER/REMITTANCE) 1:1.\nconst TYPE_MAP = {\n  INCOME: [\"INCOME\"],\n  EXPENSE: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n  SAVINGS: [\"SAVINGS\"],\n  DEBT_PAYMENT: [\"DEBT\"],\n  REMITTANCE: [\"REMITTANCE\"],\n  TRANSFER: [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"],\n};\nconst wantTypes = TYPE_MAP[original.type] || [\"VARIABLE_EXPENSE\", \"FIXED_EXPENSE\"];\nconst eligible = categories.filter((c) => wantTypes.includes(c.type));\n\n// EDIT ME: tune the threshold or the target category name here.\nconst BIG_EXPENSE_RATIO = 0.20;\nconst BIG_EXPENSE_CATEGORY_NAME = \"rent cash\";\n\nlet categoryId = null;\nlet categoryName = null;\nlet rule = null;\n\n// Rule 1: large expense relative to last known salary -> designated big-expense category.\nif (original.type === \"EXPENSE\" && salaryResult && salaryResult.ok && Array.isArray(salaryResult.items) && salaryResult.items.length > 0) {\n  const salaryAmount = parseFloat(salaryResult.items[0].amount);\n  const txAmount = parseFloat(original.amount);\n  if (salaryAmount > 0 && txAmount > 0 && txAmount / salaryAmount >= BIG_EXPENSE_RATIO) {\n    const bigExpenseCategory = categories.find((c) => c.name.toLowerCase() === BIG_EXPENSE_CATEGORY_NAME);\n    if (bigExpenseCategory) {\n      categoryId = bigExpenseCategory.id;\n      categoryName = bigExpenseCategory.name;\n      rule = \"salary_ratio\";\n    }\n  }\n}\n\n// Rule 2: exactly one category matches this transaction's type -> unambiguous, not a guess.\nif (!categoryId && eligible.length === 1) {\n  categoryId = eligible[0].id;\n  categoryName = eligible[0].name;\n  rule = \"single_type_match\";\n}\n\n// Rule 3: ordinary expense, no strong signal -> honest Uncategorized fallback.\nif (!categoryId && original.type === \"EXPENSE\") {\n  const uncategorized = categories.find((c) => wantTypes.includes(c.type) && c.name.toLowerCase() === \"uncategorized\");\n  if (uncategorized) {\n    categoryId = uncategorized.id;\n    categoryName = uncategorized.name;\n    rule = \"uncategorized_fallback\";\n  }\n}\n\nreturn [{\n  json: {\n    ...original,\n    categoryId,\n    categoryName,\n    categorizeRule: rule,\n  },\n}];"
       }
     },
     {
@@ -111,8 +173,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1360,
-        140
+        1920,
+        220
       ],
       "parameters": {
         "conditions": {
@@ -143,8 +205,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1640,
-        40
+        2200,
+        140
       ],
       "parameters": {
         "source": "database",
@@ -169,8 +231,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1640,
-        260
+        2200,
+        320
       ],
       "parameters": {
         "mode": "manual",
@@ -205,8 +267,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1920,
-        260
+        2480,
+        320
       ],
       "parameters": {
         "source": "database",
@@ -227,75 +289,34 @@
     },
     {
       "id": "node-0016",
-      "name": "Low Confidence?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        1360,
-        460
-      ],
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose"
-          },
-          "conditions": [
-            {
-              "id": "node-0017",
-              "leftValue": "={{ $json.categorizeConfidence }}",
-              "rightValue": 0,
-              "operator": {
-                "type": "number",
-                "operation": "gt"
-              }
-            },
-            {
-              "id": "node-0018",
-              "leftValue": "={{ $json.categorizeConfidence }}",
-              "rightValue": 0.5,
-              "operator": {
-                "type": "number",
-                "operation": "lt"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "node-0019",
-      "name": "Format Low Confidence Reason",
+      "name": "Format System Error Context",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1640,
-        460
+        1080,
+        640
       ],
       "parameters": {
         "mode": "manual",
         "assignments": {
           "assignments": [
             {
-              "id": "node-0020",
-              "name": "chatId",
+              "id": "node-0017",
+              "name": "workflow",
               "type": "string",
-              "value": "={{ $json.chatId }}"
+              "value": "02 - Processing / Categorize Transaction"
             },
             {
-              "id": "node-0021",
-              "name": "source",
+              "id": "node-0018",
+              "name": "message",
               "type": "string",
-              "value": "={{ $json.source }}"
+              "value": "={{ ($json.body && $json.body.error) ? $json.body.error : 'GET /api/categories failed' }}"
             },
             {
-              "id": "node-0022",
-              "name": "reason",
-              "type": "string",
-              "value": "={{ 'Categorized as \\'' + $json.categoryName + '\\' by fallback, not keyword match (confidence ' + $json.categorizeConfidence + ')' }}"
+              "id": "node-0019",
+              "name": "statusCode",
+              "type": "number",
+              "value": "={{ $json.statusCode }}"
             }
           ]
         },
@@ -303,21 +324,21 @@
       }
     },
     {
-      "id": "node-0023",
-      "name": "Notify: Low Confidence Import",
+      "id": "node-0020",
+      "name": "Notify: System Error",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1920,
-        460
+        1360,
+        640
       ],
       "parameters": {
         "source": "database",
         "workflowId": {
           "__rl": true,
           "mode": "list",
-          "value": "SELECT_AFTER_IMPORT:04 - Notifications / Low Confidence Import",
-          "cachedResultName": "04 - Notifications / Low Confidence Import"
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
         },
         "workflowInputs": {
           "mappingMode": "autoMapInputData",
@@ -326,7 +347,7 @@
         "options": {}
       },
       "notesInFlow": true,
-      "notes": "After importing, point this at the \"04 - Notifications / Low Confidence Import\" workflow (n8n assigns IDs on import). This branch runs in parallel and does not block the Create Transaction branch above."
+      "notes": "After importing, point this at the \"04 - Notifications / System Error\" workflow (n8n assigns IDs on import)."
     }
   ],
   "connections": {
@@ -356,24 +377,47 @@
       "main": [
         [
           {
-            "node": "Match Category by Keyword",
+            "node": "Prepare Salary Query",
             "type": "main",
             "index": 0
           }
         ],
-        []
+        [
+          {
+            "node": "Format System Error Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Match Category by Keyword": {
+    "Prepare Salary Query": {
+      "main": [
+        [
+          {
+            "node": "Get Salary Baseline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Salary Baseline": {
+      "main": [
+        [
+          {
+            "node": "Compute Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Category": {
       "main": [
         [
           {
             "node": "Category Resolved?",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Low Confidence?",
             "type": "main",
             "index": 0
           }
@@ -409,23 +453,11 @@
         ]
       ]
     },
-    "Low Confidence?": {
+    "Format System Error Context": {
       "main": [
         [
           {
-            "node": "Format Low Confidence Reason",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        []
-      ]
-    },
-    "Format Low Confidence Reason": {
-      "main": [
-        [
-          {
-            "node": "Notify: Low Confidence Import",
+            "node": "Notify: System Error",
             "type": "main",
             "index": 0
           }
