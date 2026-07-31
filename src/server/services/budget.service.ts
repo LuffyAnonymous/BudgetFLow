@@ -146,6 +146,142 @@ export class BudgetService {
   }
 
   /**
+   * Auto-allocates a monthly budget plan for `budgetMonth` from that month's
+   * total Salary income. Fires whenever a Salary-category transaction is
+   * created (see TransactionService.createTransaction), regardless of import
+   * channel, so it stays in sync with early-salary budgetMonth attribution
+   * (src/lib/salary-month.ts) automatically.
+   *
+   * Fixed costs (rent, recreation) and percentages (savings, remittance) are
+   * user-specified constants below — edit these if the user's real numbers
+   * change. Debt categories get their real Debt.monthlyPayment amounts,
+   * matched by debt name where a same-named category exists, else pooled
+   * into the generic "Debt Payment" category. What's left splits across the
+   * remaining variable-expense categories by fixed relative weights.
+   *
+   * No-op if there's no Salary category, no salary income for this month, or
+   * a required category is missing (never throws — this is a best-effort
+   * convenience, not a blocker for transaction creation).
+   */
+  async autoAllocateFromSalary(userId: string, budgetMonth: string): Promise<void> {
+    const categories = await this.categoryRepo.findManyByUserId(userId);
+    const findCat = (predicate: (c: (typeof categories)[number]) => boolean) =>
+      categories.find(predicate);
+
+    const salaryCategory = findCat(
+      (c) => c.type === CategoryType.INCOME && c.name.toLowerCase() === "salary"
+    );
+    if (!salaryCategory) return;
+
+    const salaryTxs = await db.transaction.findMany({
+      where: {
+        userId,
+        categoryId: salaryCategory.id,
+        type: TransactionType.INCOME,
+        budgetMonth,
+      },
+    });
+    const totalSalary = salaryTxs.reduce((sum, t) => sum.plus(t.amount), new Decimal(0));
+    if (totalSalary.lte(0)) return;
+
+    // --- User-specified fixed amounts and rates (2026-08 baseline) ---
+    const RENT_AMOUNT = new Decimal(2000);
+    const RECREATION_AMOUNT = new Decimal(220);
+    const SAVINGS_RATE = new Decimal("0.10");
+    const REMITTANCE_RATE = new Decimal("0.10");
+    const DEBT_NAME_TO_CATEGORY_NAME: Record<string, string> = {
+      tabby: "tabby payment",
+      "table tennis equipment": "table tennis payment",
+    };
+    const LIVING_EXPENSE_WEIGHTS: Array<{ category: string; weight: number }> = [
+      { category: "groceries", weight: 20 },
+      { category: "dining", weight: 12 },
+      { category: "transportation", weight: 10 },
+      { category: "utilities", weight: 8 },
+      { category: "shopping", weight: 5 },
+    ];
+
+    const savingsAmount = totalSalary.mul(SAVINGS_RATE);
+    const remittanceAmount = totalSalary.mul(REMITTANCE_RATE);
+
+    // --- Active debts -> per-category allocation (real monthlyPayment amounts) ---
+    const activeDebts = await db.debt.findMany({ where: { userId, status: "ACTIVE" } });
+    const debtAllocationByCategoryId = new Map<string, Decimal>();
+    let matchedDebtTotal = new Decimal(0);
+
+    for (const debt of activeDebts) {
+      const guessName = DEBT_NAME_TO_CATEGORY_NAME[debt.name.trim().toLowerCase()];
+      const targetCategory =
+        (guessName &&
+          findCat((c) => c.type === CategoryType.DEBT && c.name.toLowerCase() === guessName)) ||
+        findCat((c) => c.type === CategoryType.DEBT && c.name.toLowerCase() === "debt payment");
+      if (!targetCategory) continue;
+
+      const prev = debtAllocationByCategoryId.get(targetCategory.id) ?? new Decimal(0);
+      debtAllocationByCategoryId.set(targetCategory.id, prev.plus(debt.monthlyPayment));
+      matchedDebtTotal = matchedDebtTotal.plus(debt.monthlyPayment);
+    }
+
+    const fixedTotal = RENT_AMOUNT.plus(RECREATION_AMOUNT)
+      .plus(matchedDebtTotal)
+      .plus(savingsAmount)
+      .plus(remittanceAmount);
+    const remaining = Decimal.max(0, totalSalary.minus(fixedTotal));
+
+    // --- Split remaining across living-expense categories by relative weight ---
+    const totalWeight = LIVING_EXPENSE_WEIGHTS.reduce((sum, w) => sum + w.weight, 0);
+    const livingAllocations: Array<{ categoryId: string; amount: Decimal }> = [];
+    let allocatedSoFar = new Decimal(0);
+
+    LIVING_EXPENSE_WEIGHTS.forEach((entry, idx) => {
+      const cat = findCat((c) => c.name.toLowerCase() === entry.category);
+      if (!cat) return;
+
+      const isLast = idx === LIVING_EXPENSE_WEIGHTS.length - 1;
+      // Last category absorbs the rounding remainder so the total is exact.
+      const amount = isLast
+        ? remaining.minus(allocatedSoFar)
+        : remaining.mul(entry.weight).div(totalWeight).toDecimalPlaces(2);
+      if (!isLast) allocatedSoFar = allocatedSoFar.plus(amount);
+
+      livingAllocations.push({ categoryId: cat.id, amount });
+    });
+
+    // --- Assemble every budget row to write ---
+    const upserts: Array<{ categoryId: string; amount: Decimal }> = [
+      { categoryId: salaryCategory.id, amount: totalSalary },
+    ];
+
+    const rentCategory = findCat((c) => c.name.toLowerCase() === "rent cash");
+    if (rentCategory) upserts.push({ categoryId: rentCategory.id, amount: RENT_AMOUNT });
+
+    const recreationCategory = findCat((c) => c.name.toLowerCase() === "recreation");
+    if (recreationCategory) {
+      upserts.push({ categoryId: recreationCategory.id, amount: RECREATION_AMOUNT });
+    }
+
+    const savingsCategory = findCat(
+      (c) => c.type === CategoryType.SAVINGS && c.name.toLowerCase() === "emergency savings"
+    );
+    if (savingsCategory) upserts.push({ categoryId: savingsCategory.id, amount: savingsAmount });
+
+    const remittanceCategory = findCat((c) => c.type === CategoryType.REMITTANCE);
+    if (remittanceCategory) {
+      upserts.push({ categoryId: remittanceCategory.id, amount: remittanceAmount });
+    }
+
+    for (const [categoryId, amount] of debtAllocationByCategoryId) {
+      upserts.push({ categoryId, amount });
+    }
+
+    upserts.push(...livingAllocations);
+
+    for (const u of upserts) {
+      await this.upsertBudget(userId, { categoryId: u.categoryId, amount: u.amount, month: budgetMonth });
+    }
+  }
+
+  /**
    * Classify status according to standard Decimal comparisons.
    */
   private determineBudgetStatus(

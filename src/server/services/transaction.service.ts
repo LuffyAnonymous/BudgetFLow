@@ -71,7 +71,7 @@ export class TransactionService {
 
     // 3. Create transaction, log audit, and update balances atomically
     const { accountService } = await import("./account.service");
-    return db.$transaction(async (tx) => {
+    const created = await db.$transaction(async (tx) => {
       const created = await this.transactionRepo.create(userId, data, tx);
       await AuditLogService.log(
         {
@@ -101,6 +101,19 @@ export class TransactionService {
 
       return created;
     });
+
+    // 4. Best-effort: a Salary transaction re-derives that budgetMonth's full
+    // budget plan automatically. Never blocks transaction creation on failure.
+    if (category.type === CategoryType.INCOME && category.name.toLowerCase() === "salary" && created.budgetMonth) {
+      try {
+        const { BudgetService } = await import("./budget.service");
+        await new BudgetService().autoAllocateFromSalary(userId, created.budgetMonth);
+      } catch (err) {
+        console.error("[TransactionService] Auto budget allocation failed (non-fatal):", err);
+      }
+    }
+
+    return created;
   }
 
   /**

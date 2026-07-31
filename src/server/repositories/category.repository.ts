@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { Category, Prisma } from "@prisma/client";
+import { Category, CategoryType, Prisma } from "@prisma/client";
 
 export class CategoryRepository {
   private getClient(tx?: Prisma.TransactionClient) {
@@ -13,6 +13,24 @@ export class CategoryRepository {
     return this.getClient(tx).category.findMany({
       where: { userId },
       orderBy: { name: "asc" },
+    });
+  }
+
+  /**
+   * Creates a new category for the user.
+   */
+  async create(
+    userId: string,
+    data: { name: string; type: CategoryType; budgetGroupKey?: string | null },
+    tx?: Prisma.TransactionClient
+  ): Promise<Category> {
+    return this.getClient(tx).category.create({
+      data: {
+        userId,
+        name: data.name,
+        type: data.type,
+        budgetGroupKey: data.budgetGroupKey ?? null,
+      },
     });
   }
 
