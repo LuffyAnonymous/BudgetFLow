@@ -66,8 +66,12 @@ export default function BudgetsPage() {
     },
   });
 
-  const totalPlanned = budgets.reduce((sum, b) => sum + parseFloat(b.planned), 0);
-  const totalActual = budgets.reduce((sum, b) => sum + parseFloat(b.actual), 0);
+  // Income (Salary) is money coming in, not an allocation of money out - excluded
+  // from these totals so they represent actual planned/actual spending, not
+  // spending-plus-income double-counted together.
+  const allocationItems = budgets.filter((b) => b.categoryType !== "INCOME");
+  const totalPlanned = allocationItems.reduce((sum, b) => sum + parseFloat(b.planned), 0);
+  const totalActual = allocationItems.reduce((sum, b) => sum + parseFloat(b.actual), 0);
 
   // Form Setup
   const {
