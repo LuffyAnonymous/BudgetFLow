@@ -26,7 +26,7 @@ export class BudgetService {
     const budgets = await this.budgetRepo.findManyByMonth(userId, month);
     
     const { start, nextMonthStart } = getDubaiMonthRange(month);
-    const transactions = await this.transactionRepo.findManyInRange(userId, start, nextMonthStart);
+    const transactions = await this.transactionRepo.findManyInRange(userId, start, nextMonthStart, month);
 
     // 2. Reconcile categories
     const overview: BudgetOverviewItem[] = [];
@@ -69,8 +69,18 @@ export class BudgetService {
           );
           actual = matchTx.reduce((sum, t) => sum.plus(t.amount), new Decimal(0));
         } else {
-          // Savings, Debt, Remittance actuals are 0 in Milestone 2
-          actual = new Decimal(0);
+          // Income/Savings/Debt/Remittance: sum transactions of the matching type.
+          const TYPE_FOR_CATEGORY: Partial<Record<CategoryType, TransactionType>> = {
+            [CategoryType.INCOME]: TransactionType.INCOME,
+            [CategoryType.SAVINGS]: TransactionType.SAVINGS,
+            [CategoryType.DEBT]: TransactionType.DEBT_PAYMENT,
+            [CategoryType.REMITTANCE]: TransactionType.REMITTANCE,
+          };
+          const matchType = TYPE_FOR_CATEGORY[category.type];
+          const matchTx = matchType
+            ? transactions.filter((t) => t.categoryId === category.id && t.type === matchType)
+            : [];
+          actual = matchTx.reduce((sum, t) => sum.plus(t.amount), new Decimal(0));
         }
       }
 
