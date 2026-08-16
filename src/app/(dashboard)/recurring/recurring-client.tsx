@@ -239,9 +239,9 @@ export function RecurringClient() {
         </div>
       ) : templates.length === 0 ? (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-12 text-center backdrop-blur-xs">
-          <LucideCalendar className="mx-auto h-8 w-8 text-slate-650 mb-3" />
+          <LucideCalendar className="mx-auto h-8 w-8 text-slate-600 mb-3" />
           <p className="text-sm font-medium text-slate-400">No active recurring template rules found.</p>
-          <p className="text-xs text-slate-550 mt-1">Create one to automatically record expenses/income or generate due notifications.</p>
+          <p className="text-xs text-slate-500 mt-1">Create one to automatically record expenses/income or generate due notifications.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -250,7 +250,7 @@ export function RecurringClient() {
               key={tpl.id}
               className={clsx(
                 "group relative rounded-2xl border bg-slate-900/40 p-5 backdrop-blur-xs flex flex-col justify-between transition-all hover:border-slate-700",
-                tpl.status === "PAUSED" ? "border-slate-850 opacity-60" : "border-slate-800"
+                tpl.status === "PAUSED" ? "border-slate-800 opacity-60" : "border-slate-800"
               )}
             >
               <div>
@@ -288,9 +288,9 @@ export function RecurringClient() {
                   </span>
                 </p>
 
-                {tpl.notes && <p className="text-xs text-slate-450 mt-3 italic line-clamp-2">{tpl.notes}</p>}
+                {tpl.notes && <p className="text-xs text-slate-500 mt-3 italic line-clamp-2">{tpl.notes}</p>}
 
-                <div className="mt-4 flex flex-col gap-1 border-t border-slate-850 pt-3 text-[10px] text-slate-450">
+                <div className="mt-4 flex flex-col gap-1 border-t border-slate-800 pt-3 text-[10px] text-slate-500">
                   <p>
                     <span className="font-semibold text-slate-400">Ledger Sync:</span>{" "}
                     {tpl.autoCreate ? "Automatic generation" : "Reminder only"}
@@ -309,11 +309,11 @@ export function RecurringClient() {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2 mt-5 border-t border-slate-850 pt-3">
+              <div className="flex gap-2 mt-5 border-t border-slate-800 pt-3">
                 {tpl.status === "ACTIVE" ? (
                   <button
                     onClick={() => handleStatusChange(tpl.id, "PAUSED")}
-                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-350 hover:bg-slate-700 transition-colors"
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-400 hover:bg-slate-700 transition-colors"
                   >
                     <LucidePause className="h-3 w-3" />
                     Pause
@@ -370,7 +370,7 @@ export function RecurringClient() {
                   placeholder="e.g. Monthly Rent Payment"
                   value={nameInput}
                   onChange={(e) => setNameInput(e.target.value)}
-                  className="w-full rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
@@ -387,7 +387,7 @@ export function RecurringClient() {
                       setAutoCreateInput(false); // forced reminder-only
                     }
                   }}
-                  className="w-full rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 >
                   <option value="EXPENSE">Expense</option>
                   <option value="INCOME">Income</option>
@@ -407,7 +407,7 @@ export function RecurringClient() {
                   required
                   value={amountInput}
                   onChange={(e) => setAmountInput(e.target.value)}
-                  className="w-full rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
@@ -420,7 +420,7 @@ export function RecurringClient() {
                   required
                   value={startDateInput}
                   onChange={(e) => setStartDateInput(e.target.value)}
-                  className="w-full rounded-xl border border-slate-855 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
@@ -432,7 +432,7 @@ export function RecurringClient() {
                   type="date"
                   value={endDateInput}
                   onChange={(e) => setEndDateInput(e.target.value)}
-                  className="w-full rounded-xl border border-slate-855 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
@@ -447,7 +447,7 @@ export function RecurringClient() {
                   placeholder="Defaults to start date day"
                   value={dueDayInput}
                   onChange={(e) => setDueDayInput(e.target.value)}
-                  className="w-full rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 />
               </div>
 
@@ -459,7 +459,7 @@ export function RecurringClient() {
                   value={categoryIdInput}
                   onChange={(e) => setCategoryIdInput(e.target.value)}
                   required={autoCreateInput}
-                  className="w-full rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                 >
                   <option value="">No category (Reminder only)</option>
                   {categories.map((c) => (
@@ -477,7 +477,7 @@ export function RecurringClient() {
                 <textarea
                   value={notesInput}
                   onChange={(e) => setNotesInput(e.target.value)}
-                  className="w-full rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                   rows={2}
                 />
               </div>

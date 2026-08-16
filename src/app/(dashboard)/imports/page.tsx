@@ -46,27 +46,32 @@ interface ImportDetail extends ImportItem {
   parserVersion: string | null;
 }
 
-export function normalizeCategories(json: any): any[] {
-  if (!json) return [];
-  if (json.data && Array.isArray(json.data)) {
-    return json.data;
+export function normalizeCategories<T = Record<string, unknown>>(json: unknown): T[] {
+  if (!json || typeof json !== "object") return [];
+  const obj = json as Record<string, unknown>;
+  if (obj.data && Array.isArray(obj.data)) {
+    return obj.data as T[];
   }
   if (Array.isArray(json)) {
-    return json;
+    return json as T[];
   }
   return [];
 }
 
-export function normalizeImportsList(json: any): any[] {
-  if (!json) return [];
-  if (json.data && json.data.items && Array.isArray(json.data.items)) {
-    return json.data.items;
-  }
-  if (json.data && Array.isArray(json.data)) {
-    return json.data;
+export function normalizeImportsList<T = Record<string, unknown>>(json: unknown): T[] {
+  if (!json || typeof json !== "object") return [];
+  const obj = json as Record<string, unknown>;
+  if (obj.data && typeof obj.data === "object" && obj.data !== null) {
+    const dataObj = obj.data as Record<string, unknown>;
+    if (dataObj.items && Array.isArray(dataObj.items)) {
+      return dataObj.items as T[];
+    }
+    if (Array.isArray(obj.data)) {
+      return obj.data as T[];
+    }
   }
   if (Array.isArray(json)) {
-    return json;
+    return json as T[];
   }
   return [];
 }
@@ -86,7 +91,7 @@ export default function ImportsPage() {
       if (!res.ok) {
         throw new Error(json.error?.message || "Failed to load pending imports");
       }
-      return normalizeImportsList(json);
+      return normalizeImportsList<ImportItem>(json);
     },
   });
 
@@ -111,7 +116,7 @@ export default function ImportsPage() {
       if (!res.ok) {
         throw new Error(json.error?.message || "Failed to load categories");
       }
-      return normalizeCategories(json);
+      return normalizeCategories<{ id: string; name: string; type: string }>(json);
     },
   });
 
@@ -287,8 +292,8 @@ export default function ImportsPage() {
                 </p>
               )}
               {item.transactionId && (
-                <p className="text-xs text-indigo-400 mt-0.5">
-                  ✓ Transaction created
+                <p className="flex items-center gap-1 text-xs text-indigo-400 mt-0.5">
+                  <LucideCheckCircle className="h-3 w-3" aria-hidden="true" /> Transaction created
                 </p>
               )}
             </button>
@@ -344,8 +349,8 @@ export default function ImportsPage() {
             {/* Transaction link (correction #11) */}
             {detail.transactionId && (
               <div className="rounded-xl bg-indigo-500/10 border border-indigo-500/20 p-3">
-                <p className="text-xs text-indigo-400 font-semibold">
-                  ✓ Transaction created
+                <p className="flex items-center gap-1.5 text-xs text-indigo-400 font-semibold">
+                  <LucideCheckCircle className="h-3.5 w-3.5" aria-hidden="true" /> Transaction created
                 </p>
               </div>
             )}

@@ -330,7 +330,7 @@ export default function BudgetsPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm">
               <thead>
-                <tr className="border-b border-slate-850 bg-slate-900/60 font-semibold text-slate-400">
+                <tr className="border-b border-slate-800 bg-slate-900/60 font-semibold text-slate-400">
                   <th className="px-6 py-4">Category</th>
                   <th className="px-6 py-4">Group</th>
                   <th className="px-6 py-4 text-right">Planned (Budget)</th>
@@ -341,7 +341,7 @@ export default function BudgetsPage() {
                   <th className="px-6 py-4 text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-850">
+              <tbody className="divide-y divide-slate-800">
                 {budgets.map((b) => {
                   const progressVal = Math.min(100, parseFloat(b.progressPercent));
                   const showProgressBar = parseFloat(b.planned) > 0;
@@ -357,7 +357,7 @@ export default function BudgetsPage() {
                       <td className="px-6 py-4 text-right font-bold text-slate-100 whitespace-nowrap">
                         AED {parseFloat(b.planned).toFixed(2)}
                       </td>
-                      <td className="px-6 py-4 text-right font-semibold text-slate-350 whitespace-nowrap">
+                      <td className="px-6 py-4 text-right font-semibold text-slate-400 whitespace-nowrap">
                         AED {parseFloat(b.actual).toFixed(2)}
                       </td>
                       <td className={`px-6 py-4 text-right font-bold whitespace-nowrap ${
@@ -368,7 +368,7 @@ export default function BudgetsPage() {
                       <td className="px-6 py-4 text-center min-w-32">
                         {showProgressBar ? (
                           <div className="flex items-center justify-center gap-3">
-                            <div className="w-20 bg-slate-850 h-2 rounded-full overflow-hidden">
+                            <div className="w-20 bg-slate-800 h-2 rounded-full overflow-hidden">
                               <div
                                 style={{ width: `${progressVal}%` }}
                                 className={`h-full rounded-full ${
@@ -454,17 +454,17 @@ export default function BudgetsPage() {
                   step="1"
                   placeholder="0.00"
                   {...register("amount")}
-                  className="w-full rounded-xl border border-slate-850 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
                   autoFocus
                 />
                 {errors.amount && <span className="text-xs text-red-400">{errors.amount.message}</span>}
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-855">
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
-                  className="rounded-xl border border-slate-850 px-4 py-2.5 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-850 hover:text-slate-200"
+                  className="rounded-xl border border-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
                 >
                   Cancel
                 </button>
@@ -505,7 +505,7 @@ export default function BudgetsPage() {
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setIsDeleteConfirmOpen(false)}
-                className="rounded-xl border border-slate-850 px-4 py-2.5 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-850 hover:text-slate-200"
+                className="rounded-xl border border-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
               >
                 Cancel
               </button>

@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
-import { LucideArrowUp, LucideArrowDown, LucideArrowUpDown, LucideLoader2 } from "lucide-react";
+import { LucideArrowUp, LucideArrowDown, LucideArrowUpDown, LucideLoader2, LucideInbox } from "lucide-react";
 import type { DataTableProps, SortState } from "./types";
 import { clsx } from "clsx";
+import { EmptyState } from "@/components/shared/empty-state";
 
 const SKELETON_ROWS = 5;
 
@@ -134,7 +135,7 @@ export function DataTable<TRow>({
                 aria-live="polite"
               >
                 {emptyState ?? (
-                  <p className="text-slate-500 text-sm">No records found.</p>
+                  <EmptyState icon={LucideInbox} title="No records found" />
                 )}
               </td>
             </tr>

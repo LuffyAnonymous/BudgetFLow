@@ -26,7 +26,7 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
         onClick={onMenuToggle}
         className="rounded-lg p-1.5 hover:bg-slate-800 focus:outline-none lg:hidden"
       >
-        <LucideMenu className="h-6 w-6 text-slate-350" />
+        <LucideMenu className="h-6 w-6 text-slate-400" />
       </button>
 
       {/* Dynamic Title */}

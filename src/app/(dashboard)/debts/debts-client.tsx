@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
+import { EmptyState } from "@/components/shared/empty-state";
 import {
   LucidePlus,
   LucideX,
@@ -12,6 +13,7 @@ import {
   LucideCheck,
   LucideArchive,
   LucideCalculator,
+  LucideLandmark,
 } from "lucide-react";
 
 interface Debt {
@@ -264,9 +266,17 @@ export default function DebtsClient() {
       {isLoading ? (
         <div className="text-center py-12 text-slate-500">Loading debts...</div>
       ) : debts.length === 0 ? (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-8 text-center">
-          <p className="text-slate-400">No {statusFilter.toLowerCase()} debts found.</p>
-        </div>
+        <EmptyState
+          icon={LucideLandmark}
+          title={`No ${statusFilter.toLowerCase()} debts`}
+          description="Add a debt to track its balance, monthly payments, and payoff timeline."
+          action={{
+            label: "Add Debt",
+            onClick: () => setShowCreateDialog(true),
+            icon: LucidePlus,
+            className: "bg-rose-500 hover:bg-rose-400 text-white",
+          }}
+        />
       ) : (
         <div className="space-y-4">
           {debts.map((debt) => (

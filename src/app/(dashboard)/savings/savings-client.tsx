@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
+import { EmptyState } from "@/components/shared/empty-state";
 import {
   LucidePlus,
   LucideX,
@@ -221,9 +222,17 @@ export default function SavingsClient() {
       {isLoading ? (
         <div className="text-center py-12 text-slate-500">Loading savings goals...</div>
       ) : goals.length === 0 ? (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-8 text-center">
-          <p className="text-slate-400">No {statusFilter.toLowerCase()} savings goals found.</p>
-        </div>
+        <EmptyState
+          icon={LucideTarget}
+          title={`No ${statusFilter.toLowerCase()} savings goals`}
+          description="Set a target amount and track your progress toward it."
+          action={{
+            label: "New Goal",
+            onClick: () => setShowCreateDialog(true),
+            icon: LucidePlus,
+            className: "bg-indigo-500 hover:bg-indigo-400 text-white",
+          }}
+        />
       ) : (
         <div className="space-y-4">
           {goals.map((goal) => (

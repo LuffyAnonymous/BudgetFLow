@@ -389,23 +389,24 @@ export function RemittancesClient() {
             )}
 
             {/* Calculations Preview Glass Box */}
-            <div className="md:col-span-3 rounded-xl bg-slate-950/60 border border-slate-850 p-5 space-y-4">
+            <div className="md:col-span-3 rounded-xl bg-slate-950/60 border border-slate-800 p-5 space-y-4">
               <h4 className="text-sm font-bold text-indigo-400 flex items-center gap-2">
                 <LucideInfo className="h-4 w-4" /> Submission Preview Calculations
               </h4>
               <div className="grid gap-4 sm:grid-cols-2 text-sm">
-                <div className="flex justify-between items-center bg-slate-900/40 p-3 rounded-lg border border-slate-850">
+                <div className="flex justify-between items-center bg-slate-900/40 p-3 rounded-lg border border-slate-800">
                   <span className="text-slate-400">Total Outflow Impact (AED)</span>
                   <span className="font-extrabold text-white">AED {previewOutflow}</span>
                 </div>
-                <div className="flex justify-between items-center bg-slate-900/40 p-3 rounded-lg border border-slate-850">
+                <div className="flex justify-between items-center bg-slate-900/40 p-3 rounded-lg border border-slate-800">
                   <span className="text-slate-400">PHP Received (Est.)</span>
                   <span className="font-extrabold text-emerald-400">PHP {previewPhp}</span>
                 </div>
               </div>
               {!syncLedger && (
-                <p className="text-xs text-amber-400/90 leading-normal">
-                  ⚠️ Note: Ledger sync is disabled. This remittance record will be created for tracking and report history, but will not affect ledger cash-flow calculations.
+                <p className="flex items-start gap-1.5 text-xs text-amber-400/90 leading-normal">
+                  <LucideAlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                  Note: Ledger sync is disabled. This remittance record will be created for tracking and report history, but will not affect ledger cash-flow calculations.
                 </p>
               )}
             </div>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
+import { EmptyState } from "@/components/shared/empty-state";
 import {
   LucideBarChart3,
   LucideTrendingUp,
@@ -219,7 +220,11 @@ export function ReportsClient() {
           {loadingMonthly ? (
             <p className="text-center text-slate-500 py-12">Generating monthly analysis...</p>
           ) : !monthlyData ? (
-            <p className="text-center text-slate-500 py-12 italic">No data found for this month.</p>
+            <EmptyState
+              icon={LucideBarChart3}
+              title="No data for this month"
+              description="Nothing was recorded in this period yet — figures will appear here once there's activity."
+            />
           ) : (
             <div className="space-y-6">
               {/* Cards Summary */}
@@ -571,7 +576,7 @@ export function ReportsClient() {
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 pt-4">
               <button
                 onClick={() => handleExport("transactions")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-850 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
+                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
               >
                 <div>
                   <span className="block text-white font-bold">Ledger Transactions</span>
@@ -582,7 +587,7 @@ export function ReportsClient() {
 
               <button
                 onClick={() => handleExport("budgets")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-850 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
+                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
               >
                 <div>
                   <span className="block text-white font-bold">Budget Targets</span>
@@ -593,7 +598,7 @@ export function ReportsClient() {
 
               <button
                 onClick={() => handleExport("debt_payments")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-850 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
+                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
               >
                 <div>
                   <span className="block text-white font-bold">Debt Payments</span>
@@ -604,7 +609,7 @@ export function ReportsClient() {
 
               <button
                 onClick={() => handleExport("savings_transactions")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-850 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
+                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
               >
                 <div>
                   <span className="block text-white font-bold">Savings Transactions</span>
@@ -615,7 +620,7 @@ export function ReportsClient() {
 
               <button
                 onClick={() => handleExport("remittances")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-850 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
+                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
               >
                 <div>
                   <span className="block text-white font-bold">PH Remittances</span>
@@ -626,7 +631,7 @@ export function ReportsClient() {
 
               <button
                 onClick={() => handleExport("monthly_summary")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-850 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
+                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
               >
                 <div>
                   <span className="block text-white font-bold">Monthly Trend Summary</span>

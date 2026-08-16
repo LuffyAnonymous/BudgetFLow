@@ -87,7 +87,7 @@ export function AppSidebar({ userName, userEmail, onCloseMobile }: AppSidebarPro
                 "group flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all duration-200",
                 isActive
                   ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/10"
-                  : "hover:bg-slate-850 hover:text-slate-100"
+                  : "hover:bg-slate-800 hover:text-slate-100"
               )}
             >
               <item.icon
@@ -112,7 +112,7 @@ export function AppSidebar({ userName, userEmail, onCloseMobile }: AppSidebarPro
       </nav>
 
       {/* User Section & Logout */}
-      <div className="border-t border-slate-850 p-4 space-y-3">
+      <div className="border-t border-slate-800 p-4 space-y-3">
         <div className="flex items-center gap-3 rounded-xl bg-slate-950/40 p-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-slate-300">
             <LucideUser className="h-5 w-5" />

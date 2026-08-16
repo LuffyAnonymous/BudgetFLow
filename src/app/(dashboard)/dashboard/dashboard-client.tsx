@@ -17,9 +17,6 @@ import {
   LucideInfo,
   LucideClock,
   LucideAlertTriangle,
-  LucideBuilding,
-  LucideCoins,
-  LucideWallet,
 } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -326,7 +323,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
             <LucideClock className="h-5 w-5 text-indigo-400 mt-0.5 flex-shrink-0 animate-pulse" />
             <div>
               <h4 className="font-semibold text-white text-sm">Monthly Budget Rollover Available</h4>
-              <p className="text-xs text-slate-350 mt-1">
+              <p className="text-xs text-slate-400 mt-1">
                 Carry forward {rolloverPreview.budgetsToCopy.length} budget templates from {getMonthLabel(previousMonth)} to {getMonthLabel(selectedMonth)}.
               </p>
             </div>
@@ -589,15 +586,15 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
             Actual Cash Flow (Recorded)
           </h3>
           <div className="space-y-4">
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Actual Income</span>
               <span className="font-bold text-white">AED {parseFloat(data.actual.income).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Actual Expenses</span>
               <span className="font-bold text-slate-200">AED {parseFloat(data.actual.expenses).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2 flex-col sm:flex-row">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2 flex-col sm:flex-row">
               <div className="flex items-center gap-1.5 text-slate-400">
                 <span>Net Savings Flow</span>
                 <span className="inline-flex" title="Deposits minus Withdrawals. Positive means money transferred to savings.">
@@ -606,11 +603,11 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
               </div>
               <span className="font-bold text-slate-200 mt-1 sm:mt-0">AED {parseFloat(data.actual.savings).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Actual Remittances</span>
               <span className="font-bold text-slate-200">AED {parseFloat(data.actual.remittances).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Actual Debt Payments</span>
               <span className="font-bold text-slate-200">AED {parseFloat(data.actual.debtPayments).toFixed(2)}</span>
             </div>
@@ -624,23 +621,23 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
             Planned Budget Plan (Month allocation)
           </h3>
           <div className="space-y-4">
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Target Monthly Salary</span>
               <span className="font-bold text-white">AED {parseFloat(data.planned.salary).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Planned Expenses (Fixed/Variable)</span>
               <span className="font-bold text-slate-200">AED {parseFloat(data.planned.expenses).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Planned Savings Targets</span>
               <span className="font-bold text-slate-200">AED {parseFloat(data.planned.savings).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Planned Remittances (Family)</span>
               <span className="font-bold text-slate-200">AED {parseFloat(data.planned.remittances).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-850 pb-2">
+            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
               <span className="text-slate-400">Planned Debt Installments</span>
               <span className="font-bold text-slate-200">AED {parseFloat(data.planned.debtPayments).toFixed(2)}</span>
             </div>
@@ -671,11 +668,11 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
             </div>
 
             {!data.recentTransactions.length ? (
-              <p className="text-sm text-slate-550 py-12 text-center italic">
+              <p className="text-sm text-slate-500 py-12 text-center italic">
                 No transactions recorded yet for this month.
               </p>
             ) : (
-              <div className="divide-y divide-slate-850 max-h-80 overflow-y-auto pr-1 space-y-0.5">
+              <div className="divide-y divide-slate-800 max-h-80 overflow-y-auto pr-1 space-y-0.5">
                 {data.recentTransactions.map((tx) => (
                   <div key={tx.id} className="flex justify-between items-center py-3">
                     <div className="min-w-0">
@@ -694,7 +691,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                     </div>
                     <span className={`font-bold text-sm whitespace-nowrap ml-4 ${
                       tx.type === "INCOME" ? "text-emerald-400" :
-                      tx.type === "SAVINGS" ? "text-slate-350" : "text-rose-400"
+                      tx.type === "SAVINGS" ? "text-slate-400" : "text-rose-400"
                     }`}>
                       {tx.type === "INCOME" ? "+" : "-"}AED {parseFloat(tx.amount).toFixed(2)}
                     </span>
@@ -719,16 +716,16 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
             </div>
 
             {upcomingPayments.length === 0 ? (
-              <p className="text-sm text-slate-550 py-12 text-center italic">
+              <p className="text-sm text-slate-500 py-12 text-center italic">
                 No upcoming payments or active alerts.
               </p>
             ) : (
-              <div className="divide-y divide-slate-850 max-h-80 overflow-y-auto pr-1 space-y-2">
+              <div className="divide-y divide-slate-800 max-h-80 overflow-y-auto pr-1 space-y-2">
                 {upcomingPayments.slice(0, 5).map((item) => (
                   <div key={item.id} className="flex justify-between items-center py-2.5">
                     <div className="min-w-0">
                       <p className="font-semibold text-slate-200 text-sm truncate">{item.title}</p>
-                      <p className="text-[11px] text-slate-550 mt-1 flex items-center gap-1.5">
+                      <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5">
                         <span>Due: {item.dueDate}</span>
                         <span>•</span>
                         <span className={clsx(
@@ -773,7 +770,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                                   });
                                 }
                               }}
-                              className="rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 px-2 py-1 text-[10px]"
+                              className="rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 px-2 py-1 text-[10px]"
                             >
                               Skip
                             </button>
@@ -802,7 +799,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
           <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-md space-y-5">
             <div>
               <h3 className="text-lg font-bold text-white">Monthly Budget Rollover Preview</h3>
-              <p className="text-xs text-slate-450 mt-0.5">
+              <p className="text-xs text-slate-500 mt-0.5">
                 Copy category budget allocations from {getMonthLabel(previousMonth)} to {getMonthLabel(selectedMonth)}.
               </p>
             </div>
@@ -841,7 +838,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
 
               <div>
                 <h4 className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">Budgets to copy ({rolloverPreview.budgetsToCopy.length})</h4>
-                <div className="max-h-40 overflow-y-auto border border-slate-850 rounded-xl divide-y divide-slate-850 bg-slate-950/20 px-3">
+                <div className="max-h-40 overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800 bg-slate-950/20 px-3">
                   {rolloverPreview.budgetsToCopy.map((b: { categoryName: string; amount: string }, idx: number) => (
                     <div key={idx} className="flex justify-between items-center py-2 text-xs">
                       <span className="font-medium text-slate-300">{b.categoryName}</span>
@@ -859,7 +856,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                   setIsRolloverModalOpen(false);
                   setRolloverError("");
                 }}
-                className="rounded-xl border border-slate-800 bg-slate-900/50 hover:bg-slate-800 px-5 py-2 text-sm text-slate-350 transition-all"
+                className="rounded-xl border border-slate-800 bg-slate-900/50 hover:bg-slate-800 px-5 py-2 text-sm text-slate-400 transition-all"
               >
                 Cancel
               </button>
