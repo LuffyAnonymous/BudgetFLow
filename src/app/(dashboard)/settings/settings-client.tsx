@@ -171,13 +171,28 @@ export function SettingsClient() {
     queryFn: async () => {
       const res = await fetch("/api/settings/import");
       const json = await res.json();
-      return json.data; // { enabled: boolean, autoImportSalary: boolean, ... }
+      return json.data; // { enabled: boolean, autoImportSalary: boolean, senderAllowlist: string[], salaryCategoryId: string | null, ... }
     },
   });
 
+  // Categories (for the salary category dropdown)
+  const { data: categories } = useQuery({
+    queryKey: ["categories"],
+    queryFn: async () => {
+      const res = await fetch("/api/categories");
+      const json = await res.json();
+      return json.data as { id: string; name: string; type: string }[];
+    },
+  });
+  const incomeCategories = (categories ?? []).filter((c) => c.type === "INCOME");
+
   // Update Import Settings Mutation
   const updateImportSettingsMutation = useMutation({
-    mutationFn: async (payload: { enabled: boolean }) => {
+    mutationFn: async (payload: {
+      enabled?: boolean;
+      senderAllowlist?: string[];
+      salaryCategoryId?: string | null;
+    }) => {
       const res = await fetch("/api/settings/import", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -189,11 +204,38 @@ export function SettingsClient() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["import-settings"] });
+      setImportConfigSuccess("Import configuration saved.");
+      setImportConfigError("");
+      setTimeout(() => setImportConfigSuccess(""), 3000);
     },
     onError: (err: Error) => {
-      setTokenError(err.message);
+      setImportConfigError(err.message);
     },
   });
+
+  // Sender allowlist / salary category — local editable state, synced once loaded
+  const [senderAllowlistInput, setSenderAllowlistInput] = useState("");
+  const [salaryCategoryIdInput, setSalaryCategoryIdInput] = useState("");
+  const [importConfigSynced, setImportConfigSynced] = useState(false);
+  const [importConfigSuccess, setImportConfigSuccess] = useState("");
+  const [importConfigError, setImportConfigError] = useState("");
+
+  if (importSettings && !importConfigSynced) {
+    setSenderAllowlistInput((importSettings.senderAllowlist ?? []).join(", "));
+    setSalaryCategoryIdInput(importSettings.salaryCategoryId ?? "");
+    setImportConfigSynced(true);
+  }
+
+  const handleSaveImportConfig = () => {
+    const senderAllowlist = senderAllowlistInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    updateImportSettingsMutation.mutate({
+      senderAllowlist,
+      salaryCategoryId: salaryCategoryIdInput || null,
+    });
+  };
 
   // Success/Error Indicators
   const [prefSuccess, setPrefSuccess] = useState("");
@@ -707,6 +749,67 @@ export function SettingsClient() {
                 <p className="text-xs text-slate-400">Allow receiving automated transactions via SMS integrations.</p>
               </div>
             </label>
+          </div>
+
+          {/* Sender allowlist + salary category */}
+          <div className="space-y-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Bank Sender Allowlist
+              </label>
+              <input
+                type="text"
+                value={senderAllowlistInput}
+                onChange={(e) => setSenderAllowlistInput(e.target.value)}
+                placeholder="e.g. ENBD, MASHREQ"
+                className="w-full rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500"
+              />
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Comma-separated sender names, exactly as your bank&apos;s texts appear on your phone. Only messages from these senders are imported.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Salary Income Category
+              </label>
+              <select
+                value={salaryCategoryIdInput}
+                onChange={(e) => setSalaryCategoryIdInput(e.target.value)}
+                className="w-full rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              >
+                <option value="">No salary category selected</option>
+                {incomeCategories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Used to attribute recognized salary credits to the right budget month.
+              </p>
+            </div>
+
+            {importConfigError && (
+              <p className="flex items-center gap-1.5 text-xs text-red-400">
+                <LucideAlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {importConfigError}
+              </p>
+            )}
+            {importConfigSuccess && (
+              <p className="flex items-center gap-1.5 text-xs text-emerald-400">
+                <LucideCheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {importConfigSuccess}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveImportConfig}
+              disabled={updateImportSettingsMutation.isPending}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-indigo-500 disabled:opacity-50"
+            >
+              <LucideSave className="h-3.5 w-3.5" />
+              {updateImportSettingsMutation.isPending ? "Saving..." : "Save Import Config"}
+            </button>
           </div>
 
           {tokenError && (

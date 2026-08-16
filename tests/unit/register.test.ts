@@ -1,7 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { POST } from "../../src/app/api/auth/register/route";
+
+// Registration sends a verification email; stub the transport so tests
+// don't need a real RESEND_API_KEY and don't send real mail.
+vi.mock("@/lib/email", () => ({
+  sendEmail: vi.fn().mockResolvedValue(undefined),
+}));
 
 const TEST_EMAIL = "register_test@budgetflow.ae";
 
@@ -36,6 +42,16 @@ describe("POST /api/auth/register", () => {
     const user = await db.user.findUnique({ where: { email: TEST_EMAIL } });
     expect(user).not.toBeNull();
     expect(user?.name).toBe("Jane Doe");
+  });
+
+  it("leaves the new account unverified with a pending verification token", async () => {
+    await POST(makeRequest(validBody, "10.1.0.20"));
+    const user = await db.user.findUnique({ where: { email: TEST_EMAIL } });
+    expect(user?.emailVerified).toBeNull();
+
+    const tokens = await db.emailVerificationToken.findMany({ where: { userId: user!.id } });
+    expect(tokens.length).toBe(1);
+    expect(tokens[0].usedAt).toBeNull();
   });
 
   it("provisions default categories/settings/accounts for the new user", async () => {

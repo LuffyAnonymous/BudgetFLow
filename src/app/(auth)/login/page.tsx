@@ -20,6 +20,8 @@ export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [lastEmail, setLastEmail] = useState("");
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
 
   const {
     register,
@@ -36,15 +38,18 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginFormValues) => {
     setIsLoading(true);
     setError(null);
+    setResendState("idle");
+    const email = data.email.trim().toLowerCase();
+    setLastEmail(email);
     try {
       const result = await signIn("credentials", {
-        email: data.email.trim().toLowerCase(),
+        email,
         password: data.password,
         redirect: false,
       });
 
       if (result?.error) {
-        setError("Invalid email or password");
+        setError("Invalid email or password, or your email hasn't been verified yet.");
       } else {
         router.push("/dashboard");
         router.refresh();
@@ -54,6 +59,22 @@ export default function LoginPage() {
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (!lastEmail) return;
+    setResendState("sending");
+    try {
+      await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: lastEmail }),
+      });
+    } catch (err) {
+      console.error("Resend verification error:", err);
+    } finally {
+      setResendState("sent");
     }
   };
 
@@ -77,8 +98,22 @@ export default function LoginPage() {
         </div>
 
         {error && (
-          <div className="mb-6 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400 text-center animate-pulse">
-            {error}
+          <div className="mb-6 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400 text-center">
+            <p>{error}</p>
+            {resendState === "sent" ? (
+              <p className="mt-2 text-xs text-slate-400">
+                If that email needs verifying, a new link is on its way.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resendState === "sending"}
+                className="mt-2 text-xs font-semibold text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+              >
+                {resendState === "sending" ? "Sending…" : "Resend verification email"}
+              </button>
+            )}
           </div>
         )}
 

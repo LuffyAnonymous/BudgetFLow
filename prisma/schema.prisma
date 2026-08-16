@@ -90,33 +90,53 @@ enum TransactionOrigin {
 }
 
 model User {
-  id                   String                @id @default(uuid())
-  email                String                @unique
-  passwordHash         String
-  name                 String?
-  sessionVersion       Int                   @default(0)
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  categories           Category[]
-  accounts             Account[]
-  transactions         Transaction[]
-  budgets              Budget[]
-  debts                Debt[]
-  debtPayments         DebtPayment[]
-  savingGoals          SavingGoal[]
-  savingTransactions   SavingTransaction[]
-  remittances          Remittance[]
-  settings             Setting?
-  importSetting        ImportSetting?
-  importedTransactions ImportedTransaction[]
-  recurringTemplates   RecurringTemplate[]
-  recurringOccurrences RecurringOccurrence[]
-  notifications        Notification[]
-  monthlyRollovers     MonthlyRollover[]
-  auditLogs            AuditLog[]
-  attachments          Attachment[]
-  serviceApiKeys       ServiceApiKey[]
-  usedInviteCode       InviteCode?
+  id                      String                   @id @default(uuid())
+  email                   String                   @unique
+  passwordHash            String
+  name                    String?
+  /// Null until the user clicks the link in their verification email.
+  /// Login is refused while this is null (see auth.ts).
+  emailVerified           DateTime?
+  sessionVersion          Int                      @default(0)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  categories              Category[]
+  accounts                Account[]
+  transactions            Transaction[]
+  budgets                 Budget[]
+  debts                   Debt[]
+  debtPayments            DebtPayment[]
+  savingGoals             SavingGoal[]
+  savingTransactions      SavingTransaction[]
+  remittances             Remittance[]
+  settings                Setting?
+  importSetting           ImportSetting?
+  importedTransactions    ImportedTransaction[]
+  recurringTemplates      RecurringTemplate[]
+  recurringOccurrences    RecurringOccurrence[]
+  notifications           Notification[]
+  monthlyRollovers        MonthlyRollover[]
+  auditLogs               AuditLog[]
+  attachments             Attachment[]
+  serviceApiKeys          ServiceApiKey[]
+  usedInviteCode          InviteCode?
+  emailVerificationTokens EmailVerificationToken[]
+}
+
+/// One-time, short-lived tokens emailed to a user to confirm they own the
+/// address they registered with. Hashed at rest, same pattern as
+/// ImportSetting.tokenHash. A user may have several rows over time (each
+/// "resend" issues a fresh one); only the newest unexpired one is valid.
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+
+  @@index([userId])
 }
 
 model Account {
@@ -568,6 +588,8 @@ enum AuditAction {
   // Multi-tenant onboarding
   USER_REGISTERED
   TELEGRAM_LINKED
+  EMAIL_VERIFIED
+  EMAIL_VERIFICATION_SENT
 }
 
 enum AuditEntityType {
