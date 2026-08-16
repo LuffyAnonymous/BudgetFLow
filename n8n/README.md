@@ -24,8 +24,7 @@ oversight.
 ```
 n8n/workflows/
 ├── 01-intake/
-│   ├── sms-import.json                    # generic SMS webhook (any forwarding app)
-│   ├── telegram-import.json               # dedicated n8n-only Telegram bot, inactive until configured
+│   ├── sms-import.json                    # generic SMS webhook (any forwarding app) — per-user relay, see below
 │   ├── manual-import.json                 # single quick-add entry, raw text or structured fields
 │   ├── manual-csv-bulk-import.json        # batch backfill via CSV upload (pre-existing)
 │   └── email-import-gmail.json            # scaffold, inactive (pre-existing)
@@ -147,24 +146,30 @@ least-privilege: only grant what a given key actually needs. To rotate:
 `PATCH /api/settings/service-api-key/[id]`; to revoke:
 `DELETE .../[id]`.
 
-**All of this automation operates as a single BudgetFlow user** — whoever
-generated the service key. Multi-user support would require per-user keys
-and workflow parameterization; out of scope here.
+**The categorize/create-transaction pipeline (02-processing,
+03-budgetflow-api-client) and the scheduling workflows operate as a single
+BudgetFlow user** — whoever generated the service key. `01-intake/sms-import`
+is the exception: it's multi-tenant. It doesn't hold any per-user credential
+itself — whatever forwards a user's bank SMS to it (an iPhone Shortcut, a
+forwarding app, etc.) includes that user's own `bf_import_...` token in the
+`Authorization` header of the webhook call, and `sms-import.json` forwards
+that header unchanged to `POST /api/imports/sms`, which resolves it to the
+right account. One shared workflow, no per-user n8n configuration needed —
+each user just needs their own token from Settings → Generate Token.
 
 ### Two different credentials — don't mix them up
 
 | Credential | Used by | Grants |
 |---|---|---|
 | `BUDGETFLOW_SERVICE_API_KEY` (`bf_svc_...`) | 02-processing, 03-budgetflow-api-client, 06-scheduling-orchestration | Scoped read/write access to one user's transactions/debts/savings/remittances/categories/accounts + automation triggers |
-| `BUDGETFLOW_IMPORT_TOKEN` (`bf_import_...`) | 01-intake/email-import-gmail (and any future raw-text forwarder) | Only `POST /api/imports/sms` — full parse/dedup/categorize pipeline (the app's own, not this one) |
-| `N8N_TELEGRAM_BOT_TOKEN` | 01-intake/telegram-import | A **second, dedicated** Telegram bot — never the app's own `TELEGRAM_BOT_TOKEN` (see that file's sticky note for why) |
+| `bf_import_...` (per-user, forwarded per-request — not an n8n env var) | 01-intake/sms-import (forwarded through), 01-intake/email-import-gmail | Only `POST /api/imports/sms` — full parse/dedup/categorize pipeline (the app's own, not the 02-processing one) |
 | `CRON_SECRET` | 06-scheduling-orchestration/system-health-check | Only `GET /api/cron/health` (all-user sweep) |
 | `IMPORT_CLEANUP_SECRET` | 06-scheduling-orchestration/import-retention-cleanup | Only `POST /api/system/import-cleanup` |
 
-`BUDGETFLOW_IMPORT_TOKEN` is generated the same way as today, via
-`POST /api/settings/import-token` (unchanged, pre-existing). `CRON_SECRET`,
-`IMPORT_CLEANUP_SECRET`, and `N8N_TELEGRAM_BOT_TOKEN` are plain env vars you
-set yourself.
+Each `bf_import_...` token is generated the same way as today, via
+`POST /api/settings/import-token` (unchanged, pre-existing) — self-serve,
+one per user. `CRON_SECRET` and `IMPORT_CLEANUP_SECRET` are plain env vars
+you set yourself.
 
 ## n8n environment variables to configure
 
@@ -172,12 +177,10 @@ set yourself.
 |---|---|---|
 | `BUDGETFLOW_BASE_URL` | `https://budgetflow.yourdomain.com` | No trailing slash |
 | `BUDGETFLOW_SERVICE_API_KEY` | `bf_svc_...` | From the settings endpoint above; needs the full scope list |
-| `BUDGETFLOW_IMPORT_TOKEN` | `bf_import_...` | Only needed if you enable email-import-gmail |
+| `BUDGETFLOW_IMPORT_TOKEN` | `bf_import_...` | Only needed if you enable email-import-gmail (a single-user path). `sms-import.json` does NOT use this env var — it forwards whatever `bf_import_...` token the caller sent, per-request, per-user. |
 | `CRON_SECRET` | matches app's env | For System Health Check |
 | `IMPORT_CLEANUP_SECRET` | matches app's env | For Import Retention Cleanup |
 | `TELEGRAM_BOT_TOKEN` | matches app's env | Used only for outbound `sendMessage` calls from 04-notifications — safe to reuse the app's token for this, since it only calls the Telegram API, it doesn't register a webhook |
-| `N8N_TELEGRAM_BOT_TOKEN` | a **second** bot's token | For 01-intake/telegram-import's inbound webhook — must differ from `TELEGRAM_BOT_TOKEN` |
-| `N8N_TELEGRAM_ALLOWED_CHAT_IDS` | `123456789,987654321` | Optional. If unset, ANY chat can message the n8n bot and create transactions — set this before production use |
 | `N8N_OPS_TELEGRAM_CHAT_ID` | your chat/group id | A channel you control for automation alerts, separate from per-user chats |
 
 ## Importing
@@ -193,10 +196,7 @@ set yourself.
    of them in `02-processing` and `01-intake` given the chained design.
 3. Set the environment variables above (n8n **Settings → Environments**, or
    your `.env` for self-hosted).
-4. `01-intake/telegram-import.json` stays inactive until you've created a
-   second bot, set `N8N_TELEGRAM_BOT_TOKEN`, and run the one-time
-   `setWebhook` curl command documented in its sticky note.
-5. `01-intake/email-import-gmail.json` stays inactive until you add Gmail
+4. `01-intake/email-import-gmail.json` stays inactive until you add Gmail
    OAuth credentials and a sender filter to its trigger node.
 6. Activate the schedule-triggered workflows in `06-scheduling-orchestration/`
    once you've confirmed a manual test run works end-to-end.

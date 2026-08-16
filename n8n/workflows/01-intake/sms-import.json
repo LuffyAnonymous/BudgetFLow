@@ -11,8 +11,8 @@
         -220
       ],
       "parameters": {
-        "content": "## SMS Import\n\nSingle Responsibility: webhook entrypoint for any SMS-forwarding tool (e.g. MacroDroid, Tasker, an iPhone Shortcut, a Twilio inbound webhook) that posts a raw SMS into this n8n instance. Checks a secret header, normalizes the payload, filters out obvious non-transaction messages (OTPs, promos), then hands off to 02 - Processing / Parse Transaction. The whole pipeline result is returned in the HTTP response.\n\nThis is a parallel, n8n-native path — independent of the app's own /api/imports/sms endpoint (which uses a different, already-battle-tested pipeline). Built at explicit request even though it duplicates that logic; the two will not stay in sync automatically.\n\nSECURITY: requires header `X-BudgetFlow-Webhook-Secret` matching the `N8N_SMS_WEBHOOK_SECRET` n8n environment variable. Missing or mismatched → HTTP 401 `{ ok: false, error: \"Unauthorized\" }`, rejected before Parse Transaction ever runs. This secret is intentionally separate from BUDGETFLOW_SERVICE_API_KEY — do not reuse it. In production, reached via the BudgetFlow app's own relay (POST /api/integrations/n8n/sms-relay), not called directly from the public internet.\n\nNON-TRANSACTION FILTER: messages matching common OTP/promo phrasing (otp, one time password, verification code, do not share, login code, promotional offer) are recognized after normalization and short-circuited straight to a 200 `{ ok: true, ignored: true, reason: \"not_a_transaction\" }` response — they never reach Parse Transaction, Duplicate Check, Categorize Transaction, Create Transaction, or Import Failed.\n\nExpected POST body (once authenticated): { from?: string, body: string, receivedAt?: ISOString }. Adjust 'Normalize Payload' if your SMS forwarder uses different field names (e.g. Twilio sends { From, Body }).\n\nWebhook URL (after import, self-hosted): <your-n8n-instance>/webhook/budgetflow/sms-import",
-        "height": 400,
+        "content": "## SMS Import (per-user relay)\n\nSingle Responsibility: webhook entrypoint for any SMS-forwarding tool (e.g. MacroDroid, Tasker, an iPhone Shortcut, a Twilio inbound webhook) that posts a raw SMS into this n8n instance. Checks a secret header, normalizes the payload, filters out obvious non-transaction messages (OTPs, promos), then relays the message straight to the app's own /api/imports/sms endpoint — which does the actual parsing, categorization, dedup, and confidence scoring (same engine used by the Telegram bot and iOS Shortcut integrations).\n\nSECURITY (two independent checks):\n  1. Transport secret — header `X-BudgetFlow-Webhook-Secret` must match the `N8N_SMS_WEBHOOK_SECRET` n8n environment variable. Proves the request came through our trusted relay pipeline. Missing/mismatched → HTTP 401 before anything else runs.\n  2. Per-user identity — the caller must also forward an `Authorization: Bearer bf_import_...` header carrying THAT USER'S OWN import token (Settings → Generate Token, self-serve). This workflow does not validate that token itself — it's forwarded unchanged to /api/imports/sms, which resolves it to a userId. This is what makes the workflow multi-tenant: one shared workflow for everyone, with per-user identity carried by the request rather than baked into the workflow or an n8n env var.\n\nNON-TRANSACTION FILTER: messages matching common OTP/promo phrasing (otp, one time password, verification code, do not share, login code, promotional offer) are recognized after normalization and short-circuited straight to a 200 `{ ok: true, ignored: true, reason: \"not_a_transaction\" }` response — they never reach the API.\n\nExpected POST body (once authenticated): { from?: string, body: string, receivedAt?: ISOString }. Adjust 'Normalize Payload' if your SMS forwarder uses different field names (e.g. Twilio sends { From, Body }).\n\nWebhook URL (after import, self-hosted): <your-n8n-instance>/webhook/budgetflow/sms-import",
+        "height": 460,
         "width": 600,
         "color": 4
       }
@@ -133,7 +133,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const b = ($input.first() && $input.first().json && $input.first().json.body) || {};\nreturn [{\n  json: {\n    source: \"SMS\",\n    rawText: b.body || b.Body || b.text || \"\",\n    chatId: null,\n    senderHint: b.from || b.From || null,\n    receivedAt: b.receivedAt || new Date().toISOString(),\n  },\n}];"
+        "jsCode": "const item = ($input.first() && $input.first().json) || {};\nconst b = item.body || {};\nconst headers = item.headers || {};\nreturn [{\n  json: {\n    source: \"SMS\",\n    rawText: b.body || b.Body || b.text || \"\",\n    chatId: null,\n    senderHint: b.from || b.From || null,\n    receivedAt: b.receivedAt || new Date().toISOString(),\n    // Per-user import token, forwarded unchanged to /api/imports/sms.\n    // The caller (iPhone Shortcut, forwarding app, etc.) sets this to\n    // THEIR OWN bf_import_... token, obtained from Settings.\n    authHeader: headers['authorization'] || headers['Authorization'] || null,\n  },\n}];"
       }
     },
     {
@@ -237,29 +237,50 @@
     },
     {
       "id": "node-0007",
-      "name": "Parse Transaction",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.2,
+      "name": "Forward to Import API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         1640,
         100
       ],
       "parameters": {
-        "source": "database",
-        "workflowId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "SELECT_AFTER_IMPORT:02 - Processing / Parse Transaction",
-          "cachedResultName": "02 - Processing / Parse Transaction"
+        "method": "POST",
+        "url": "={{ $env.BUDGETFLOW_BASE_URL + '/api/imports/sms' }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.authHeader }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
         },
-        "workflowInputs": {
-          "mappingMode": "autoMapInputData",
-          "value": {}
+        "sendQuery": false,
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json",
+              "fullResponse": true
+            }
+          }
         },
-        "options": {}
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ \"sender\": ($json.senderHint), \"message\": ($json.rawText), \"receivedAt\": ($json.receivedAt) }) }}"
       },
-      "notesInFlow": true,
-      "notes": "After importing, point this at the \"02 - Processing / Parse Transaction\" workflow (n8n assigns IDs on import). This one call cascades through the whole pipeline (Validate → Duplicate Check → Categorize → Create Transaction → BudgetFlow handles all downstream business logic)."
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "continueOnFail": true,
+      "alwaysOutputData": true
     },
     {
       "id": "node-0008",
@@ -272,9 +293,9 @@
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
+        "responseBody": "={{ $json.body }}",
         "options": {
-          "responseCode": 200
+          "responseCode": "={{ $json.statusCode || 200 }}"
         }
       }
     }
@@ -353,7 +374,7 @@
         ],
         [
           {
-            "node": "Parse Transaction",
+            "node": "Forward to Import API",
             "type": "main",
             "index": 0
           }
@@ -371,7 +392,7 @@
         ]
       ]
     },
-    "Parse Transaction": {
+    "Forward to Import API": {
       "main": [
         [
           {

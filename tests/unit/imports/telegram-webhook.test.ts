@@ -13,7 +13,6 @@ describe("Telegram Webhook Integration Endpoint", () => {
     vi.restoreAllMocks();
     process.env.TELEGRAM_BOT_TOKEN = "test-bot-token";
     process.env.TELEGRAM_WEBHOOK_SECRET = "test-webhook-secret";
-    process.env.TELEGRAM_ALLOWED_CHAT_IDS = "12345,67890,55555"; // 12345 (mapped & exists), 67890 (mapped & not exists), 55555 (allowed but unmapped)
 
     // Mock fetch
     fetchSpy = vi.fn().mockImplementation(() => Promise.resolve({
@@ -22,7 +21,7 @@ describe("Telegram Webhook Integration Endpoint", () => {
       json: () => Promise.resolve({ ok: true }),
       text: () => Promise.resolve("Success"),
     }));
-    global.fetch = fetchSpy as any;
+    global.fetch = fetchSpy as unknown as typeof fetch;
 
     // Clean DB in order
     await db.importedTransaction.deleteMany({});
@@ -40,9 +39,6 @@ describe("Telegram Webhook Integration Endpoint", () => {
       },
     });
     userId = user.id;
-
-    // Set User Map dynamically (mapped 12345 to our real user, 67890 to a non-existent uuid)
-    process.env.TELEGRAM_CHAT_USER_MAP = `12345:${userId},67890:84bec043-bff0-470e-9bba-fd81a6800844`;
 
     // Setup base account balances
     const oneHourAgo = new Date(Date.now() - 3600 * 1000);
@@ -72,12 +68,14 @@ describe("Telegram Webhook Integration Endpoint", () => {
       create: { userId, name: "Salary", type: "INCOME" }
     });
 
-    // Enable import settings for the user
+    // Enable import settings for the user, with chat 12345 already linked
+    // (self-serve linking itself is exercised separately below).
     await db.importSetting.create({
       data: {
         userId,
         enabled: true,
         senderAllowlist: ["ENBD", "MASHREQ", "TABBY"],
+        telegramChatId: "12345",
       },
     });
   });
@@ -87,7 +85,7 @@ describe("Telegram Webhook Integration Endpoint", () => {
     vi.restoreAllMocks();
   });
 
-  const makeWebhookRequest = (payload: any, secret = "test-webhook-secret") => {
+  const makeWebhookRequest = (payload: unknown, secret = "test-webhook-secret") => {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -125,25 +123,6 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("ignores messages from unauthorized chat IDs, returning HTTP 200", async () => {
-    const req = makeWebhookRequest({
-      update_id: 102,
-      message: {
-        message_id: 202,
-        chat: { id: 99999 }, // Unauthorized Chat
-        date: Math.floor(Date.now() / 1000),
-        text: "Mashreq: AED 10.00 debited from card"
-      }
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.ignored).toBe(true);
-    expect(json.reason).toBe("unauthorized");
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
   it("ignores edited_message updates entirely, returning HTTP 200", async () => {
     const req = makeWebhookRequest({
       update_id: 102,
@@ -163,12 +142,12 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("replies that connection is not connected for allowed but unmapped chat ID", async () => {
+  it("replies that the chat isn't connected for an unlinked chat ID", async () => {
     const req = makeWebhookRequest({
       update_id: 110,
       message: {
         message_id: 210,
-        chat: { id: 55555 }, // Allowed in allowlist, but not in map
+        chat: { id: 99999 }, // Never linked to any account
         date: Math.floor(Date.now() / 1000),
         text: "ENBD:\nYour salary of AED 5750.00 has been credited to account ending 1234."
       }
@@ -178,36 +157,70 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ignored).toBe(true);
-    expect(json.reason).toBe("unmapped chat ID");
+    expect(json.reason).toBe("unlinked chat ID");
 
     expect(fetchSpy).toHaveBeenCalled();
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body.text).toBe("Telegram account is not connected to BudgetFlow.");
+    expect(body.text).toContain("isn't connected to a BudgetFlow account");
   });
 
-  it("replies that connection is invalid for mapped user that does not exist in DB", async () => {
-    const req = makeWebhookRequest({
-      update_id: 111,
+  it("links a chat when sent a valid /link <code> command, then accepts SMS from it", async () => {
+    const { importSettingService } = await import("@/server/services/import-setting.service");
+    const { code } = await importSettingService.generateTelegramLinkCode(userId);
+
+    const linkReq = makeWebhookRequest({
+      update_id: 120,
       message: {
-        message_id: 211,
-        chat: { id: 67890 }, // Mapped to non-existent userId in map
+        message_id: 220,
+        chat: { id: 424242 },
         date: Math.floor(Date.now() / 1000),
-        text: "ENBD:\nYour salary of AED 5750.00 has been credited to account ending 1234."
+        text: `/link ${code}`,
+      }
+    });
+
+    const linkRes = await POST(linkReq);
+    expect(linkRes.status).toBe(200);
+    const linkJson = await linkRes.json();
+    expect(linkJson.linked).toBe(true);
+
+    const updated = await db.importSetting.findUnique({ where: { userId } });
+    expect(updated?.telegramChatId).toBe("424242");
+    expect(updated?.telegramLinkCode).toBeNull();
+
+    // The same code can't be reused
+    fetchSpy.mockClear();
+    const replayReq = makeWebhookRequest({
+      update_id: 121,
+      message: {
+        message_id: 221,
+        chat: { id: 999888 },
+        date: Math.floor(Date.now() / 1000),
+        text: `/link ${code}`,
+      }
+    });
+    const replayRes = await POST(replayReq);
+    const replayJson = await replayRes.json();
+    expect(replayJson.reason).toBe("invalid_link_code");
+  });
+
+  it("rejects an expired or unknown /link code", async () => {
+    const req = makeWebhookRequest({
+      update_id: 122,
+      message: {
+        message_id: 222,
+        chat: { id: 555000 },
+        date: Math.floor(Date.now() / 1000),
+        text: "/link 000000",
       }
     });
 
     const res = await POST(req);
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.ignored).toBe(true);
-    expect(json.reason).toBe("invalid user mapping");
-
-    expect(fetchSpy).toHaveBeenCalled();
-    const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body.text).toBe("Telegram account connection is invalid.");
+    expect(json.reason).toBe("invalid_link_code");
   });
 
-  it("successfully parses ENBD salary SMS and sends success reply for mapped user", async () => {
+  it("successfully parses ENBD salary SMS and sends success reply for a linked chat", async () => {
     const req = makeWebhookRequest({
       update_id: 103,
       message: {

@@ -8,9 +8,9 @@
  */
 
 import { execSync } from "child_process";
-import { PrismaClient, CategoryType, AccountType } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { createHash } from "crypto";
-import { accountService } from "../../src/server/services/account.service";
+import { provisionNewUser } from "../../src/server/services/user-provisioning.service";
 
 const E2E_DATABASE_URL =
   process.env.DATABASE_URL_E2E ??
@@ -39,53 +39,31 @@ async function globalSetup() {
   });
 
   try {
-    const user = await prisma.user.create({
-      data: {
+    // Base account: user, settings, generic categories, and default accounts
+    // all come from the same path a real sign-up goes through.
+    const user = await provisionNewUser(
+      {
         email: "e2e@budgetflow.test",
         name: "E2E Test User",
         passwordHash: createHash("sha256").update("e2epassword123").digest("hex"),
-        settings: {
-          create: {
-            monthlySalary: 5750,
-            payday: 26,
-            currency: "AED",
-          },
-        },
       },
+      prisma
+    );
+    await prisma.setting.update({
+      where: { userId: user.id },
+      data: { monthlySalary: 5750, payday: 26 },
     });
+    console.log("[e2e:globalSetup] E2E test user provisioned:", user.id);
 
-    console.log("[e2e:globalSetup] E2E test user seeded:", user.id);
-
-    // Create default categories for E2E tests
-    const categoriesData = [
-      { name: "Salary", type: CategoryType.INCOME, budgetGroupKey: null },
-      { name: "Transfers", type: CategoryType.FIXED_EXPENSE, budgetGroupKey: null },
-      { name: "Rent Cash", type: CategoryType.FIXED_EXPENSE, budgetGroupKey: null },
-      { name: "Transportation", type: CategoryType.VARIABLE_EXPENSE, budgetGroupKey: null },
-      { name: "Groceries", type: CategoryType.VARIABLE_EXPENSE, budgetGroupKey: "FOOD" },
-      { name: "Dining", type: CategoryType.VARIABLE_EXPENSE, budgetGroupKey: "FOOD" },
-      { name: "Shopping", type: CategoryType.VARIABLE_EXPENSE, budgetGroupKey: null },
-      { name: "Utilities", type: CategoryType.FIXED_EXPENSE, budgetGroupKey: null },
-      { name: "Uncategorized", type: CategoryType.VARIABLE_EXPENSE, budgetGroupKey: null },
-      { name: "Tabby Payment", type: CategoryType.DEBT, budgetGroupKey: null },
-      { name: "Table Tennis Payment", type: CategoryType.DEBT, budgetGroupKey: null },
-      { name: "Emergency Savings", type: CategoryType.SAVINGS, budgetGroupKey: null },
-      { name: "Remittance", type: CategoryType.REMITTANCE, budgetGroupKey: null },
-    ];
-
-    const categoriesMap: Record<string, string> = {};
-    for (const cat of categoriesData) {
-      const createdCat = await prisma.category.create({
-        data: {
-          name: cat.name,
-          type: cat.type,
-          budgetGroupKey: cat.budgetGroupKey,
-          userId: user.id,
-        },
-      });
-      categoriesMap[cat.name] = createdCat.id;
-    }
-    console.log("[e2e:globalSetup] Seeded default E2E categories.");
+    // This suite additionally exercises two personal debts, which need
+    // their own categories beyond the generic set provisionNewUser creates.
+    const tabbyCategory = await prisma.category.create({
+      data: { name: "Tabby Payment", type: "DEBT", userId: user.id },
+    });
+    const tableTennisCategory = await prisma.category.create({
+      data: { name: "Table Tennis Payment", type: "DEBT", userId: user.id },
+    });
+    console.log("[e2e:globalSetup] Seeded personal E2E categories.");
 
     // Create default debts
     await prisma.debt.create({
@@ -96,7 +74,7 @@ async function globalSetup() {
         monthlyPayment: 500.00,
         dueDay: 25,
         rolloverFeeRate: 4.50,
-        categoryId: categoriesMap["Tabby Payment"],
+        categoryId: tabbyCategory.id,
         userId: user.id,
       },
     });
@@ -109,19 +87,11 @@ async function globalSetup() {
         monthlyPayment: 150.00,
         dueDay: 15,
         rolloverFeeRate: 0.00,
-        categoryId: categoriesMap["Table Tennis Payment"],
+        categoryId: tableTennisCategory.id,
         userId: user.id,
       },
     });
     console.log("[e2e:globalSetup] Seeded default E2E debts.");
-
-    // Provision default accounts using AccountService (uses E2E DB Client under transaction helper or direct prisma Client)
-    const mockService = new (require("../../src/server/services/account.service").AccountService)();
-    // Inject E2E client into mockService
-    mockService.getClient = () => prisma;
-    await mockService.ensureDefaultAccounts(user.id);
-    console.log("[e2e:globalSetup] Seeded default E2E accounts.");
-
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[e2e:globalSetup] Failed to seed test user context:", msg);

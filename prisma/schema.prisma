@@ -116,6 +116,7 @@ model User {
   auditLogs            AuditLog[]
   attachments          Attachment[]
   serviceApiKeys       ServiceApiKey[]
+  usedInviteCode       InviteCode?
 }
 
 model Account {
@@ -185,7 +186,7 @@ model Transaction {
   // Import tracking
   importSource         ImportSource?
   adjustedAt           DateTime? // set when user edits an imported transaction
-  budgetMonth          String?   // e.g. "2026-08" for reporting/budget month attribution
+  budgetMonth          String? // e.g. "2026-08" for reporting/budget month attribution
   userId               String
   user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   debtPayment          DebtPayment?
@@ -564,6 +565,9 @@ enum AuditAction {
   // Service API Keys (automation / n8n)
   SERVICE_KEY_GENERATED
   SERVICE_KEY_REVOKED
+  // Multi-tenant onboarding
+  USER_REGISTERED
+  TELEGRAM_LINKED
 }
 
 enum AuditEntityType {
@@ -583,6 +587,8 @@ enum AuditEntityType {
   IMPORT_SETTING
   // Automation
   SERVICE_API_KEY
+  // Multi-tenant onboarding
+  INVITE_CODE
 }
 
 model AuditLog {
@@ -639,34 +645,40 @@ model Attachment {
 /// Per-user settings for the SMS import engine.
 /// The plaintext token is NEVER stored — only its SHA-256 hash.
 model ImportSetting {
-  id                      String    @id @default(uuid())
+  id                        String    @id @default(uuid())
   /// Master switch — if false, all webhook requests are rejected
-  enabled                 Boolean   @default(false)
+  enabled                   Boolean   @default(false)
   /// When true, HIGH-confidence imports auto-create transactions without review
-  autoImportSalary        Boolean   @default(false)
+  autoImportSalary          Boolean   @default(false)
   /// JSON array of sender strings that are trusted (e.g. ["ENBD", "EmiratesNBD"])
-  senderAllowlist         String[]  @default([])
+  senderAllowlist           String[]  @default([])
   /// Must point to an INCOME-type category owned by this user
-  salaryCategoryId        String?
-  salaryCategory          Category? @relation("ImportSettingSalaryCategory", fields: [salaryCategoryId], references: [id], onDelete: SetNull)
-  expectedCurrency        String    @default("AED")
-  minimumAmount           Decimal?  @db.Decimal(12, 2)
-  maximumAmount           Decimal?  @db.Decimal(12, 2)
-  rawPayloadRetentionDays Int       @default(30)
+  salaryCategoryId          String?
+  salaryCategory            Category? @relation("ImportSettingSalaryCategory", fields: [salaryCategoryId], references: [id], onDelete: SetNull)
+  expectedCurrency          String    @default("AED")
+  minimumAmount             Decimal?  @db.Decimal(12, 2)
+  maximumAmount             Decimal?  @db.Decimal(12, 2)
+  rawPayloadRetentionDays   Int       @default(30)
   /// Hashed import token (SHA-256 hex). Plaintext returned only on generation/rotation.
   /// @unique ensures no two users ever share the same token hash.
-  tokenHash               String?   @unique
-  tokenCreatedAt          DateTime?
-  tokenRevokedAt          DateTime?
+  tokenHash                 String?   @unique
+  tokenCreatedAt            DateTime?
+  tokenRevokedAt            DateTime?
   /// Optional expiry for the token. After this date, resolveUserFromToken returns null.
-  tokenExpiresAt          DateTime?
+  tokenExpiresAt            DateTime?
   /// Throttle-updated: only written when stored value is >5 minutes old.
-  tokenLastUsedAt         DateTime?
-  lastSuccessfulImportAt  DateTime?
-  userId                  String    @unique
-  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  tokenLastUsedAt           DateTime?
+  lastSuccessfulImportAt    DateTime?
+  /// Telegram chat ID this user has linked, if any. Resolves inbound bot
+  /// messages to a userId (replaces the old TELEGRAM_CHAT_USER_MAP env var).
+  telegramChatId            String?   @unique
+  /// One-time linking code shown in Settings, consumed by sending "/link <code>" to the bot.
+  telegramLinkCode          String?   @unique
+  telegramLinkCodeExpiresAt DateTime?
+  userId                    String    @unique
+  user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
 }
 
 /// One canonical record per unique (userId, fingerprint).
@@ -702,7 +714,7 @@ model ImportedTransaction {
   receivedAt       DateTime
   serverReceivedAt DateTime?
   financialDate    DateTime?
-  budgetMonth      String?   // e.g. "2026-08"
+  budgetMonth      String? // e.g. "2026-08"
   processedAt      DateTime?
   reviewedAt       DateTime?
 
@@ -766,4 +778,18 @@ model ServiceApiKey {
   updatedAt  DateTime  @updatedAt
 
   @@index([userId])
+}
+
+/// Invite-only sign-up gate. Codes are generated out-of-band (scripts/create-invite.ts)
+/// by the app owner and consumed exactly once by POST /api/auth/register.
+model InviteCode {
+  id           String    @id @default(uuid())
+  code         String    @unique
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  usedAt       DateTime?
+  usedByUserId String?   @unique
+  usedByUser   User?     @relation(fields: [usedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([code])
 }

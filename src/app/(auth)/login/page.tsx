@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { LucideLock, LucideMail, LucideLoader2 } from "lucide-react";
 
 const loginSchema = z.object({
@@ -136,7 +137,10 @@ export default function LoginPage() {
         </form>
 
         <div className="mt-8 text-center text-xs text-slate-500">
-          Standalone configuration. Seed credentials are required to sign in.
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="font-semibold text-indigo-400 hover:text-indigo-300">
+            Sign up
+          </Link>
         </div>
       </div>
     </div>

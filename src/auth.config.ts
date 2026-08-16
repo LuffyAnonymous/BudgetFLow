@@ -29,7 +29,7 @@ export const authConfig = {
       if (isProtectedRoute) {
         if (isLoggedIn) return true;
         return false; // Redirect unauthenticated users to login page
-      } else if (isLoggedIn && (nextUrl.pathname === "/" || nextUrl.pathname === "/login")) {
+      } else if (isLoggedIn && (nextUrl.pathname === "/" || nextUrl.pathname === "/login" || nextUrl.pathname === "/signup")) {
         return Response.redirect(new URL("/dashboard", nextUrl));
       }
       return true;

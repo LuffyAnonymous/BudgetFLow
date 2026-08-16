@@ -15,6 +15,8 @@ import {
   LucideRotateCw,
   LucideTrash2,
   LucideShieldCheck,
+  LucideSend,
+  LucideUnlink,
 } from "lucide-react";
 
 export function SettingsClient() {
@@ -126,6 +128,40 @@ export function SettingsClient() {
     },
     onError: (err: Error) => {
       setTokenError(err.message);
+    },
+  });
+
+  // Telegram Link Status Query
+  const [linkCode, setLinkCode] = useState<string | null>(null);
+  const { data: telegramStatus, isLoading: isLoadingTelegram } = useQuery({
+    queryKey: ["telegram-link-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/telegram-link");
+      const json = await res.json();
+      return json.data; // { isLinked: boolean }
+    },
+  });
+
+  const generateLinkCodeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/telegram-link", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to generate a link code");
+      return json.data;
+    },
+    onSuccess: (data) => setLinkCode(data.code),
+  });
+
+  const unlinkTelegramMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/telegram-link", { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to unlink Telegram");
+      return json.data;
+    },
+    onSuccess: () => {
+      setLinkCode(null);
+      queryClient.invalidateQueries({ queryKey: ["telegram-link-status"] });
     },
   });
 
@@ -330,7 +366,7 @@ export function SettingsClient() {
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
                 required
-                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm text-white placeholder-slate-650 focus:border-indigo-500 focus:outline-none transition-all"
+                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:border-indigo-500 focus:outline-none transition-all"
               />
             </div>
 
@@ -479,7 +515,7 @@ export function SettingsClient() {
                   onChange={(e) => setUpcomingPref(e.target.checked)}
                   className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="text-sm text-slate-350">Upcoming Payment Reminders</span>
+                <span className="text-sm text-slate-400">Upcoming Payment Reminders</span>
               </label>
 
               <label className="flex items-center gap-3 cursor-pointer">
@@ -489,7 +525,7 @@ export function SettingsClient() {
                   onChange={(e) => setOverduePref(e.target.checked)}
                   className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="text-sm text-slate-350">Overdue Reminders warnings</span>
+                <span className="text-sm text-slate-400">Overdue Reminders warnings</span>
               </label>
 
               <label className="flex items-center gap-3 cursor-pointer">
@@ -499,7 +535,7 @@ export function SettingsClient() {
                   onChange={(e) => setBudgetPref(e.target.checked)}
                   className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="text-sm text-slate-350">Budget Nearing/Exceeded limits (80%, 100%)</span>
+                <span className="text-sm text-slate-400">Budget Nearing/Exceeded limits (80%, 100%)</span>
               </label>
 
               <label className="flex items-center gap-3 cursor-pointer">
@@ -509,7 +545,7 @@ export function SettingsClient() {
                   onChange={(e) => setSavingsPref(e.target.checked)}
                   className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="text-sm text-slate-350">Savings Goal Reached alerts</span>
+                <span className="text-sm text-slate-400">Savings Goal Reached alerts</span>
               </label>
 
               <label className="flex items-center gap-3 cursor-pointer">
@@ -519,7 +555,7 @@ export function SettingsClient() {
                   onChange={(e) => setRolloverPref(e.target.checked)}
                   className="rounded border-slate-800 bg-slate-950 text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="text-sm text-slate-350">Monthly Rollover Availability</span>
+                <span className="text-sm text-slate-400">Monthly Rollover Availability</span>
               </label>
             </div>
           </div>
@@ -655,7 +691,7 @@ export function SettingsClient() {
           </div>
 
           {/* Import Engine Toggle */}
-          <div className="flex items-center gap-3 bg-slate-950 p-4 rounded-xl border border-slate-850">
+          <div className="flex items-center gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
             <label className="flex items-center gap-3 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -683,7 +719,7 @@ export function SettingsClient() {
           {generatedToken && (
             <div className="rounded-xl bg-indigo-500/10 border border-indigo-500/20 p-4 space-y-3">
               <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider">Generated Access Token</p>
-              <div className="flex items-center gap-2 bg-slate-950 p-3 rounded-lg border border-slate-850">
+              <div className="flex items-center gap-2 bg-slate-950 p-3 rounded-lg border border-slate-800">
                 <code className="text-xs text-indigo-300 font-mono break-all flex-1 select-all">
                   {generatedToken}
                 </code>
@@ -700,15 +736,20 @@ export function SettingsClient() {
                   <LucideCopy className="h-4 w-4" />
                 </button>
               </div>
-              {copied && <p className="text-[10px] text-emerald-400 font-semibold">✓ Copied to clipboard!</p>}
-              <p className="text-[10px] text-amber-400 leading-normal">
-                ⚠️ {tokenWarning || "Copy this token now! It will not be shown again for security reasons."}
+              {copied && (
+                <p className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
+                  <LucideCheckCircle2 className="h-3 w-3" aria-hidden="true" /> Copied to clipboard!
+                </p>
+              )}
+              <p className="flex items-start gap-1 text-[10px] text-amber-400 leading-normal">
+                <LucideAlertCircle className="h-3 w-3 mt-0.5 shrink-0" aria-hidden="true" />
+                {tokenWarning || "Copy this token now! It will not be shown again for security reasons."}
               </p>
             </div>
           )}
 
           {isLoadingToken ? (
-            <div className="h-20 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-850" />
+            <div className="h-20 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-800" />
           ) : tokenStatus?.isActive ? (
             <div className="space-y-4">
               <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 space-y-2">
@@ -720,7 +761,7 @@ export function SettingsClient() {
                   {tokenStatus.lastUsedAt && (
                     <p>
                       Last Used:{" "}
-                      <span className="text-slate-350">
+                      <span className="text-slate-400">
                         {new Date(tokenStatus.lastUsedAt).toLocaleString()}
                       </span>
                     </p>
@@ -728,7 +769,7 @@ export function SettingsClient() {
                   {tokenStatus.expiresAt && (
                     <p>
                       Expires:{" "}
-                      <span className="text-slate-350">
+                      <span className="text-slate-400">
                         {new Date(tokenStatus.expiresAt).toLocaleDateString()}
                       </span>
                     </p>
@@ -778,6 +819,64 @@ export function SettingsClient() {
               >
                 <LucideKey className="h-4 w-4" />
                 {generateTokenMutation.isPending ? "Generating..." : "Generate Token"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Telegram Linking Section */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6">
+          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+            <LucideSend className="h-5 w-5 text-indigo-400" />
+            <div>
+              <h2 className="text-lg font-semibold text-white">Telegram</h2>
+              <p className="text-xs text-slate-400">Forward bank SMS text to the bot and it&apos;s imported automatically.</p>
+            </div>
+          </div>
+
+          {isLoadingTelegram ? (
+            <div className="h-16 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-800" />
+          ) : telegramStatus?.isLinked ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-emerald-400 font-semibold text-xs">
+                <LucideShieldCheck className="h-4 w-4" />
+                <span>Telegram chat connected</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm("Disconnect Telegram? You'll need to link it again to resume forwarding SMS text there.")) {
+                    unlinkTelegramMutation.mutate();
+                  }
+                }}
+                disabled={unlinkTelegramMutation.isPending}
+                className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
+              >
+                <LucideUnlink className="h-3.5 w-3.5" />
+                Disconnect
+              </button>
+            </div>
+          ) : linkCode ? (
+            <div className="rounded-xl bg-indigo-500/10 border border-indigo-500/20 p-4 space-y-2">
+              <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider">Link Code</p>
+              <code className="block text-2xl text-indigo-300 font-mono tracking-widest">{linkCode}</code>
+              <p className="text-[11px] text-slate-400 leading-normal">
+                Message the bot <span className="font-mono text-slate-300">/link {linkCode}</span> within 10 minutes to connect this chat.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400 leading-normal">
+                Not connected. Generate a code, then send it to the bot to link your Telegram chat.
+              </p>
+              <button
+                type="button"
+                onClick={() => generateLinkCodeMutation.mutate()}
+                disabled={generateLinkCodeMutation.isPending}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-500 shadow-md shadow-indigo-600/20 disabled:opacity-50"
+              >
+                <LucideSend className="h-4 w-4" />
+                {generateLinkCodeMutation.isPending ? "Generating..." : "Connect Telegram"}
               </button>
             </div>
           )}

@@ -3,6 +3,19 @@ import { timingSafeEqual } from "crypto";
 import { db } from "@/lib/db";
 import { importService } from "@/imports/engine/import.service";
 
+interface TelegramMessage {
+  text?: string;
+  chat?: { id: number | string };
+  message_id?: number;
+  date?: number;
+}
+
+interface TelegramUpdate {
+  update_id?: number;
+  edited_message?: unknown;
+  message?: TelegramMessage;
+}
+
 function safeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
@@ -40,36 +53,7 @@ function detectBankAndCleanText(text: string): { bank: string; cleanText: string
   return { bank: "Unknown", cleanText: trimmed };
 }
 
-function parseChatUserMap(mapStr: string): Record<string, string> {
-  const map: Record<string, string> = {};
-  if (!mapStr) return map;
-
-  const entries = mapStr.split(",");
-  for (const entry of entries) {
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-
-    const parts = trimmed.split(":");
-    if (parts.length !== 2) {
-      console.warn(`[Telegram Webhook] Ignoring malformed mapping entry: "${trimmed}"`);
-      continue;
-    }
-
-    const chatId = parts[0].trim();
-    const userId = parts[1].trim();
-
-    if (!chatId || !userId) {
-      console.warn(`[Telegram Webhook] Ignoring incomplete mapping entry: "${trimmed}"`);
-      continue;
-    }
-
-    map[chatId] = userId;
-  }
-
-  return map;
-}
-
-async function sendTelegramReply(chatId: number, text: string, replyToMessageId: number): Promise<boolean> {
+async function sendTelegramReply(chatId: number | string, text: string, replyToMessageId: number): Promise<boolean> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token || token === "mock-bot-token") {
     console.warn("[Telegram Bot] Bot token not configured or is mock-bot-token. Skipping reply.");
@@ -111,7 +95,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // 2. Parse payload
-  let body: any;
+  let body: TelegramUpdate;
   try {
     body = await req.json();
   } catch (err) {
@@ -128,49 +112,65 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   const messageObj = body.message;
-  if (!messageObj || typeof messageObj.text !== "string") {
+  if (
+    !messageObj ||
+    typeof messageObj.text !== "string" ||
+    messageObj.chat?.id === undefined ||
+    typeof messageObj.message_id !== "number"
+  ) {
     console.log("[Telegram Webhook] Ignored update: no message text found", { updateId });
     return NextResponse.json({ success: true, ignored: true });
   }
 
-  const chatId = messageObj.chat?.id;
+  const chatId = messageObj.chat.id;
   const messageId = messageObj.message_id;
   const dateUnix = messageObj.date;
+  const chatIdStr = String(chatId);
 
-  // 3. Verify Chat ID (Optional additional allowlist check if configured)
-  const allowedChatIdsStr = process.env.TELEGRAM_ALLOWED_CHAT_IDS;
-  if (allowedChatIdsStr) {
-    const allowedIds = allowedChatIdsStr
-      .split(",")
-      .map(id => id.trim())
-      .filter(Boolean);
-    if (allowedIds.length > 0 && !allowedIds.includes(String(chatId))) {
-      console.log("[Telegram Webhook] Chat not in TELEGRAM_ALLOWED_CHAT_IDS:", { chatId });
-      return NextResponse.json({ success: true, ignored: true, reason: "unauthorized" });
+  // 3. "/link <code>" — self-serve linking. A user generates a one-time code
+  // in Settings, then DMs the bot to associate their chat with their account.
+  const linkMatch = messageObj.text.trim().match(/^\/link\s+(\S+)/i);
+  if (linkMatch) {
+    const code = linkMatch[1].trim();
+    const setting = await db.importSetting.findUnique({
+      where: { telegramLinkCode: code },
+      select: { userId: true, telegramLinkCodeExpiresAt: true },
+    });
+
+    if (!setting || !setting.telegramLinkCodeExpiresAt || setting.telegramLinkCodeExpiresAt < new Date()) {
+      await sendTelegramReply(chatId, "That code is invalid or has expired. Generate a new one from Settings.", messageId);
+      return NextResponse.json({ success: true, ignored: true, reason: "invalid_link_code" });
     }
+
+    await db.importSetting.update({
+      where: { userId: setting.userId },
+      data: { telegramChatId: chatIdStr, telegramLinkCode: null, telegramLinkCodeExpiresAt: null },
+    });
+    await db.auditLog.create({
+      data: {
+        userId: setting.userId,
+        action: "TELEGRAM_LINKED",
+        entityType: "IMPORT_SETTING",
+        source: "TELEGRAM",
+        metadata: { chatId: chatIdStr },
+      },
+    });
+
+    await sendTelegramReply(chatId, "Telegram connected. Forward bank SMS text here and it'll be imported into your account.", messageId);
+    return NextResponse.json({ success: true, linked: true });
   }
 
-  // 4. Resolve BudgetFlow user from mapping
-  const chatUserMapStr = process.env.TELEGRAM_CHAT_USER_MAP ?? "";
-  const chatUserMap = parseChatUserMap(chatUserMapStr);
-  const userId = chatUserMap[String(chatId)];
+  // 4. Resolve BudgetFlow user from the chat this message came from
+  const setting = await db.importSetting.findUnique({
+    where: { telegramChatId: chatIdStr },
+    select: { userId: true },
+  });
+  const userId = setting?.userId;
 
   if (!userId) {
-    console.log("[Telegram Webhook] Unmapped chat ID:", { chatId });
-    await sendTelegramReply(chatId, "Telegram account is not connected to BudgetFlow.", messageId);
-    return NextResponse.json({ success: true, ignored: true, reason: "unmapped chat ID" });
-  }
-
-  // Validate that the mapped user actually exists in the database
-  const mappedUserExists = await db.user.findUnique({
-    where: { id: userId },
-    select: { id: true }
-  });
-
-  if (!mappedUserExists) {
-    console.warn("[Telegram Webhook] Mapped user does not exist in DB:", { chatId, userId });
-    await sendTelegramReply(chatId, "Telegram account connection is invalid.", messageId);
-    return NextResponse.json({ success: true, ignored: true, reason: "invalid user mapping" });
+    console.log("[Telegram Webhook] Unlinked chat ID:", { chatId });
+    await sendTelegramReply(chatId, "This Telegram chat isn't connected to a BudgetFlow account yet. Generate a link code from Settings and send \"/link <code>\" here.", messageId);
+    return NextResponse.json({ success: true, ignored: true, reason: "unlinked chat ID" });
   }
 
   // Safe logging
@@ -233,7 +233,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       replyText = `❌ Import failed\nReason: ${reason}`;
     }
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown error";
     console.error("[Telegram Webhook] Server error while processing import:", err);
     replyText = "❌ Import failed\nReason: Internal server error occurred.";
   }

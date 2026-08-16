@@ -21,20 +21,18 @@ import { sha256, maskSender, redactFinancialText } from "./redaction";
 import { smsParserRegistry } from "../sms/parser-registry";
 import { buildFingerprint } from "./duplicate-detector";
 import { accountService } from "../../server/services/account.service";
-import { NotificationService } from "../../server/services/notification.service";
 import { determineBudgetMonth } from "@/lib/salary-month";
 import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
 
 import { normalizeSender, SupportedBank } from "./sender-normalizer";
 import { classifyDirection, TransactionDirection } from "./direction-classifier";
 import { categorizeMerchant, KnownCategory } from "./merchant-categorizer";
+import { resolveFallbackCategory } from "./category-resolver";
 import { matchInternalTransfer } from "./transfer-matcher";
 import { evaluateConfidence } from "./confidence-evaluator";
 import { updateBalance } from "./balance-updater";
-import { buildImportTransactionData } from "./transaction-builder";
 
 const DUBAI_OFFSET_HOURS = 4;
-const notificationService = new NotificationService();
 
 export interface SmsWebhookPayload {
   sender: string;
@@ -142,7 +140,7 @@ export class ImportService {
       }
 
       console.log("[Import Service] Stage: Classifying direction");
-      const direction = classifyDirection(message, bank);
+      const direction = classifyDirection(message);
       if (direction === TransactionDirection.DECLINED || direction === TransactionDirection.INFORMATIONAL || direction === TransactionDirection.PENDING) {
         const status = direction === TransactionDirection.DECLINED ? ImportStatus.PROCESSED : ImportStatus.REJECTED;
         const outcome = direction === TransactionDirection.PENDING ? "pending_event" : "ignored";
@@ -175,7 +173,7 @@ export class ImportService {
           },
         });
         
-        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null, receivedAt);
+        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null);
 
         if (outcome === "pending_event") return { outcome: "pending_event", importedTransactionId: importedTx.id };
         return { outcome: "ignored" };
@@ -207,8 +205,7 @@ export class ImportService {
               normalized.amount,
               financialDate,
               bank,
-              direction === TransactionDirection.INFLOW,
-              normalized.reference
+              direction === TransactionDirection.INFLOW
           );
       }
 
@@ -240,7 +237,7 @@ export class ImportService {
           },
         });
 
-        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null, receivedAt);
+        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null);
 
         return { outcome: "review_required", importedTransactionId: importedTx.id, parsedAmount: normalized.amount.toFixed(2), currency: normalized.currency };
       }
@@ -274,9 +271,17 @@ export class ImportService {
                 txType = TransactionType.TRANSFER;
             }
 
-            let dbCategory = await tx.category.findFirst({
+            let dbCategory: { id: string } | null = await tx.category.findFirst({
               where: { userId, name: { equals: category, mode: "insensitive" } }
-            }) || await tx.category.findFirst({
+            });
+
+            // Merchant-keyword matching came up empty — try the salary-ratio /
+            // single-type-match rules before falling back to "Uncategorized".
+            if (!dbCategory && category === KnownCategory.UNCATEGORIZED) {
+              dbCategory = await resolveFallbackCategory(tx, userId, txType, normalized.amount);
+            }
+
+            dbCategory = dbCategory || await tx.category.findFirst({
               where: { userId, name: { equals: KnownCategory.UNCATEGORIZED, mode: "insensitive" } }
             });
 
@@ -417,9 +422,15 @@ export class ImportService {
       let categoryStr: string = "";
       if (!categoryId) {
         categoryStr = categorizeMerchant(importedTx.parsedDescription || "");
-        const dbCategory = await tx.category.findFirst({
+        let dbCategory: { id: string } | null = await tx.category.findFirst({
           where: { userId, name: { equals: categoryStr, mode: "insensitive" } }
-        }) || await tx.category.findFirst({
+        });
+
+        if (!dbCategory && categoryStr === KnownCategory.UNCATEGORIZED) {
+          dbCategory = await resolveFallbackCategory(tx, userId, txType, importedTx.parsedAmount!);
+        }
+
+        dbCategory = dbCategory || await tx.category.findFirst({
           where: { userId, name: { equals: KnownCategory.UNCATEGORIZED, mode: "insensitive" } }
         });
         categoryId = dbCategory!.id;
@@ -510,8 +521,7 @@ export class ImportService {
     bank: SupportedBank, 
     authoritativeBalance: Decimal | null, 
     direction: TransactionDirection, 
-    amount: Decimal | null,
-    receivedAt: Date
+    amount: Decimal | null
   ) {
     await accountService.ensureDefaultAccounts(userId);
     const accounts = await db.account.findMany({ where: { userId } });

@@ -44,6 +44,8 @@ const TOKEN_EXPIRY_DAYS = parseInt(
 );
 /** Throttle: only update tokenLastUsedAt if the stored value is older than this */
 const TOKEN_LAST_USED_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
+/** How long a Telegram "/link <code>" code stays valid */
+const TELEGRAM_LINK_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ─── Token helpers ────────────────────────────────────────────────────────────
 
@@ -415,6 +417,42 @@ export class ImportSettingService {
     await db.importSetting.update({
       where: { userId },
       data: { tokenLastUsedAt: now },
+    });
+  }
+
+  // ─── Telegram Linking ───────────────────────────────────────────────────────
+
+  /**
+   * Generates a short-lived one-time code the user sends to the bot
+   * ("/link <code>") to associate their Telegram chat with this account.
+   */
+  async generateTelegramLinkCode(userId: string): Promise<{ code: string; expiresAt: Date }> {
+    const code = String(Math.floor(100000 + Math.random() * 900000)); // 6 digits
+    const expiresAt = new Date(Date.now() + TELEGRAM_LINK_CODE_TTL_MS);
+
+    await this.getOrCreate(userId);
+    await db.importSetting.update({
+      where: { userId },
+      data: { telegramLinkCode: code, telegramLinkCodeExpiresAt: expiresAt },
+    });
+
+    return { code, expiresAt };
+  }
+
+  /** Returns whether this user currently has a linked Telegram chat. */
+  async getTelegramLinkStatus(userId: string): Promise<{ isLinked: boolean }> {
+    const setting = await db.importSetting.findUnique({
+      where: { userId },
+      select: { telegramChatId: true },
+    });
+    return { isLinked: !!setting?.telegramChatId };
+  }
+
+  /** Unlinks the user's Telegram chat, if any. */
+  async unlinkTelegram(userId: string): Promise<void> {
+    await db.importSetting.update({
+      where: { userId },
+      data: { telegramChatId: null, telegramLinkCode: null, telegramLinkCodeExpiresAt: null },
     });
   }
 }

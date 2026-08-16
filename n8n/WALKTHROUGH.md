@@ -136,11 +136,6 @@ All fixed in both the local workflow JSON files and the live n8n instance:
 - **Nothing is committed or pushed.** All of the above is local working-tree
   state. When you're ready to deploy, that's a separate explicit step —
   ask and I'll walk through committing/pushing.
-- **n8n's own Telegram Import workflow** (`01-intake/telegram-import.json`)
-  has no webhook registered — it would need a *second*, different Telegram
-  bot to avoid colliding with the app's own bot/webhook (Telegram allows only
-  one webhook URL per bot token). Low priority; the app's native Telegram
-  integration already covers this channel more capably.
 - **`email-import-gmail.json`** stays inactive — needs Gmail OAuth credentials
   it doesn't have.
 - Categorize Transaction's keyword map (`groceries`, `dining`, `transport`,
