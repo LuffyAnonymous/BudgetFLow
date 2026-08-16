@@ -200,7 +200,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       importedTransactionId: "importedTransactionId" in result ? result.importedTransactionId : undefined,
     });
 
-    let jsonResponse: Record<string, any>;
+    let jsonResponse: Record<string, unknown>;
     let telegramMessage = "";
 
     if (result.outcome === "auto_posted" && "transactionId" in result) {

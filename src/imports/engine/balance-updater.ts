@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { Decimal } from "decimal.js";
 import { TransactionDirection } from "./direction-classifier";
-import { SupportedBank } from "./sender-normalizer";
 
 import { Prisma } from "@prisma/client";
 

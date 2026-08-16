@@ -65,8 +65,8 @@ export function SetupClient() {
       setTimeout(() => {
         router.push("/dashboard");
       }, 2000);
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
     } finally {
       setLoading(false);
     }
@@ -137,7 +137,7 @@ export function SetupClient() {
               className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm text-white focus:border-indigo-500 focus:outline-hidden"
             >
               <option value="">Select Category (Default: Salary)</option>
-              {categories?.map((c: any) => (
+              {categories?.map((c: { id: string; name: string }) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>

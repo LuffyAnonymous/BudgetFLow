@@ -9,7 +9,6 @@
  */
 
 import type { Decimal } from "decimal.js";
-import type { ImportConfidence } from "@prisma/client";
 
 /**
  * The normalized transaction produced by any SMS parser.

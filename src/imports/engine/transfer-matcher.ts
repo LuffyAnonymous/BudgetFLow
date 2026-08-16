@@ -10,13 +10,10 @@ export async function matchInternalTransfer(
   amount: Decimal,
   date: Date,
   sourceBank: SupportedBank,
-  isIncoming: boolean,
-  reference: string | null
+  isIncoming: boolean
 ): Promise<string | null> {
   // If we are looking at an incoming transfer, we search for an outgoing transfer of the same amount in the last 24h
   // If we are looking at an outgoing transfer, we search for an incoming transfer of the same amount in the last 24h
-
-  const targetDirection = isIncoming ? "OUTFLOW" : "INFLOW";
 
   // Find recent transactions with exact same amount that might be the other side of this transfer
   const minDate = new Date(date.getTime() - MATCH_WINDOW_MS);

@@ -27,17 +27,17 @@ import { execSync } from "child_process";
 beforeAll(() => {
   console.log("Preparing isolated test database...");
   try {
-    // Synchronously push the schema to the test database and force reset any existing records
-    execSync("npx prisma db push --accept-data-loss --force-reset", {
+    // Synchronously deploy migrations to the test database
+    execSync("npx prisma migrate deploy", {
       env: {
         ...process.env,
         DATABASE_URL: testDbUrl,
       },
       stdio: "pipe", // Suppress noisy output but throw on error
     });
-    console.log("Test database schema pushed successfully.");
+    console.log("Test database schema deployed successfully.");
   } catch (error) {
-    console.error("Failed to push test database schema:", error);
+    console.error("Failed to deploy test database schema:", error);
     throw error;
   }
 });

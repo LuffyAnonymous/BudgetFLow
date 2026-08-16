@@ -76,7 +76,7 @@ test.describe("Import Engine — webhook flow", () => {
     });
     expect(catRes.ok()).toBe(true);
     const catJson = await catRes.json();
-    const salaryCat = catJson.data.find((c: any) => c.name === "Salary");
+    const salaryCat = catJson.data.find((c: { name: string }) => c.name === "Salary");
     expect(salaryCat).toBeTruthy();
 
     // Ensure import setting is ready: enabled, ENBD sender, auto-import OFF, and set salary category ID

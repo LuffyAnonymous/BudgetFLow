@@ -19,7 +19,6 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { EmiratesNBDParser } from "../../src/imports/sms/emirates-nbd.parser";
-import { ImportConfidence } from "@prisma/client";
 
 const FIXTURE_DIR = resolve(__dirname, "../fixtures/sms/emirates-nbd");
 const VALID_SENDER = "ENBD";

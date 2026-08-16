@@ -129,7 +129,6 @@ export function SalaryStatusCard({ activeMonth }: SalaryStatusCardProps) {
   }
 
   const selectedMonthStr = data.month || activeMonth || "";
-  const monthLong = getMonthLongLabel(selectedMonthStr);
   const monthShortName = getMonthNameOnly(selectedMonthStr);
 
   const statusMeta: Record<

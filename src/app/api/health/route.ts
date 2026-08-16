@@ -1,5 +1,4 @@
 import { db } from "@/lib/db";
-import { apiSuccess } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +9,7 @@ export async function GET() {
   try {
     // Simple fast query to check DB connectivity
     await db.$queryRaw`SELECT 1`;
-  } catch (error) {
+  } catch {
     dbStatus = "unavailable";
     appStatus = "degraded";
   }

@@ -60,7 +60,7 @@ describe("Apple Wallet Import Endpoint", () => {
     token = tokenRes.plaintext;
   });
 
-  const makeRequest = (payload: any, authToken = token) => {
+  const makeRequest = (payload: unknown, authToken = token) => {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };

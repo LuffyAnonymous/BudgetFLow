@@ -1,5 +1,4 @@
 import { Decimal } from "decimal.js";
-import { ImportConfidence } from "@prisma/client";
 import {
   ISmsParser,
   NormalizedSmsTransaction,

@@ -27,7 +27,7 @@ import {
   sha256,
 } from "@/imports/engine/redaction";
 import type { NormalizedSmsTransaction } from "@/imports/sms/sms-parser.interface";
-import { ImportConfidence, ImportSource, TransactionType, CashFlowDirection } from "@prisma/client";
+import { ImportSource, TransactionType, CashFlowDirection } from "@prisma/client";
 
 // ─── Sample SMS ──────────────────────────────────────────────────────────────
 

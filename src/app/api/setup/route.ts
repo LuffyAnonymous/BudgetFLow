@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
-import { CategoryType, DebtStatus, SavingGoalStatus } from "@prisma/client";
+import { DebtStatus, SavingGoalStatus } from "@prisma/client";
 import { Decimal } from "decimal.js";
 
 export async function POST(request: Request) {

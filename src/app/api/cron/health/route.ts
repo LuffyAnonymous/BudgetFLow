@@ -58,12 +58,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       if (!salaryTx) {
         await notificationService.createNotificationIdempotent(user.id, {
           type: NotificationType.BUDGET_EXCEEDED, 
-          // Prisma doesn't have a specific SALARY_DELAYED type, but we can use UPCOMING_PAYMENT or create a message
           title: "Salary Import Missing",
           message: `It has been 24 hours since your payday (${paydayDate.toISOString().slice(0, 10)}), but no salary was detected. Please check if your SMS webhook is healthy or if you need to manually import your salary.`,
           severity: NotificationSeverity.CRITICAL,
           eventKey: `missing-salary-${currentYear}-${currentMonth}`,
-        } as any);
+        });
         alertedUsers++;
       }
     }
@@ -73,11 +72,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       const daysSinceLastImport = (now.getTime() - user.importSetting.lastSuccessfulImportAt.getTime()) / (1000 * 60 * 60 * 24);
       if (daysSinceLastImport > 7) {
         await notificationService.createNotificationIdempotent(user.id, {
+          type: NotificationType.UPCOMING_PAYMENT,
           title: "Import Webhook Health Alert",
           message: "No successful SMS imports have been processed in the last 7 days. Ensure your iPhone Shortcuts automation is active.",
           severity: NotificationSeverity.WARNING,
           eventKey: `webhook-health-${currentYear}-${Math.floor(now.getTime() / (7 * 24 * 60 * 60 * 1000))}`, // Weekly alert
-        } as any);
+        });
       }
     }
   }

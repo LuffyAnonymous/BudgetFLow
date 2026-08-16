@@ -2,7 +2,7 @@ import { NotificationRepository, NotificationFilters } from "../repositories/not
 import { SettingsRepository } from "../repositories/settings.repository";
 import { db } from "@/lib/db";
 import { Decimal } from "decimal.js";
-import { Notification, NotificationType, NotificationSeverity, TransactionType, CashFlowDirection, AccountType } from "@prisma/client";
+import { Notification, NotificationType, NotificationSeverity, TransactionType, CashFlowDirection } from "@prisma/client";
 import { getDubaiMonthRange, getDubaiCurrentDate } from "@/lib/dates";
 
 export class NotificationService {
@@ -103,9 +103,9 @@ export class NotificationService {
       where: { userId },
     });
 
-    const pref = (userSettings?.notificationPref as any) || {};
-    const safeDailyThreshold = new Decimal(pref.safeDailyThreshold ?? "50.00");
-    const largeExpenseThreshold = new Decimal(pref.largeExpenseThreshold ?? "1500.00");
+    const pref = (userSettings?.notificationPref as Record<string, unknown> | null) || {};
+    const safeDailyThreshold = new Decimal((pref.safeDailyThreshold as string | number | undefined) ?? "50.00");
+    const largeExpenseThreshold = new Decimal((pref.largeExpenseThreshold as string | number | undefined) ?? "1500.00");
 
     let createdCount = 0;
     let evaluatedCount = 0;

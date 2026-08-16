@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getDubaiCurrentDate, getDubaiMonthRange, getRemainingDaysInMonthDubai } from "@/lib/dates";
 import { Decimal } from "decimal.js";
-import { CategoryType, TransactionType, CashFlowDirection, DebtStatus, SavingGoalStatus, AccountType } from "@prisma/client";
+import { CategoryType, TransactionType, CashFlowDirection, DebtStatus, SavingGoalStatus } from "@prisma/client";
 import {
   calculateRemainingMoney,
   calculateCategoryBudgetRemaining,
@@ -9,7 +9,6 @@ import {
   calculateOutstandingDebt,
 } from "../calculations/finance-calculations";
 import { DebtService } from "./debt.service";
-import { accountService } from "./account.service";
 
 export class DashboardService {
   private debtService = new DebtService();

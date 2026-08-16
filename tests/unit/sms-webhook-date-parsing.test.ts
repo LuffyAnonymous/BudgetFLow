@@ -37,7 +37,7 @@ describe("POST /api/imports/sms Date Parsing", () => {
     token = res.plaintext;
   });
 
-  const makeRequest = (payload: any) => {
+  const makeRequest = (payload: unknown) => {
     return new NextRequest("http://localhost/api/imports/sms", {
       method: "POST",
       headers: {

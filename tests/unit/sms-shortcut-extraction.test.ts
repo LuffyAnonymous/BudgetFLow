@@ -128,7 +128,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
 
     it("stops infinite recursion on deeply nested payload and returns null", () => {
       // Build a deeply nested object of depth 10
-      let nested: any = { message: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
+      let nested: Record<string, unknown> = { message: "Purchase of AED 120.00 at Carrefour. Available balance is AED 850.00." };
       for (let i = 0; i < 10; i++) {
         nested = { val: nested };
       }
@@ -231,7 +231,7 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
     });
 
     it("prevents DoS/crash on malicious deeply nested payload", async () => {
-      let nested: any = { content: "Legitimate text that is too deep" };
+      let nested: Record<string, unknown> = { content: "Legitimate text that is too deep" };
       for (let i = 0; i < 20; i++) {
         nested = { depth: nested };
       }

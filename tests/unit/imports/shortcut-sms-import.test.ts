@@ -22,7 +22,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
       json: () => Promise.resolve({ ok: true }),
       text: () => Promise.resolve("Success"),
     }));
-    global.fetch = fetchSpy as any;
+    global.fetch = fetchSpy as unknown as typeof fetch;
 
     // Clean DB in order
     await db.importedTransaction.deleteMany({});
@@ -94,7 +94,7 @@ describe("iOS Shortcut SMS Ingestion Endpoint", () => {
     vi.restoreAllMocks();
   });
 
-  const makeShortcutRequest = (payload: any, token = "test-shortcut-token") => {
+  const makeShortcutRequest = (payload: unknown, token = "test-shortcut-token") => {
     const headers: Record<string, string> = {};
     if (token) {
       headers["authorization"] = `Bearer ${token}`;

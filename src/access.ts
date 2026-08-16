@@ -10,13 +10,47 @@
  *   - `this.user.role` is an array of strings (e.g., ['admin', 'manager', 'member']).
  */
 
+export interface AccessUser {
+  id?: string;
+  role?: string[];
+  [key: string]: unknown;
+}
+
+export interface AccessContext {
+  user?: AccessUser | null;
+}
+
+export interface CommentInputArgs {
+  resolvedData?: {
+    content?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ReactionInputArgs {
+  context: {
+    db: {
+      Reaction: {
+        findMany: (args: { where: Record<string, unknown> }) => Promise<unknown[]>;
+      };
+    };
+  };
+  resolvedData: {
+    user?: string;
+    page?: string;
+    comment?: string;
+    [key: string]: unknown;
+  };
+  addValidationError: (error: string) => void;
+}
+
 // Helper to determine if a user has a specific role
-function hasRole(user: any, role: string): boolean {
+function hasRole(user: AccessUser | null | undefined, role: string): boolean {
   return !!user && Array.isArray(user.role) && user.role.includes(role);
 }
 
 // Helper to check if user is logged in
-function isLoggedIn(user: any): boolean {
+function isLoggedIn(user: AccessUser | null | undefined): boolean {
   return !!user && !!user.id;
 }
 
@@ -32,24 +66,24 @@ export function sanitizeHtml(content: string): string {
 // ==========================================
 export const userRules = {
   // Only logged in users can read other users
-  read(this: { user?: any }) {
+  read(this: AccessContext) {
     return isLoggedIn(this.user);
   },
   
   // A user can only update their own record, unless they are an admin
-  update(this: { user?: any }) {
+  update(this: AccessContext) {
     if (!isLoggedIn(this.user)) return false;
     if (hasRole(this.user, "admin")) return true;
-    return { id: this.user.id }; // Prisma filter
+    return { id: this.user?.id }; // Prisma filter
   },
   
   // Only admins can create users
-  create(this: { user?: any }) {
+  create(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
   
   // Only admins can delete users
-  delete(this: { user?: any }) {
+  delete(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
 };
@@ -59,18 +93,18 @@ export const userRules = {
 // ==========================================
 export const fileRules = {
   // Files are publicly readable
-  read(this: { user?: any }) {
+  read(this: AccessContext) {
     return true;
   },
   
   // Other operations require being logged in
-  create(this: { user?: any }) {
+  create(this: AccessContext) {
     return isLoggedIn(this.user);
   },
-  update(this: { user?: any }) {
+  update(this: AccessContext) {
     return isLoggedIn(this.user);
   },
-  delete(this: { user?: any }) {
+  delete(this: AccessContext) {
     return isLoggedIn(this.user);
   },
 };
@@ -80,20 +114,20 @@ export const fileRules = {
 // ==========================================
 export const pageRules = {
   // Pages are publicly readable
-  read(this: { user?: any }) {
+  read(this: AccessContext) {
     return true;
   },
   
   // Admins and managers can create/update pages
-  create(this: { user?: any }) {
+  create(this: AccessContext) {
     return hasRole(this.user, "admin") || hasRole(this.user, "manager");
   },
-  update(this: { user?: any }) {
+  update(this: AccessContext) {
     return hasRole(this.user, "admin") || hasRole(this.user, "manager");
   },
   
   // Only admins can delete pages
-  delete(this: { user?: any }) {
+  delete(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
 };
@@ -103,16 +137,16 @@ export const pageRules = {
 // ==========================================
 export const userGroupRules = {
   // User groups are admin-only for all operations
-  read(this: { user?: any }) {
+  read(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
-  create(this: { user?: any }) {
+  create(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
-  update(this: { user?: any }) {
+  update(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
-  delete(this: { user?: any }) {
+  delete(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
 };
@@ -122,30 +156,30 @@ export const userGroupRules = {
 // ==========================================
 export const commentRules = {
   // Comments are publicly readable
-  read(this: { user?: any }) {
+  read(this: AccessContext) {
     return true;
   },
   
   // Any logged-in user can create a comment
-  create(this: { user?: any }) {
+  create(this: AccessContext) {
     return isLoggedIn(this.user);
   },
   
   // Only the author or an admin can update/delete comments
-  update(this: { user?: any }) {
+  update(this: AccessContext) {
     if (!isLoggedIn(this.user)) return false;
     if (hasRole(this.user, "admin")) return true;
-    return { author: { id: this.user.id } }; // Prisma filter
+    return { author: { id: this.user?.id } }; // Prisma filter
   },
-  delete(this: { user?: any }) {
+  delete(this: AccessContext) {
     if (!isLoggedIn(this.user)) return false;
     if (hasRole(this.user, "admin")) return true;
-    return { author: { id: this.user.id } }; // Prisma filter
+    return { author: { id: this.user?.id } }; // Prisma filter
   },
 };
 
 // Hook/Hook-like function to clean comment input HTML
-export function resolveCommentInput({ resolvedData }: any) {
+export function resolveCommentInput({ resolvedData }: CommentInputArgs) {
   if (resolvedData && typeof resolvedData.content === "string") {
     resolvedData.content = sanitizeHtml(resolvedData.content);
   }
@@ -157,30 +191,30 @@ export function resolveCommentInput({ resolvedData }: any) {
 // ==========================================
 export const reactionRules = {
   // Reactions are publicly readable
-  read(this: { user?: any }) {
+  read(this: AccessContext) {
     return true;
   },
   
   // Any logged-in user can create a reaction
-  create(this: { user?: any }) {
+  create(this: AccessContext) {
     return isLoggedIn(this.user);
   },
   
   // Reactions cannot be updated
-  update(this: { user?: any }) {
+  update(this: AccessContext) {
     return false;
   },
   
   // Only the owner or an admin can delete a reaction
-  delete(this: { user?: any }) {
+  delete(this: AccessContext) {
     if (!isLoggedIn(this.user)) return false;
     if (hasRole(this.user, "admin")) return true;
-    return { user: { id: this.user.id } }; // Prisma filter
+    return { user: { id: this.user?.id } }; // Prisma filter
   },
 };
 
 // Validator to ensure duplicate reactions are blocked
-export async function validateReactionInput({ context, resolvedData, addValidationError }: any) {
+export async function validateReactionInput({ context, resolvedData, addValidationError }: ReactionInputArgs) {
   const { user, page, comment } = resolvedData;
   if (!user) return; // Expecting user to be set/injected
 
@@ -213,16 +247,16 @@ export async function validateReactionInput({ context, resolvedData, addValidati
 // ==========================================
 export const settingRules = {
   // Only admins can read or write settings
-  read(this: { user?: any }) {
+  read(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
-  create(this: { user?: any }) {
+  create(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
-  update(this: { user?: any }) {
+  update(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
-  delete(this: { user?: any }) {
+  delete(this: AccessContext) {
     return hasRole(this.user, "admin");
   },
 };
