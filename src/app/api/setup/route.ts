@@ -45,7 +45,7 @@ export async function POST(request: Request) {
         where: { userId },
         create: {
           userId,
-          monthlySalary: new Decimal("5750.00"),
+          monthlySalary: new Decimal("0.00"),
           payday: payday ? parseInt(payday, 10) : 25,
           currency: "AED",
           theme: "system",
