@@ -55,13 +55,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             console.log(`[Auth Debug] Password matched: ${passwordsMatch}`);
           }
 
-          if (passwordsMatch && !user.emailVerified) {
-            if (isDev) {
-              console.log("[Auth Debug] Password correct but email not verified — denying login");
-            }
-            return null;
-          }
-
           if (passwordsMatch) {
             const returnedUser = {
               id: user.id,

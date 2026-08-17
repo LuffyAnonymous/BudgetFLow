@@ -2,12 +2,7 @@
  * POST /api/auth/register
  *
  * Open self-serve account creation. Creates the User plus its default
- * categories/settings/accounts via provisionNewUser, then emails a
- * verification link — login is refused (see auth.ts) until it's clicked.
- *
- * If the verification email can't be sent, the account is rolled back
- * rather than left in an unverifiable state — better to fail the sign-up
- * loudly than to create an account nobody can ever log into.
+ * categories/settings/accounts via provisionNewUser.
  *
  * Does not sign the user in — on success they're directed to /login.
  */
@@ -19,7 +14,6 @@ import { db } from "@/lib/db";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
 import { checkRateLimit } from "@/lib/rate-limiter";
 import { provisionNewUser } from "@/server/services/user-provisioning.service";
-import { sendVerificationEmail } from "@/server/services/email-verification.service";
 
 const registerSchema = z.object({
   email: z.string().trim().toLowerCase().email("Please enter a valid email address"),
@@ -60,18 +54,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const name = `${firstName} ${lastName}`.trim();
 
     const user = await provisionNewUser({ email, passwordHash, name });
-
-    try {
-      await sendVerificationEmail(user.id, user.email, name);
-    } catch (emailError) {
-      console.error("[register] Failed to send verification email, rolling back user:", emailError);
-      await db.user.delete({ where: { id: user.id } });
-      return apiError(
-        "EMAIL_SEND_FAILED",
-        "We couldn't send a verification email right now. Please try again shortly.",
-        503
-      );
-    }
 
     await db.auditLog.create({
       data: {

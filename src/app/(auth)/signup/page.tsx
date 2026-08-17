@@ -69,9 +69,9 @@ function SignupForm() {
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/15">
           <LucideCheckCircle2 className="h-6 w-6 text-emerald-400" />
         </div>
-        <h2 className="text-lg font-bold text-white">Check your email</h2>
+        <h2 className="text-lg font-bold text-white">Account created</h2>
         <p className="mt-2 text-sm text-slate-400">
-          We sent a verification link to your inbox. Click it to activate your account, then sign in.
+          Sign in with your new email and password to get started.
         </p>
         <Link
           href="/login"
