@@ -34,6 +34,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  // The caller's own bf_import_... token — n8n's "Normalize Payload" node
+  // reads this straight off the incoming request headers and forwards it
+  // unchanged to /api/imports/sms to identify whose account to post to.
+  // Without relaying it here, every request reaches n8n with no token at
+  // all and is rejected downstream with no trace (a 401 there happens
+  // before any ImportedTransaction row or audit log entry is created).
+  const authorization = request.headers.get("authorization") ?? "";
+
   const bodyText = await request.text();
   if (Buffer.byteLength(bodyText, "utf8") > MAX_BODY_BYTES) {
     return NextResponse.json({ ok: false, error: "Payload too large" }, { status: 413 });
@@ -48,6 +56,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       headers: {
         "Content-Type": "application/json",
         "X-BudgetFlow-Webhook-Secret": incomingSecret,
+        "Authorization": authorization,
       },
       body: bodyText,
       signal: controller.signal,
