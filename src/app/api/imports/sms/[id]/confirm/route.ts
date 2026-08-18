@@ -2,15 +2,20 @@
  * POST /api/imports/sms/[id]/confirm
  *
  * Confirms a REVIEW_REQUIRED import — atomically creates the ledger transaction.
+ * Works for any import source (SMS, DOCUMENT, etc.) despite the URL path.
  *
  * Optional body:
  *   {
  *     "categoryId":    string (override configured salaryCategoryId)
  *     "financialDate": string (ISO date string, override parsed date)
+ *     "amount":        string (override the parsed amount — required if
+ *                       extraction failed and left parsedAmount null)
+ *     "description":   string (override the parsed description/vendor)
  *   }
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { Decimal } from "decimal.js";
 import { auth } from "@/auth";
 import { importService } from "@/imports/engine/import.service";
 import { z } from "zod";
@@ -18,6 +23,8 @@ import { z } from "zod";
 const ConfirmBodySchema = z.object({
   categoryId: z.string().uuid().optional(),
   financialDate: z.string().datetime({ offset: true }).optional(),
+  amount: z.string().regex(/^\d+(\.\d{1,2})?$/, "Amount must be a positive number with up to 2 decimal places").optional(),
+  description: z.string().trim().min(1).max(200).optional(),
 }).optional();
 
 export async function POST(
@@ -31,7 +38,7 @@ export async function POST(
   const userId = session.user.id;
   const { id } = await params;
 
-  let overrides: { categoryId?: string; financialDate?: Date } | undefined;
+  let overrides: { categoryId?: string; financialDate?: Date; amount?: Decimal; description?: string } | undefined;
   try {
     const body = await req.json().catch(() => undefined);
     const parsed = ConfirmBodySchema.safeParse(body);
@@ -44,6 +51,8 @@ export async function POST(
         financialDate: parsed.data.financialDate
           ? new Date(parsed.data.financialDate)
           : undefined,
+        amount: parsed.data.amount ? new Decimal(parsed.data.amount) : undefined,
+        description: parsed.data.description,
       };
     }
   } catch {

@@ -11,7 +11,8 @@ enum ImportSource {
   SMS
   CSV
   EMAIL
-  PDF
+  /// Photographed or scanned receipt/invoice (image or PDF), AI-extracted.
+  DOCUMENT
   OPEN_BANKING
   APPLE_WALLET
 }
@@ -78,6 +79,23 @@ enum CashFlowDirection {
 enum AccountType {
   EMIRATES_NBD
   CASH
+  ADCB
+  FAB
+  MASHREQ
+  RAKBANK
+  DIB
+  CBD
+  ADIB
+  HSBC_UAE
+  SIB
+  WIO
+  LIV
+  TABBY
+  TAMARA
+  BOTIM
+  /// Recognized sender not in the explicit table above — tracked by its own
+  /// Account row per user (keyed by name, not this type), rather than dropped.
+  OTHER_BANK
 }
 
 enum TransactionOrigin {
@@ -649,6 +667,8 @@ model Attachment {
   savingTx      SavingTransaction? @relation(fields: [savingTxId], references: [id], onDelete: SetNull)
   remittanceId  String?
   remittance    Remittance?        @relation(fields: [remittanceId], references: [id], onDelete: SetNull)
+  importedTransactionId String?
+  importedTransaction   ImportedTransaction? @relation(fields: [importedTransactionId], references: [id], onDelete: SetNull)
 
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -660,6 +680,7 @@ model Attachment {
   @@index([debtPaymentId])
   @@index([savingTxId])
   @@index([remittanceId])
+  @@index([importedTransactionId])
 }
 
 // ─── Import Engine ─────────────────────────────────────────────────────────────
@@ -713,6 +734,9 @@ model ImportedTransaction {
   confidence    ImportConfidence?
   parserKey     String?
   parserVersion String?
+  /// How the transaction fields were derived: "REGEX" | "AI_TEXT" | "AI_VISION".
+  /// Null for older rows predating this field (regex-parsed).
+  extractionMethod String?
 
   /// Redacted SMS text — no raw account numbers stored.
   /// Set to null after rawPayloadRetentionDays per owning user's ImportSetting.
@@ -758,6 +782,8 @@ model ImportedTransaction {
 
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  attachments Attachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

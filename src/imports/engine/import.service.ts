@@ -24,13 +24,14 @@ import { accountService } from "../../server/services/account.service";
 import { determineBudgetMonth } from "@/lib/salary-month";
 import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
 
-import { normalizeSender, SupportedBank } from "./sender-normalizer";
+import { resolveInstitution, ResolvedInstitution } from "./sender-normalizer";
 import { classifyDirection, TransactionDirection } from "./direction-classifier";
 import { categorizeMerchant, KnownCategory } from "./merchant-categorizer";
 import { resolveFallbackCategory } from "./category-resolver";
 import { matchInternalTransfer } from "./transfer-matcher";
 import { evaluateConfidence } from "./confidence-evaluator";
 import { updateBalance } from "./balance-updater";
+import { extractSmsTransaction, AI_SMS_PARSER_KEY } from "./ai-sms-extractor";
 
 const DUBAI_OFFSET_HOURS = 4;
 
@@ -84,21 +85,34 @@ export class ImportService {
         }
       }
 
-      const bank = normalizeSender(sender);
-      if (!bank) {
-        console.log("[Import Service] Sender not recognized", { sender });
-        return { outcome: "ignored", reason: "Sender not recognized" };
-      }
+      // Every sender resolves to *some* institution now — unrecognized ones
+      // fall back to OTHER_BANK with a derived display name, never null.
+      const institution = resolveInstitution(sender);
+      const maskedSenderValue = maskSender(sender);
 
-      console.log("[Import Service] Stage: Selecting parser", { bank });
+      console.log("[Import Service] Stage: Selecting parser", { institution: institution.displayName });
       const selectionResult = smsParserRegistry.select(sender, message, importSetting.senderAllowlist);
-      if (selectionResult.outcome === "no_match" || selectionResult.outcome === "ambiguous") {
+
+      let normalized: NormalizedSmsTransaction;
+      let extractionMethod: "REGEX" | "AI_TEXT";
+
+      if (selectionResult.outcome === "matched") {
+        const parser = selectionResult.parser;
+        console.log("[Import Service] Stage: Parsing message", { parserKey: parser.parserKey });
+        try {
+          normalized = parser.parse(sender, message, receivedAt);
+          extractionMethod = "REGEX";
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : "Parsing execution failed";
+          console.log("[Import Service] Parser parse threw exception", { parserKey: parser.parserKey, errMsg });
+          return { outcome: "rejected", reason: errMsg };
+        }
+      } else if (selectionResult.outcome === "ambiguous") {
+        // Two regex parsers both claimed this message — a real conflict to
+        // fix in code, not something to hand to the AI fallback.
         const redacted = redactFinancialText(message);
-        const maskedSenderValue = maskSender(sender);
-        const reason = selectionResult.outcome === "ambiguous" ? "Ambiguous parsers matched" : selectionResult.reason;
-
+        const reason = "Ambiguous parsers matched";
         console.log("[Import Service] Parser selection rejected", { outcome: selectionResult.outcome, reason });
-
         await db.auditLog.create({
           data: {
             userId,
@@ -110,20 +124,65 @@ export class ImportService {
           },
         });
         return { outcome: "rejected", reason };
+      } else {
+        // no_match: the sender is trusted (it's in the user's own allowlist
+        // — parser-registry.ts checked that already), but no regex parser
+        // recognized the message shape. Try the AI safety net before giving
+        // up, and never disappear a trusted-sender message with zero trace.
+        console.log("[Import Service] Stage: No regex parser matched, trying AI fallback");
+        const aiResult = await extractSmsTransaction(message);
+
+        if (aiResult) {
+          normalized = {
+            source: "SMS",
+            institution: institution.displayName,
+            parserKey: AI_SMS_PARSER_KEY,
+            parserVersion: "1.0.0",
+            amount: aiResult.amount,
+            currency: aiResult.currency,
+            merchant: aiResult.merchant,
+            reference: aiResult.referenceCode,
+            transactionDate: receivedAt,
+            redactedMessage: redactFinancialText(message),
+            payloadHash,
+            availableBalance: aiResult.availableBalance,
+            accountEnding: null,
+            isDeclined: false,
+            metadata: { maskedSender: maskedSenderValue, extractionMethod: "AI_TEXT" },
+          };
+          extractionMethod = "AI_TEXT";
+        } else {
+          console.log("[Import Service] AI fallback also failed to extract a transaction");
+          const redacted = redactFinancialText(message);
+          const importedTx = await db.importedTransaction.create({
+            data: {
+              source: ImportSource.SMS,
+              institution: institution.displayName,
+              status: ImportStatus.REVIEW_REQUIRED,
+              parserKey: null,
+              redactedPayload: redacted,
+              rawPayload: message,
+              deviceId: deviceId ?? null,
+              payloadHash,
+              maskedSender: maskedSenderValue,
+              fingerprint: payloadHash,
+              receivedAt,
+              financialDate: receivedAt,
+              idempotencyKey: idempotencyKey ?? null,
+              failureCode: "EXTRACTION_FAILED",
+              failureMessage: "Could not automatically extract transaction details from this message.",
+              userId,
+            },
+          });
+          return {
+            outcome: "review_required",
+            importedTransactionId: importedTx.id,
+            parsedAmount: "0.00",
+            currency: "AED",
+          };
+        }
       }
 
-      const parser = selectionResult.parser;
-      console.log("[Import Service] Stage: Parsing message", { parserKey: parser.parserKey });
-      let normalized: NormalizedSmsTransaction;
-      try {
-        normalized = parser.parse(sender, message, receivedAt);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : "Parsing execution failed";
-        console.log("[Import Service] Parser parse threw exception", { parserKey: parser.parserKey, errMsg });
-        return { outcome: "rejected", reason: errMsg };
-      }
-
-      const maskedSenderValue = maskSender(sender);
       const fingerprint = buildFingerprint(normalized, maskedSenderValue);
       const existingByFingerprint = await db.importedTransaction.findUnique({
         where: { userId_fingerprint: { userId, fingerprint } },
@@ -146,7 +205,7 @@ export class ImportService {
         const outcome = direction === TransactionDirection.PENDING ? "pending_event" : "ignored";
         const failureCode = direction === TransactionDirection.PENDING ? "PENDING_TRANSACTION" : "INFORMATIONAL_MESSAGE";
         const failureMessage = direction === TransactionDirection.PENDING ? "Pending transactions are not posted." : "Informational messages are ignored.";
-        
+
         console.log("[Import Service] Ignored or pending message processed", { direction, status });
         const importedTx = await db.importedTransaction.create({
           data: {
@@ -155,6 +214,7 @@ export class ImportService {
             status,
             parserKey: normalized.parserKey,
             parserVersion: normalized.parserVersion,
+            extractionMethod,
             redactedPayload: normalized.redactedMessage,
             rawPayload: message,
             deviceId: deviceId ?? null,
@@ -172,8 +232,8 @@ export class ImportService {
             failureMessage: status === ImportStatus.REJECTED ? failureMessage : null,
           },
         });
-        
-        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null);
+
+        await this.syncBalance(userId, institution, normalized.availableBalance, direction, null);
 
         if (outcome === "pending_event") return { outcome: "pending_event", importedTransactionId: importedTx.id };
         return { outcome: "ignored" };
@@ -189,8 +249,8 @@ export class ImportService {
         !!normalized.availableBalance
       );
 
-      const confidence = confidenceScore >= 90 ? ImportConfidence.HIGH 
-                       : confidenceScore >= 70 ? ImportConfidence.MEDIUM 
+      const confidence = confidenceScore >= 90 ? ImportConfidence.HIGH
+                       : confidenceScore >= 70 ? ImportConfidence.MEDIUM
                        : ImportConfidence.LOW;
 
       const dubaiMs = normalized.transactionDate.getTime() + DUBAI_OFFSET_HOURS * 60 * 60 * 1000;
@@ -204,7 +264,6 @@ export class ImportService {
               userId,
               normalized.amount,
               financialDate,
-              bank,
               direction === TransactionDirection.INFLOW
           );
       }
@@ -219,6 +278,7 @@ export class ImportService {
             confidence,
             parserKey: normalized.parserKey,
             parserVersion: normalized.parserVersion,
+            extractionMethod,
             redactedPayload: normalized.redactedMessage,
             rawPayload: message,
             deviceId: deviceId ?? null,
@@ -237,17 +297,19 @@ export class ImportService {
           },
         });
 
-        await this.syncBalance(userId, bank, normalized.availableBalance, direction, null);
+        await this.syncBalance(userId, institution, normalized.availableBalance, direction, null);
 
         return { outcome: "review_required", importedTransactionId: importedTx.id, parsedAmount: normalized.amount.toFixed(2), currency: normalized.currency };
       }
 
       console.log("[Import Service] Stage: Executing auto-post transaction");
       const result = await db.$transaction(async (tx) => {
-        await accountService.ensureDefaultAccounts(userId, tx);
-        const accounts = await tx.account.findMany({ where: { userId } });
-        const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
-        const primaryAccId = enbdAcc.id;
+        const account = await accountService.ensureAccountForInstitution(
+          userId,
+          { type: institution.accountType, name: institution.displayName },
+          tx
+        );
+        const primaryAccId = account.id;
 
         await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx);
 
@@ -261,7 +323,7 @@ export class ImportService {
         } else {
             let txType: TransactionType = TransactionType.EXPENSE;
             let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
-            
+
             if (direction === TransactionDirection.INFLOW) {
                 txType = TransactionType.INCOME;
                 cashFlowDir = CashFlowDirection.INFLOW;
@@ -329,6 +391,7 @@ export class ImportService {
               confidence,
               parserKey: normalized.parserKey,
               parserVersion: normalized.parserVersion,
+              extractionMethod,
               redactedPayload: normalized.redactedMessage,
               rawPayload: message,
               deviceId: deviceId ?? null,
@@ -369,7 +432,7 @@ export class ImportService {
   async confirmImport(
     userId: string,
     importedTransactionId: string,
-    overrides?: { categoryId?: string; financialDate?: Date }
+    overrides?: { categoryId?: string; financialDate?: Date; amount?: Decimal; description?: string }
   ): Promise<{ transactionId: string }> {
     return await db.$transaction(async (tx) => {
       const importedTx = await tx.importedTransaction.findUnique({
@@ -384,50 +447,59 @@ export class ImportService {
         throw new Error("Import is not in REVIEW_REQUIRED state");
       }
 
-      await accountService.ensureDefaultAccounts(userId, tx);
-      const accounts = await tx.account.findMany({ where: { userId } });
-      const bank = normalizeSender(importedTx.maskedSender || "");
-      
-      const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
-      const primaryAccId = enbdAcc.id;
-
-      // Note: syncBalance was already called when the SMS was received (in processSms), 
-      // so we don't need to call updateBalance here again. The available balance was already synced.
-      // Wait, if it wasn't an available balance sync, we might need to update the balance?
-      // In the new architecture, syncBalance handles both the availableBalance override AND the relative amount deduction.
-      // Wait, let's check processSms logic.
-      // In processSms: `await this.syncBalance(..., direction, null, receivedAt);` for LOW_CONFIDENCE.
-      // Actually, wait! In processSms:
-      // `await this.syncBalance(userId, bank, normalized.availableBalance, direction, null, receivedAt);`
-      // Notice `amount` passed to `syncBalance` is `null`!
-      // This means relative balance update was NOT applied for LOW_CONFIDENCE imports.
-      // Therefore, we MUST update the relative balance here upon confirmation!
-
-      if (!importedTx.parsedAmount) {
-          throw new Error("Cannot confirm import: parsedAmount is missing");
+      const amount = overrides?.amount
+        ? new Prisma.Decimal(overrides.amount.toFixed(2))
+        : importedTx.parsedAmount;
+      if (!amount) {
+        throw new Error("Cannot confirm import: parsedAmount is missing — provide an amount override");
       }
-      
-      const direction = classifyDirection(importedTx.rawPayload || "", bank!);
-      await updateBalance(primaryAccId, importedTx.parsedAmount, direction, null);
+
+      const isDocument = importedTx.source === ImportSource.DOCUMENT;
+
+      // A receipt/invoice is always a completed expense with no bank account
+      // to cross-check a balance against (accountId stays null — that field
+      // is nullable precisely for cases like this). Bank/BNPL SMS imports
+      // keep resolving and updating their institution's account as before.
+      let primaryAccId: string | null = null;
+      let direction: TransactionDirection = TransactionDirection.OUTFLOW;
+
+      if (isDocument) {
+        direction = TransactionDirection.OUTFLOW;
+      } else {
+        // The institution's account was already created (by syncBalance)
+        // when the import was first received, keyed by its display name.
+        // Fall back to creating it here as a safety net for any
+        // pre-existing row that somehow predates that.
+        const primaryAccount = await accountService.ensureAccountForInstitution(
+          userId,
+          { type: AccountType.OTHER_BANK, name: importedTx.institution },
+          tx
+        );
+        primaryAccId = primaryAccount.id;
+        direction = classifyDirection(importedTx.rawPayload || "");
+        await updateBalance(primaryAccId, amount, direction, null);
+      }
 
       let txType: TransactionType = TransactionType.EXPENSE;
       let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
-      
+
       if (direction === TransactionDirection.INFLOW) {
           txType = TransactionType.INCOME;
           cashFlowDir = CashFlowDirection.INFLOW;
       }
 
+      const description = overrides?.description || importedTx.parsedDescription || "Manually confirmed";
+
       let categoryId = overrides?.categoryId;
       let categoryStr: string = "";
       if (!categoryId) {
-        categoryStr = categorizeMerchant(importedTx.parsedDescription || "");
+        categoryStr = categorizeMerchant(description);
         let dbCategory: { id: string } | null = await tx.category.findFirst({
           where: { userId, name: { equals: categoryStr, mode: "insensitive" } }
         });
 
         if (!dbCategory && categoryStr === KnownCategory.UNCATEGORIZED) {
-          dbCategory = await resolveFallbackCategory(tx, userId, txType, importedTx.parsedAmount!);
+          dbCategory = await resolveFallbackCategory(tx, userId, txType, amount);
         }
 
         dbCategory = dbCategory || await tx.category.findFirst({
@@ -454,12 +526,12 @@ export class ImportService {
               date: effectiveDate,
               budgetMonth: computedBudgetMonth,
               categoryId,
-              description: importedTx.parsedDescription || "Manually confirmed",
-              amount: importedTx.parsedAmount!,
-              paymentMethod: "SMS Import",
+              description,
+              amount,
+              paymentMethod: isDocument ? "Receipt Upload" : "SMS Import",
               type: txType,
               cashFlowDirection: cashFlowDir,
-              origin: TransactionOrigin.SMS_IMPORT,
+              origin: isDocument ? TransactionOrigin.MANUAL : TransactionOrigin.SMS_IMPORT,
               accountId: primaryAccId,
               userId,
           }
@@ -474,6 +546,16 @@ export class ImportService {
           },
       });
 
+      // A DOCUMENT-sourced import (receipt/invoice upload) has its uploaded
+      // file attached to the ImportedTransaction row — re-point it onto the
+      // newly created Transaction so it shows up as a normal attachment.
+      if (importedTx.source === ImportSource.DOCUMENT) {
+        await tx.attachment.updateMany({
+          where: { importedTransactionId: importedTx.id },
+          data: { importedTransactionId: null, transactionId: ledgerTx.id },
+        });
+      }
+
       // Process debt payment logic if category is DEBT
       const category = await tx.category.findUnique({ where: { id: categoryId } });
       if (category && category.type === "DEBT") {
@@ -481,7 +563,7 @@ export class ImportService {
           where: { userId, categoryId },
         });
         if (debt) {
-          const newBalance = new Prisma.Decimal(debt.currentBalance).minus(importedTx.parsedAmount);
+          const newBalance = new Prisma.Decimal(debt.currentBalance).minus(amount);
           const status = newBalance.lte(0) ? "PAID" : debt.status;
           await tx.debt.update({
             where: { id: debt.id },
@@ -517,20 +599,18 @@ export class ImportService {
   }
 
   private async syncBalance(
-    userId: string, 
-    bank: SupportedBank, 
-    authoritativeBalance: Decimal | null, 
-    direction: TransactionDirection, 
+    userId: string,
+    institution: ResolvedInstitution,
+    authoritativeBalance: Decimal | null,
+    direction: TransactionDirection,
     amount: Decimal | null
   ) {
-    await accountService.ensureDefaultAccounts(userId);
-    const accounts = await db.account.findMany({ where: { userId } });
-    const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD);
-    const primaryAccId = enbdAcc?.id;
+    const account = await accountService.ensureAccountForInstitution(userId, {
+      type: institution.accountType,
+      name: institution.displayName,
+    });
 
-    if (!primaryAccId) return;
-
-    await updateBalance(primaryAccId, amount, direction, authoritativeBalance);
+    await updateBalance(account.id, amount, direction, authoritativeBalance);
   }
 }
 

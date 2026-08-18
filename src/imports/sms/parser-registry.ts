@@ -17,11 +17,19 @@
 
 import type { ISmsParser, NormalizedSmsTransaction } from "./sms-parser.interface";
 import { emiratesNBDParser } from "./emirates-nbd.parser";
+import { bnplParser } from "./bnpl.parser";
+import { genericBankCreditDebitParser } from "./generic-bank-credit-debit.parser";
 
 // ─── Registry of all available parsers ──────────────────────────────────────
+// Order doesn't affect correctness (each parser's canParse() is mutually
+// exclusive by sender — see the exclusion sets in bnpl.parser.ts and
+// generic-bank-credit-debit.parser.ts), but the more specific parsers are
+// listed first for readability.
 
 const REGISTERED_PARSERS: ISmsParser[] = [
   emiratesNBDParser,
+  bnplParser,
+  genericBankCreditDebitParser,
 ];
 
 // ─── Parser selection result ─────────────────────────────────────────────────

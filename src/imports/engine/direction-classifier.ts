@@ -1,5 +1,3 @@
-import type { SupportedBank } from "./sender-normalizer";
-
 export enum TransactionDirection {
   INFLOW = "INFLOW",
   OUTFLOW = "OUTFLOW",
@@ -8,10 +6,7 @@ export enum TransactionDirection {
   DECLINED = "DECLINED",
 }
 
-export function classifyDirection(
-  message: string,
-  _bank?: SupportedBank
-): TransactionDirection {
+export function classifyDirection(message: string): TransactionDirection {
   const lowerMsg = message.toLowerCase();
 
   // Declined / Failed

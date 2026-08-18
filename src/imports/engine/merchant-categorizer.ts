@@ -28,7 +28,7 @@ export function categorizeMerchant(merchant: string | null): KnownCategory {
     return KnownCategory.TRANSPORT;
   }
 
-  if (m.includes("tabby")) {
+  if (m.includes("tabby") || m.includes("tamara")) {
     return KnownCategory.BNPL;
   }
 

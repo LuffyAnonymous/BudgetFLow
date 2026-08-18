@@ -43,6 +43,10 @@ export async function GET(
       failureCode: true,
       failureMessage: true,
       transactionId: true,
+      attachments: {
+        where: { status: { not: "DELETED" } },
+        select: { id: true, mimeType: true },
+      },
       transaction: {
         select: {
           id: true,

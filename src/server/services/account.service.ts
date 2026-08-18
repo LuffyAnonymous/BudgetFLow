@@ -41,6 +41,37 @@ export class AccountService {
   }
 
   /**
+   * Find-or-create an Account for a specific institution, keyed by
+   * (userId, name) — the same uniqueness the DB already enforces. Used by
+   * the SMS import pipeline so a new bank/BNPL/wallet sender gets its own
+   * tracked account the first time it's actually seen, rather than every
+   * user being pre-provisioned with every possible institution.
+   */
+  async ensureAccountForInstitution(
+    userId: string,
+    institution: { type: AccountType; name: string },
+    tx?: Prisma.TransactionClient
+  ): Promise<Account> {
+    const client = this.getClient(tx);
+    const existing = await client.account.findUnique({
+      where: { userId_name: { userId, name: institution.name } },
+    });
+    if (existing) return existing;
+
+    return client.account.create({
+      data: {
+        userId,
+        name: institution.name,
+        type: institution.type,
+        currentBalance: new Prisma.Decimal(0),
+        latestImportedBalance: null,
+        lastSMSImportedAt: null,
+        lastSuccessfulSyncAt: null,
+      },
+    });
+  }
+
+  /**
    * Retrieves all accounts for a user, ensuring defaults exist first.
    */
   async getAccounts(userId: string, tx?: Prisma.TransactionClient): Promise<Account[]> {

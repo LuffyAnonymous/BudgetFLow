@@ -15,7 +15,8 @@ export type AttachmentParent =
   | { type: "transaction"; id: string }
   | { type: "debtPayment"; id: string }
   | { type: "savingTx"; id: string }
-  | { type: "remittance"; id: string };
+  | { type: "remittance"; id: string }
+  | { type: "importedTransaction"; id: string };
 
 function parentToFieldName(parent: AttachmentParent): keyof Prisma.AttachmentCreateInput {
   const map: Record<string, keyof Prisma.AttachmentCreateInput> = {
@@ -23,6 +24,7 @@ function parentToFieldName(parent: AttachmentParent): keyof Prisma.AttachmentCre
     debtPayment: "debtPayment",
     savingTx: "savingTx",
     remittance: "remittance",
+    importedTransaction: "importedTransaction",
   };
   return map[parent.type];
 }
@@ -33,6 +35,7 @@ function parentToWhereField(parent: AttachmentParent): Prisma.AttachmentWhereInp
     case "debtPayment":  return { debtPaymentId: parent.id };
     case "savingTx":     return { savingTxId: parent.id };
     case "remittance":   return { remittanceId: parent.id };
+    case "importedTransaction": return { importedTransactionId: parent.id };
   }
 }
 
@@ -50,6 +53,8 @@ async function verifyParentOwnership(userId: string, parent: AttachmentParent): 
     found = await db.savingTransaction.findUnique({ where: { id: parent.id }, select: { userId: true } });
   } else if (parent.type === "remittance") {
     found = await db.remittance.findUnique({ where: { id: parent.id }, select: { userId: true } });
+  } else if (parent.type === "importedTransaction") {
+    found = await db.importedTransaction.findUnique({ where: { id: parent.id }, select: { userId: true } });
   }
 
   if (!found || found.userId !== userId) {
@@ -70,7 +75,7 @@ export const AttachmentService = {
     requestId?: string
   ) {
     // 0. Validate parent type and integrity (service-level, before hitting DB)
-    const VALID_PARENT_TYPES = ["transaction", "debtPayment", "savingTx", "remittance"] as const;
+    const VALID_PARENT_TYPES = ["transaction", "debtPayment", "savingTx", "remittance", "importedTransaction"] as const;
     if (!VALID_PARENT_TYPES.includes(parent.type as typeof VALID_PARENT_TYPES[number])) {
       throw new Error(`INVALID_PARENT_TYPE: '${parent.type}' is not a supported attachment parent.`);
     }

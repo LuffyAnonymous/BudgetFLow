@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { TransactionType } from "@prisma/client";
 import { Decimal } from "decimal.js";
-import { SupportedBank } from "./sender-normalizer";
 
 const MATCH_WINDOW_MS = 1000 * 60 * 60 * 24; // 24 hours
 
@@ -9,7 +8,6 @@ export async function matchInternalTransfer(
   userId: string,
   amount: Decimal,
   date: Date,
-  sourceBank: SupportedBank,
   isIncoming: boolean
 ): Promise<string | null> {
   // If we are looking at an incoming transfer, we search for an outgoing transfer of the same amount in the last 24h

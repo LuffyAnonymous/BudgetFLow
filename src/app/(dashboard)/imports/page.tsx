@@ -10,7 +10,7 @@
  *   - Confirm or Reject
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
 import {
@@ -19,10 +19,14 @@ import {
   LucideAlertTriangle,
   LucideRefreshCw,
   LucideInbox,
+  LucideUpload,
+  LucideFileText,
+  LucideReceipt,
 } from "lucide-react";
 
 interface ImportItem {
   id: string;
+  source: string;
   institution: string;
   status: string;
   confidence: "HIGH" | "MEDIUM" | "LOW" | null;
@@ -44,6 +48,7 @@ interface ImportDetail extends ImportItem {
   maskedSender: string | null;
   parserKey: string | null;
   parserVersion: string | null;
+  attachments: { id: string; mimeType: string }[];
 }
 
 export function normalizeCategories<T = Record<string, unknown>>(json: unknown): T[] {
@@ -82,6 +87,9 @@ export default function ImportsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmCategoryId, setConfirmCategoryId] = useState<string>("");
   const [confirmDate, setConfirmDate] = useState<string>("");
+  const [confirmAmount, setConfirmAmount] = useState<string>("");
+  const [confirmDescription, setConfirmDescription] = useState<string>("");
+  const receiptInputRef = useRef<HTMLInputElement>(null);
 
   const { data: reviewItems = [], isLoading, error: listError } = useQuery<ImportItem[]>({
     queryKey: ["imports", activeTab],
@@ -129,6 +137,8 @@ export default function ImportsPage() {
       const body: Record<string, string> = {};
       if (confirmCategoryId) body.categoryId = confirmCategoryId;
       if (confirmDate) body.financialDate = new Date(confirmDate).toISOString();
+      if (confirmAmount.trim()) body.amount = confirmAmount.trim();
+      if (confirmDescription.trim()) body.description = confirmDescription.trim();
       const res = await fetch(`/api/imports/sms/${id}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,6 +154,24 @@ export default function ImportsPage() {
       queryClient.invalidateQueries({ queryKey: ["salary-status"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       setSelectedId(null);
+    },
+  });
+
+  const uploadReceiptMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/imports/receipt", { method: "POST", body: formData });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 202) {
+        throw new Error(json.error ?? "Receipt upload failed");
+      }
+      return json;
+    },
+    onSuccess: (json) => {
+      queryClient.invalidateQueries({ queryKey: ["imports"] });
+      setActiveTab("REVIEW_REQUIRED");
+      if (json?.importedTransactionId) setSelectedId(json.importedTransactionId);
     },
   });
 
@@ -165,10 +193,42 @@ export default function ImportsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Import Review"
-        description="Review and confirm salary imports before they become transactions."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <PageHeader
+          title="Import Review"
+          description="Review and confirm salary imports before they become transactions."
+        />
+        <div>
+          <input
+            ref={receiptInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) uploadReceiptMutation.mutate(file);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => receiptInputRef.current?.click()}
+            disabled={uploadReceiptMutation.isPending}
+            className="flex items-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 px-4 py-2.5 text-sm font-bold transition-all disabled:opacity-50"
+          >
+            {uploadReceiptMutation.isPending ? (
+              <LucideRefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <LucideUpload className="h-4 w-4" />
+            )}
+            Upload Receipt
+          </button>
+          {uploadReceiptMutation.error && (
+            <p className="mt-2 max-w-xs text-right text-xs text-rose-400">
+              {(uploadReceiptMutation.error as Error).message}
+            </p>
+          )}
+        </div>
+      </div>
 
       {pageError && (
         <div className="flex items-center gap-2 rounded-lg bg-rose-500/10 border border-rose-500/20 p-3 text-sm text-rose-400">
@@ -229,6 +289,8 @@ export default function ImportsPage() {
                     ? item.financialDate.slice(0, 10)
                     : new Date(item.receivedAt).toISOString().slice(0, 10)
                 );
+                setConfirmAmount(item.parsedAmount ?? "");
+                setConfirmDescription(item.parsedDescription ?? "");
               }}
               className={`w-full text-left rounded-xl border p-4 transition-all ${
                 selectedId === item.id
@@ -237,7 +299,10 @@ export default function ImportsPage() {
               }`}
             >
               <div className="flex items-center justify-between mb-1 flex-wrap gap-1">
-                <p className="text-sm font-semibold text-white">{item.institution}</p>
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                  {item.source === "DOCUMENT" && <LucideReceipt className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />}
+                  {item.institution}
+                </p>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {/* Status badge */}
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
@@ -311,6 +376,36 @@ export default function ImportsPage() {
               <p className="text-xs text-slate-500">Parser: {detail.parserKey ?? "—"}</p>
             </div>
 
+            {detail.failureMessage && (
+              <div className="flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-400">
+                <LucideAlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{detail.failureMessage}</span>
+              </div>
+            )}
+
+            {detail.source === "DOCUMENT" && detail.attachments.length > 0 && (
+              <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4">
+                <p className="mb-2 text-xs font-semibold text-slate-400">Uploaded document</p>
+                {detail.attachments[0].mimeType === "application/pdf" ? (
+                  <a
+                    href={`/api/attachments/${detail.attachments[0].id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-2 text-sm font-semibold text-indigo-400 hover:text-indigo-300"
+                  >
+                    <LucideFileText className="h-4 w-4" /> View PDF
+                  </a>
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={`/api/attachments/${detail.attachments[0].id}`}
+                    alt="Uploaded receipt"
+                    className="max-h-64 w-full rounded-lg object-contain"
+                  />
+                )}
+              </div>
+            )}
+
             {detail.parsedAmount && (
               <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4">
                 <p className="text-xs text-emerald-400 font-semibold mb-1">Parsed Amount</p>
@@ -328,22 +423,24 @@ export default function ImportsPage() {
               </div>
             )}
 
-            {/* Redacted payload — shown only in review (correction #11) */}
-            {detail.redactedPayload !== null ? (
-              <div className="rounded-xl bg-slate-800/50 border border-slate-700 p-4">
-                <p className="text-xs text-slate-400 font-semibold mb-2">
-                  Redacted SMS (account numbers masked)
-                </p>
-                <p className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all">
-                  {detail.redactedPayload}
-                </p>
-              </div>
-            ) : (
-              <div className="rounded-xl bg-slate-800/30 border border-slate-700/50 p-4">
-                <p className="text-xs text-slate-500 italic">
-                  Message content removed according to retention settings.
-                </p>
-              </div>
+            {/* Redacted payload — SMS-sourced imports only (correction #11) */}
+            {detail.source !== "DOCUMENT" && (
+              detail.redactedPayload !== null ? (
+                <div className="rounded-xl bg-slate-800/50 border border-slate-700 p-4">
+                  <p className="text-xs text-slate-400 font-semibold mb-2">
+                    Redacted SMS (account numbers masked)
+                  </p>
+                  <p className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-all">
+                    {detail.redactedPayload}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl bg-slate-800/30 border border-slate-700/50 p-4">
+                  <p className="text-xs text-slate-500 italic">
+                    Message content removed according to retention settings.
+                  </p>
+                </div>
+              )
             )}
 
             {/* Transaction link (correction #11) */}
@@ -354,6 +451,47 @@ export default function ImportsPage() {
                 </p>
               </div>
             )}
+
+            {/* Amount override — required when extraction left parsedAmount empty */}
+            <div>
+              <label
+                htmlFor="confirm-amount"
+                className="block text-xs font-semibold text-slate-400 mb-1"
+              >
+                Amount ({detail.parsedCurrency ?? "AED"})
+                {!detail.parsedAmount && <span className="text-amber-400"> — required</span>}
+              </label>
+              <input
+                id="confirm-amount"
+                type="number"
+                step="0.01"
+                min="0"
+                inputMode="decimal"
+                value={confirmAmount}
+                onChange={(e) => setConfirmAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+
+            {/* Description override */}
+            <div>
+              <label
+                htmlFor="confirm-description"
+                className="block text-xs font-semibold text-slate-400 mb-1"
+              >
+                Description
+              </label>
+              <input
+                id="confirm-description"
+                type="text"
+                maxLength={200}
+                value={confirmDescription}
+                onChange={(e) => setConfirmDescription(e.target.value)}
+                placeholder="e.g. vendor or purpose"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
 
             {/* Financial date override */}
             <div>
@@ -412,7 +550,8 @@ export default function ImportsPage() {
               <div className="flex gap-3 mt-5">
                 <button
                   onClick={() => confirmMutation.mutate(selectedId)}
-                  disabled={confirmMutation.isPending}
+                  disabled={confirmMutation.isPending || !confirmAmount.trim()}
+                  title={!confirmAmount.trim() ? "Enter an amount before confirming" : undefined}
                   className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-4 py-3 text-sm font-bold transition-all disabled:opacity-50"
                 >
                   <LucideCheckCircle className="h-4 w-4" />
