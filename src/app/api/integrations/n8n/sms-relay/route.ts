@@ -2,9 +2,10 @@
  * POST /api/integrations/n8n/sms-relay
  *
  * Public-facing relay so an iPhone Shortcut (or any external client) can
- * reach the local-only n8n SMS Import webhook through the app's existing
- * public ngrok tunnel, without n8n itself needing to be exposed to the
- * internet.
+ * reach the n8n SMS Import webhook, which now runs on an always-on Oracle
+ * Cloud instance (behind Caddy for HTTPS via sslip.io) rather than the
+ * developer's laptop — so imports keep working regardless of whether any
+ * local machine is on.
  *
  * Auth is a shared secret (X-BudgetFlow-Webhook-Secret / N8N_SMS_WEBHOOK_SECRET),
  * the same secret n8n's own "Check Secret" node validates — checked here too
@@ -15,7 +16,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 
-const N8N_SMS_WEBHOOK_URL = "http://127.0.0.1:5678/webhook/budgetflow/sms-import";
+const N8N_SMS_WEBHOOK_URL = "https://n8n.139-185-51-120.sslip.io/webhook/budgetflow/sms-import";
 const RELAY_TIMEOUT_MS = 15000;
 const MAX_BODY_BYTES = 10 * 1024; // 10 KB
 
