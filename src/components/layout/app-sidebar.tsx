@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
   LucideLayoutDashboard,
+  LucideLandmark,
   LucideReceipt,
   LucidePieChart,
   LucideTrendingDown,
@@ -22,6 +23,7 @@ import { useQuery } from "@tanstack/react-query";
 
 const navigationItems = [
   { name: "Dashboard",    href: "/dashboard",    icon: LucideLayoutDashboard },
+  { name: "Accounts",     href: "/accounts",     icon: LucideLandmark },
   { name: "Transactions", href: "/transactions", icon: LucideReceipt },
   { name: "Imports",      href: "/imports",      icon: LucideDownload, showBadge: true },
   { name: "Recurring",    href: "/recurring",    icon: LucideRefreshCw },
