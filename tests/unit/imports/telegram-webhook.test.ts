@@ -1,4 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// The AI merchant-recovery fallback (import.service.ts) calls the Anthropic
+// SDK whenever a regex parser succeeds without a merchant. This test file
+// mocks global.fetch for the Telegram outgoing-message assertions below —
+// without this mock, the Anthropic SDK's own HTTP call would also hit that
+// mock and shift fetchSpy.mock.calls[0] away from the Telegram request.
+vi.mock("@anthropic-ai/sdk", () => ({
+  default: vi.fn().mockImplementation(function MockAnthropic() {
+    return {
+      messages: {
+        parse: vi.fn().mockResolvedValue({
+          parsed_output: { amountFound: false, amount: 0, currency: "AED", merchant: null, referenceCode: null, availableBalance: null },
+        }),
+      },
+    };
+  }),
+}));
+
 import { POST } from "../../../src/app/api/integrations/telegram/webhook/route";
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";

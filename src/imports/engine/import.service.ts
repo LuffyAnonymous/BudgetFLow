@@ -183,6 +183,23 @@ export class ImportService {
         }
       }
 
+      // A regex parser can correctly extract amount/balance/reference while
+      // still failing on the merchant name alone — bank SMS formatting is
+      // too varied to regex-proof completely (e.g. unexpected punctuation).
+      // Rather than patching one more edge case into the regex every time
+      // this happens, ask the AI to recover just the merchant field so a
+      // parser's blind spot never has to become a manual-review case.
+      if (extractionMethod === "REGEX" && !normalized.merchant) {
+        console.log("[Import Service] Stage: Merchant missing after regex parse, attempting AI merchant recovery");
+        const aiRecovery = await extractSmsTransaction(message);
+        if (aiRecovery?.merchant) {
+          console.log("[Import Service] AI merchant recovery succeeded", { merchant: aiRecovery.merchant });
+          normalized = { ...normalized, merchant: aiRecovery.merchant };
+        } else {
+          console.log("[Import Service] AI merchant recovery found no merchant either");
+        }
+      }
+
       const fingerprint = buildFingerprint(normalized, maskedSenderValue);
       const existingByFingerprint = await db.importedTransaction.findUnique({
         where: { userId_fingerprint: { userId, fingerprint } },
