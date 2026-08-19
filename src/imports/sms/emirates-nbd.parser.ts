@@ -10,9 +10,11 @@ const KNOWN_SENDERS = ["ENBD", "EmiratesNBD", "Emirates-NBD", "EMIRATESNBD"];
 
 // Regular Expressions
 const AVAILABLE_BALANCE_RE = /(?:available\s+balance|bal|balance)\s+(?:is\s+)?(?:AED\s*)?([\d,]+(?:\.\d{1,2})?)/i;
-const MERCHANT_AT_RE = /at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|\s+Ref|Ref\b|\s+for|$)/i;
-const MERCHANT_USED_AT_RE = /used\s+at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+for|\.|\s+Ref|Ref\b|$)/i;
-const TRANSFER_TO_RE = /transfer\s+(?:of\s+(?:AED|USD)\s*[\d,.]+\s+)?to\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+(?:account|a\/c|card)|\.|\s+Ref|Ref\b|$)/i;
+// Merchant fields are frequently followed by ", <phone>, <city>" — a comma is
+// a hard stop so we capture just the merchant name, not the trailing detail.
+const MERCHANT_AT_RE = /at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|,|\s+Ref|Ref\b|\s+for|$)/i;
+const MERCHANT_USED_AT_RE = /used\s+at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+for|\.|,|\s+Ref|Ref\b|$)/i;
+const TRANSFER_TO_RE = /transfer\s+(?:of\s+(?:AED|USD)\s*[\d,.]+\s+)?to\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+(?:account|a\/c|card)|\.|,|\s+Ref|Ref\b|$)/i;
 
 function extractAccountEnding(message: string): string | null {
   const match = /(?:account|card|a\/c|acct)\s+(?:no\.?\s*|ending\s+)?([A-Za-z0-9X-]+)/i.exec(message);

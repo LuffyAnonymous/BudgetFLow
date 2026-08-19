@@ -20,10 +20,12 @@ const HANDLED_BY_DEDICATED_PARSER = new Set<AccountType>([
 // Same extraction patterns as the Emirates NBD parser, generalized: most
 // UAE bank SMS notifications share this vocabulary regardless of issuer.
 const AVAILABLE_BALANCE_RE = /(?:available\s+balance|bal|balance)\s+(?:is\s+)?(?:AED\s*)?([\d,]+(?:\.\d{1,2})?)/i;
-const MERCHANT_AT_RE = /at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|\s+Ref|Ref\b|\s+for|$)/i;
-const MERCHANT_USED_AT_RE = /used\s+at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+for|\.|\s+Ref|Ref\b|$)/i;
-const TRANSFER_TO_FROM_RE = /transfer\s+(?:of\s+(?:AED|USD)\s*[\d,.]+\s+)?(?:to|from)\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+(?:account|a\/c|card)|\.|\s+Ref|Ref\b|$)/i;
-const RECEIVED_FROM_RE = /received\s+(?:from\s+)?([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|\s+Ref|Ref\b|$)/i;
+// Merchant fields are frequently followed by ", <phone>, <city>" — a comma is
+// a hard stop so we capture just the merchant name, not the trailing detail.
+const MERCHANT_AT_RE = /at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|,|\s+Ref|Ref\b|\s+for|$)/i;
+const MERCHANT_USED_AT_RE = /used\s+at\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+for|\.|,|\s+Ref|Ref\b|$)/i;
+const TRANSFER_TO_FROM_RE = /transfer\s+(?:of\s+(?:AED|USD)\s*[\d,.]+\s+)?(?:to|from)\s+([A-Za-z0-9\s&_*.-]+?)(?:\s+(?:account|a\/c|card)|\.|,|\s+Ref|Ref\b|$)/i;
+const RECEIVED_FROM_RE = /received\s+(?:from\s+)?([A-Za-z0-9\s&_*.-]+?)(?:\s+on|\.|,|\s+Ref|Ref\b|$)/i;
 
 const AMOUNT_RE = /(?:AED|USD|Dhs)\s*([\d,]+(?:\.\d{1,2})?)/i;
 const DIRECTION_KEYWORDS_RE = /credited|debited|received|deposited|withdrawn|purchase|payment\s+of|used\s+for|transaction\s+of|charged|spent|sent/i;
