@@ -14,6 +14,11 @@ import {
   LucideChevronLeft,
   LucideChevronRight,
   LucideDownload,
+  LucideSparkles,
+  LucideWallet,
+  LucideCircleAlert,
+  LucideBadgeCheck,
+  LucideHourglass,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -64,6 +69,29 @@ interface MonthlyReport {
   };
 }
 
+interface SpendingRecommendation {
+  monthsOfHistory: number;
+  dataSufficient: boolean;
+  salary: {
+    calculated: string;
+    declared: string;
+    source: "SALARY_TAGGED" | "ALL_INCOME" | "DECLARED_FALLBACK";
+    discrepancyPct: string | null;
+  };
+  fixedCommitments: {
+    historicalFixedExpenses: string;
+    debtPayments: string;
+    remittance: string;
+    total: string;
+  };
+  recommendation: {
+    recommendedSavings: string;
+    recommendedSafeToSpend: string;
+    isOverCommitted: boolean;
+  } | null;
+  categoryBreakdown: { categoryName: string; historicalSharePct: string; suggestedCap: string }[];
+}
+
 interface TrendReport {
   months: {
     month: string;
@@ -88,7 +116,7 @@ const CATEGORY_COLORS = [
 ];
 
 export function ReportsClient() {
-  const [activeTab, setActiveTab] = useState<"monthly" | "trends" | "export">("monthly");
+  const [activeTab, setActiveTab] = useState<"monthly" | "trends" | "insights" | "export">("monthly");
   const [mounted, setMounted] = useState(false);
 
   // Date selections
@@ -124,6 +152,16 @@ export function ReportsClient() {
       return json.data;
     },
     enabled: activeTab === "trends",
+  });
+
+  const { data: insightsData, isLoading: loadingInsights } = useQuery<SpendingRecommendation>({
+    queryKey: ["spending-insights"],
+    queryFn: async () => {
+      const res = await fetch("/api/reports/insights");
+      const json = await res.json();
+      return json.data;
+    },
+    enabled: activeTab === "insights",
   });
 
   const handleExport = (type: string) => {
@@ -179,6 +217,16 @@ export function ReportsClient() {
           }`}
         >
           Historical Trends
+        </button>
+        <button
+          onClick={() => setActiveTab("insights")}
+          className={`pb-4 text-sm font-semibold border-b-2 px-1 transition-colors ${
+            activeTab === "insights"
+              ? "border-indigo-500 text-white font-bold"
+              : "border-transparent text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          Smart Insights
         </button>
         <button
           onClick={() => setActiveTab("export")}
@@ -534,6 +582,140 @@ export function ReportsClient() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Smart Insights Tab */}
+      {activeTab === "insights" && (
+        <div className="space-y-6">
+          {loadingInsights ? (
+            <p className="text-center text-slate-500 py-12">Analyzing your transaction history...</p>
+          ) : !insightsData ? (
+            <EmptyState
+              icon={LucideSparkles}
+              title="No insights yet"
+              description="Nothing to analyze yet — insights appear once transactions start coming in."
+            />
+          ) : !insightsData.dataSufficient ? (
+            <EmptyState
+              icon={LucideHourglass}
+              title="Still learning your spending patterns"
+              description={`Only ${insightsData.monthsOfHistory} month${insightsData.monthsOfHistory === 1 ? "" : "s"} of transaction history so far — at least 2 months are needed before a recommendation can be trusted. Keep importing transactions and check back.`}
+            />
+          ) : (
+            <div className="space-y-6">
+              {/* Salary: asymmetric hero + declared-vs-calculated comparison, not a repeated 3-card grid */}
+              <div className="rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/10 via-slate-900/40 to-slate-900/40 p-6">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <p className="text-[10px] uppercase tracking-wider text-indigo-300/80 font-semibold">
+                    {insightsData.salary.source === "SALARY_TAGGED" ? "Calculated Salary" : insightsData.salary.source === "ALL_INCOME" ? "Calculated From Income" : "Declared Salary"}
+                  </p>
+                  {insightsData.salary.source !== "DECLARED_FALLBACK" && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
+                      <LucideBadgeCheck className="h-3.5 w-3.5" aria-hidden="true" /> From {insightsData.monthsOfHistory}-month history
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-4xl font-bold text-white tabular-nums tracking-tight">
+                  AED {parseFloat(insightsData.salary.calculated).toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                {insightsData.salary.source !== "DECLARED_FALLBACK" && (
+                  <p className="mt-2 text-xs text-slate-400">
+                    Your declared salary in Settings is AED {parseFloat(insightsData.salary.declared).toFixed(2)}.
+                    {insightsData.salary.discrepancyPct && (
+                      <span className="text-amber-400 font-semibold"> That&apos;s a {insightsData.salary.discrepancyPct}% difference — consider updating Settings.</span>
+                    )}
+                  </p>
+                )}
+              </div>
+
+              {/* Fixed commitments breakdown */}
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <LucideWallet className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
+                  Fixed Monthly Commitments
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="bg-slate-950/40 rounded-xl p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Recurring Bills</p>
+                    <p className="font-bold text-sm text-slate-200 mt-1 tabular-nums">AED {parseFloat(insightsData.fixedCommitments.historicalFixedExpenses).toFixed(2)}</p>
+                  </div>
+                  <div className="bg-slate-950/40 rounded-xl p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Debt Payments</p>
+                    <p className="font-bold text-sm text-slate-200 mt-1 tabular-nums">AED {parseFloat(insightsData.fixedCommitments.debtPayments).toFixed(2)}</p>
+                  </div>
+                  <div className="bg-slate-950/40 rounded-xl p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Remittances</p>
+                    <p className="font-bold text-sm text-slate-200 mt-1 tabular-nums">AED {parseFloat(insightsData.fixedCommitments.remittance).toFixed(2)}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 border-t border-slate-800 pt-3">
+                  Total committed: <span className="font-bold text-slate-300">AED {parseFloat(insightsData.fixedCommitments.total).toFixed(2)}</span> — derived from your recent bills, active debts, and remittance history.
+                </p>
+              </div>
+
+              {/* Recommendation: over-committed warning, or safe-to-spend + savings */}
+              {insightsData.recommendation?.isOverCommitted ? (
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6 flex items-start gap-3">
+                  <LucideCircleAlert className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <h4 className="text-sm font-bold text-rose-300">Your fixed commitments exceed your calculated salary</h4>
+                    <p className="text-xs text-rose-300/70 mt-1">
+                      There&apos;s no safe-to-spend budget to recommend this month — your recurring bills, debt payments, and remittances alone add up to more than you&apos;re earning. Review your commitments or debts before planning new spending.
+                    </p>
+                  </div>
+                </div>
+              ) : insightsData.recommendation ? (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  <div className="lg:col-span-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6">
+                    <p className="text-[10px] uppercase tracking-wider text-emerald-300/80 font-semibold">Safe to Spend This Month</p>
+                    <p className="mt-2 text-4xl font-bold text-white tabular-nums tracking-tight">
+                      AED {parseFloat(insightsData.recommendation.recommendedSafeToSpend).toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-400">
+                      What&apos;s left after fixed commitments and your recommended savings — free to spend on groceries, dining, shopping, and other variable categories.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-6">
+                    <p className="text-[10px] uppercase tracking-wider text-indigo-300/80 font-semibold">Recommended Savings</p>
+                    <p className="mt-2 text-2xl font-bold text-indigo-300 tabular-nums tracking-tight">
+                      AED {parseFloat(insightsData.recommendation.recommendedSavings).toFixed(2)}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">Based on your own best sustainable months, not a generic rule.</p>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Category breakdown */}
+              {insightsData.categoryBreakdown.length > 0 && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <LucidePieChart className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
+                    Suggested Category Caps
+                  </h4>
+                  <div className="space-y-3">
+                    {insightsData.categoryBreakdown.map((c, idx) => (
+                      <div key={c.categoryName}>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-slate-300 font-semibold">{c.categoryName}</span>
+                          <span className="text-slate-400 tabular-nums">AED {parseFloat(c.suggestedCap).toFixed(2)} <span className="text-slate-600">({c.historicalSharePct}%)</span></span>
+                        </div>
+                        <div className="w-full bg-slate-800 rounded-full h-1.5">
+                          <div
+                            className="h-1.5 rounded-full"
+                            style={{ width: `${c.historicalSharePct}%`, backgroundColor: CATEGORY_COLORS[idx % CATEGORY_COLORS.length] }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-500 border-t border-slate-800 pt-3">
+                    Split proportionally to how you&apos;ve historically spent across these categories.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>

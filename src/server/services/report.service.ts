@@ -1,6 +1,7 @@
 import { ReportRepository } from "../repositories/report.repository";
 import { Decimal } from "decimal.js";
-import { RemittanceStatus, TransactionType, CashFlowDirection, SavingTxType } from "@prisma/client";
+import { RemittanceStatus, TransactionType, CashFlowDirection, SavingTxType, CategoryType, DebtStatus } from "@prisma/client";
+import { calculateRemainingMoney } from "../calculations/finance-calculations";
 
 export interface MonthlyReportData {
   month: string; // YYYY-MM
@@ -32,6 +33,29 @@ export interface MonthlyReportData {
     totalDeposits: string;
     totalWithdrawals: string;
   };
+}
+
+export interface SpendingRecommendation {
+  monthsOfHistory: number;
+  dataSufficient: boolean;
+  salary: {
+    calculated: string;
+    declared: string;
+    source: "SALARY_TAGGED" | "ALL_INCOME" | "DECLARED_FALLBACK";
+    discrepancyPct: string | null;
+  };
+  fixedCommitments: {
+    historicalFixedExpenses: string;
+    debtPayments: string;
+    remittance: string;
+    total: string;
+  };
+  recommendation: {
+    recommendedSavings: string;
+    recommendedSafeToSpend: string;
+    isOverCommitted: boolean;
+  } | null;
+  categoryBreakdown: { categoryName: string; historicalSharePct: string; suggestedCap: string }[];
 }
 
 export interface TrendReportData {
@@ -404,5 +428,207 @@ export class ReportService {
     });
 
     return { months: monthsData };
+  }
+
+  /**
+   * Median of a Decimal list — used throughout getSpendingRecommendation so a
+   * single unusually large/small month (a bonus, a one-off big purchase)
+   * doesn't skew a figure the user will plan a whole month's spending around.
+   */
+  private median(values: Decimal[]): Decimal {
+    if (values.length === 0) return new Decimal(0);
+    const sorted = [...values].sort((a, b) => a.comparedTo(b));
+    const mid = Math.floor(sorted.length / 2);
+    if (sorted.length % 2 === 0) {
+      return sorted[mid - 1].add(sorted[mid]).div(2);
+    }
+    return sorted[mid];
+  }
+
+  private shiftMonth(monthStr: string, delta: number): string {
+    const [y, m] = monthStr.split("-").map(Number);
+    const val = y * 12 + (m - 1) + delta;
+    const year = Math.floor(val / 12);
+    const month = (val % 12) + 1;
+    return `${year}-${String(month).padStart(2, "0")}`;
+  }
+
+  /**
+   * Calculates the user's real salary from their own transaction history
+   * (rather than trusting the self-declared Setting.monthlySalary alone),
+   * then recommends a monthly savings target and safe-to-spend budget based
+   * on their actual historical behavior over a trailing 6-month window.
+   * Purely advisory — never writes back to Budget/SavingGoal/Setting.
+   */
+  async getSpendingRecommendation(userId: string): Promise<SpendingRecommendation> {
+    const toMonth = this.getDubaiYearMonth(new Date());
+    const fromMonth = this.shiftMonth(toMonth, -5); // trailing 6-month window, inclusive
+
+    const [fromYear, fromMonthNum] = fromMonth.split("-").map(Number);
+    const nextToMonthStr = this.shiftMonth(toMonth, 1);
+    const [nextToYear, nextToMonthNum] = nextToMonthStr.split("-").map(Number);
+
+    const startDate = new Date(new Date(`${fromYear}-${String(fromMonthNum).padStart(2, "0")}-01T00:00:00`).toLocaleString("en-US", { timeZone: "Asia/Dubai" }));
+    const endDate = new Date(new Date(`${nextToYear}-${String(nextToMonthNum).padStart(2, "0")}-01T00:00:00`).toLocaleString("en-US", { timeZone: "Asia/Dubai" }));
+
+    const monthsList: string[] = [];
+    for (let i = 0; i < 6; i++) monthsList.push(this.shiftMonth(fromMonth, i));
+
+    const [transactions, debts, settings] = await Promise.all([
+      this.reportRepo.getTransactions(userId, startDate, endDate),
+      this.reportRepo.getDebts(userId),
+      this.reportRepo.getSettings(userId),
+    ]);
+
+    const zeroByMonth = (): Record<string, Decimal> =>
+      Object.fromEntries(monthsList.map((m) => [m, new Decimal(0)]));
+
+    const incomeByMonth = zeroByMonth();
+    const salaryIncomeByMonth = zeroByMonth();
+    const fixedExpenseByMonth = zeroByMonth();
+    const variableExpenseByMonth = zeroByMonth();
+    const savingsDepositByMonth = zeroByMonth();
+    const remittanceByMonth = zeroByMonth();
+    const debtPaymentByMonth = zeroByMonth();
+    const variableByCategory: Record<string, Decimal> = {};
+    const allMonthsSeen = new Set<string>();
+
+    for (const tx of transactions) {
+      const m = tx.budgetMonth || this.getDubaiYearMonth(tx.date);
+      if (!(m in incomeByMonth)) continue; // outside the 6-month window (budgetMonth can lag/lead the raw date)
+      allMonthsSeen.add(m);
+      const isInflow = this.isTransactionInflow(tx);
+
+      if (tx.type === TransactionType.INCOME) {
+        incomeByMonth[m] = incomeByMonth[m].add(tx.amount);
+        const label = `${tx.category.name} ${tx.description}`.toLowerCase();
+        if (label.includes("salary")) {
+          salaryIncomeByMonth[m] = salaryIncomeByMonth[m].add(tx.amount);
+        }
+      } else if (tx.type === TransactionType.EXPENSE && !isInflow) {
+        if (tx.category.type === CategoryType.FIXED_EXPENSE) {
+          fixedExpenseByMonth[m] = fixedExpenseByMonth[m].add(tx.amount);
+        } else if (tx.category.type === CategoryType.VARIABLE_EXPENSE) {
+          variableExpenseByMonth[m] = variableExpenseByMonth[m].add(tx.amount);
+          variableByCategory[tx.category.name] = (variableByCategory[tx.category.name] || new Decimal(0)).add(tx.amount);
+        }
+      } else if (tx.type === TransactionType.SAVINGS && !isInflow) {
+        savingsDepositByMonth[m] = savingsDepositByMonth[m].add(tx.amount);
+      } else if (tx.type === TransactionType.REMITTANCE) {
+        remittanceByMonth[m] = remittanceByMonth[m].add(tx.amount);
+      } else if (tx.type === TransactionType.DEBT_PAYMENT) {
+        debtPaymentByMonth[m] = debtPaymentByMonth[m].add(tx.amount);
+      }
+    }
+
+    const monthsOfHistory = allMonthsSeen.size;
+    const dataSufficient = monthsOfHistory >= 2;
+
+    // Only zero-fill medians across months the user has actually been active
+    // in (from their first-ever transaction in the window onward) — a new
+    // user with 2 real months of history inside a 6-month calendar window
+    // shouldn't have 4 "phantom" pre-signup zero months dragging their
+    // fixed-cost median down to a fraction of what they actually pay.
+    const earliestActiveMonth = monthsList.find((m) => allMonthsSeen.has(m));
+    const activeMonthsList = earliestActiveMonth
+      ? monthsList.filter((m) => m >= earliestActiveMonth)
+      : monthsList;
+
+    // Salary: tiered fallback, honest about how confident the figure is.
+    const salaryTaggedMonths = monthsList.filter((m) => salaryIncomeByMonth[m].greaterThan(0));
+    const anyIncomeMonths = monthsList.filter((m) => incomeByMonth[m].greaterThan(0));
+    const declaredSalary = settings ? new Decimal(settings.monthlySalary) : new Decimal(0);
+
+    let calculatedSalary: Decimal;
+    let salarySource: SpendingRecommendation["salary"]["source"];
+    if (salaryTaggedMonths.length >= 2) {
+      calculatedSalary = this.median(salaryTaggedMonths.map((m) => salaryIncomeByMonth[m]));
+      salarySource = "SALARY_TAGGED";
+    } else if (anyIncomeMonths.length >= 2) {
+      calculatedSalary = this.median(anyIncomeMonths.map((m) => incomeByMonth[m]));
+      salarySource = "ALL_INCOME";
+    } else {
+      calculatedSalary = declaredSalary;
+      salarySource = "DECLARED_FALLBACK";
+    }
+
+    let discrepancyPct: string | null = null;
+    if (salarySource !== "DECLARED_FALLBACK" && declaredSalary.greaterThan(0)) {
+      const pct = calculatedSalary.sub(declaredSalary).abs().div(declaredSalary).mul(100);
+      if (pct.greaterThanOrEqualTo(10)) discrepancyPct = pct.toFixed(1);
+    }
+
+    // Fixed commitments: behavior-derived expenses + always-current debt schedule + remittance (if regular).
+    const historicalFixedExpenses = this.median(activeMonthsList.map((m) => fixedExpenseByMonth[m]));
+    const debtCommitment = debts
+      .filter((d) => d.status === DebtStatus.ACTIVE)
+      .reduce((sum, d) => sum.add(d.monthlyPayment), new Decimal(0));
+    const remittanceMonthsPresent = activeMonthsList.filter((m) => remittanceByMonth[m].greaterThan(0)).length;
+    const remittanceCommitment = remittanceMonthsPresent >= Math.ceil(activeMonthsList.length / 2)
+      ? this.median(activeMonthsList.map((m) => remittanceByMonth[m]))
+      : new Decimal(0);
+    const totalFixedCommitments = historicalFixedExpenses.add(debtCommitment).add(remittanceCommitment);
+
+    // Recommendation: savings target from the user's own sustainable positive
+    // months, then whatever's left over is safe to spend.
+    let recommendation: SpendingRecommendation["recommendation"] = null;
+    const categoryBreakdown: SpendingRecommendation["categoryBreakdown"] = [];
+
+    if (dataSufficient) {
+      const netCashFlowByMonth = activeMonthsList.map((m) =>
+        calculateRemainingMoney(
+          incomeByMonth[m],
+          fixedExpenseByMonth[m].add(variableExpenseByMonth[m]),
+          savingsDepositByMonth[m],
+          remittanceByMonth[m].add(debtPaymentByMonth[m])
+        )
+      );
+      const positiveMonths = netCashFlowByMonth.filter((v) => v.greaterThan(0));
+      const rawRecommendedSavings = positiveMonths.length > 0 ? this.median(positiveMonths) : new Decimal(0);
+
+      const isOverCommitted = totalFixedCommitments.greaterThan(calculatedSalary);
+      const headroom = Decimal.max(0, calculatedSalary.sub(totalFixedCommitments));
+      const recommendedSavings = Decimal.min(rawRecommendedSavings, headroom);
+      const recommendedSafeToSpend = isOverCommitted ? new Decimal(0) : Decimal.max(0, headroom.sub(recommendedSavings));
+
+      recommendation = {
+        recommendedSavings: recommendedSavings.toFixed(2),
+        recommendedSafeToSpend: recommendedSafeToSpend.toFixed(2),
+        isOverCommitted,
+      };
+
+      const totalVariable = Object.values(variableByCategory).reduce((sum, v) => sum.add(v), new Decimal(0));
+      if (totalVariable.greaterThan(0) && recommendedSafeToSpend.greaterThan(0)) {
+        Object.entries(variableByCategory)
+          .sort(([, a], [, b]) => b.comparedTo(a))
+          .forEach(([categoryName, amount]) => {
+            const share = amount.div(totalVariable);
+            categoryBreakdown.push({
+              categoryName,
+              historicalSharePct: share.mul(100).toFixed(1),
+              suggestedCap: recommendedSafeToSpend.mul(share).toFixed(2),
+            });
+          });
+      }
+    }
+
+    return {
+      monthsOfHistory,
+      dataSufficient,
+      salary: {
+        calculated: calculatedSalary.toFixed(2),
+        declared: declaredSalary.toFixed(2),
+        source: salarySource,
+        discrepancyPct,
+      },
+      fixedCommitments: {
+        historicalFixedExpenses: historicalFixedExpenses.toFixed(2),
+        debtPayments: debtCommitment.toFixed(2),
+        remittance: remittanceCommitment.toFixed(2),
+        total: totalFixedCommitments.toFixed(2),
+      },
+      recommendation,
+      categoryBreakdown,
+    };
   }
 }

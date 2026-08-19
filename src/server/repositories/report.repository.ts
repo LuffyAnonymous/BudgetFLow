@@ -94,4 +94,8 @@ export class ReportRepository {
   async getSavingGoals(userId: string) {
     return db.savingGoal.findMany({ where: { userId } });
   }
+
+  async getSettings(userId: string) {
+    return db.setting.findUnique({ where: { userId } });
+  }
 }
