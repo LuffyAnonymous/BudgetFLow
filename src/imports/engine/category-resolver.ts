@@ -42,6 +42,35 @@ export interface ResolvedCategory {
   name: string;
 }
 
+// A merchant-categorizer label (e.g. "Buy Now Pay Later") is a generic
+// bucket name — it won't exist verbatim for a user who named their own
+// category something more specific ("Tabby Payment", "BNPL", etc). Rather
+// than only ever matching the literal label, try known aliases before
+// falling through to "Uncategorized".
+const CATEGORY_NAME_ALIASES: Partial<Record<string, string[]>> = {
+  "Buy Now Pay Later": ["tabby", "tamara", "bnpl", "buy now pay later", "postpay", "afterpay"],
+};
+
+export async function resolveCategoryByAlias(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  categoryName: string
+): Promise<ResolvedCategory | null> {
+  const aliases = CATEGORY_NAME_ALIASES[categoryName];
+  if (!aliases) return null;
+
+  const candidates = await tx.category.findMany({
+    where: { userId },
+    select: { id: true, name: true },
+  });
+
+  for (const alias of aliases) {
+    const match = candidates.find((c) => c.name.toLowerCase().includes(alias));
+    if (match) return match;
+  }
+  return null;
+}
+
 export async function resolveFallbackCategory(
   tx: Prisma.TransactionClient,
   userId: string,

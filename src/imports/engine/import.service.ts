@@ -27,7 +27,7 @@ import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
 import { resolveInstitution, ResolvedInstitution } from "./sender-normalizer";
 import { classifyDirection, TransactionDirection } from "./direction-classifier";
 import { categorizeMerchant, KnownCategory } from "./merchant-categorizer";
-import { resolveFallbackCategory } from "./category-resolver";
+import { resolveFallbackCategory, resolveCategoryByAlias } from "./category-resolver";
 import { matchInternalTransfer } from "./transfer-matcher";
 import { evaluateConfidence } from "./confidence-evaluator";
 import { updateBalance } from "./balance-updater";
@@ -354,6 +354,13 @@ export class ImportService {
               where: { userId, name: { equals: category, mode: "insensitive" } }
             });
 
+            // The generic label ("Buy Now Pay Later") may not match a user's
+            // own category name verbatim (e.g. "Tabby Payment") — try known
+            // aliases before falling through further.
+            if (!dbCategory) {
+              dbCategory = await resolveCategoryByAlias(tx, userId, category);
+            }
+
             // Merchant-keyword matching came up empty — try the salary-ratio /
             // single-type-match rules before falling back to "Uncategorized".
             if (!dbCategory && category === KnownCategory.UNCATEGORIZED) {
@@ -514,6 +521,10 @@ export class ImportService {
         let dbCategory: { id: string } | null = await tx.category.findFirst({
           where: { userId, name: { equals: categoryStr, mode: "insensitive" } }
         });
+
+        if (!dbCategory) {
+          dbCategory = await resolveCategoryByAlias(tx, userId, categoryStr);
+        }
 
         if (!dbCategory && categoryStr === KnownCategory.UNCATEGORIZED) {
           dbCategory = await resolveFallbackCategory(tx, userId, txType, amount);
