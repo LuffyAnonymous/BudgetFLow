@@ -49,7 +49,7 @@ export class AccountService {
    */
   async ensureAccountForInstitution(
     userId: string,
-    institution: { type: AccountType; name: string },
+    institution: { type: AccountType; name: string; isCreditCard?: boolean },
     tx?: Prisma.TransactionClient
   ): Promise<Account> {
     const client = this.getClient(tx);
@@ -63,6 +63,7 @@ export class AccountService {
         userId,
         name: institution.name,
         type: institution.type,
+        isCreditCard: institution.isCreditCard ?? false,
         currentBalance: new Prisma.Decimal(0),
         latestImportedBalance: null,
         lastSMSImportedAt: null,

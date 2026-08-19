@@ -18,6 +18,7 @@ interface AccountItem {
   id: string;
   type: string;
   name: string;
+  isCreditCard: boolean;
   currentBalance: string;
   latestImportedBalance: string | null;
   lastSMSImported: string | null;
@@ -27,10 +28,13 @@ interface AccountItem {
   bankDifference: string | null;
 }
 
-// BNPL balances are money owed to Tabby/Tamara, not money the user has to
-// spend — kept out of the "Total Available Money" headline so that figure
-// stays trustworthy as an actual spendable-cash number.
+// BNPL balances and credit card balances are both money owed, not money the
+// user has to spend — kept out of the "Total Available Money" headline so
+// that figure stays trustworthy as an actual spendable-cash number.
 const BNPL_TYPES = new Set(["TABBY", "TAMARA"]);
+function isOwedAccount(a: AccountItem): boolean {
+  return BNPL_TYPES.has(a.type) || a.isCreditCard;
+}
 
 const TYPE_ICON: Record<string, LucideIcon> = {
   CASH: LucideWallet,
@@ -47,12 +51,14 @@ const TYPE_LABEL: Record<string, string> = {
   OTHER_BANK: "Bank",
 };
 
-function iconFor(type: string): LucideIcon {
-  return TYPE_ICON[type] ?? LucideLandmark;
+function iconFor(a: AccountItem): LucideIcon {
+  if (a.isCreditCard) return LucideCreditCard;
+  return TYPE_ICON[a.type] ?? LucideLandmark;
 }
 
-function labelFor(type: string): string {
-  return TYPE_LABEL[type] ?? "Bank";
+function labelFor(a: AccountItem): string {
+  if (a.isCreditCard) return "Credit Card";
+  return TYPE_LABEL[a.type] ?? "Bank";
 }
 
 function formatRelativeTime(iso: string | null): string {
@@ -84,20 +90,21 @@ export default function AccountsClient() {
     refetchInterval: 2 * 60 * 1000,
   });
 
-  const spendable = accounts.filter((a) => !BNPL_TYPES.has(a.type));
-  const bnpl = accounts.filter((a) => BNPL_TYPES.has(a.type));
+  const spendable = accounts.filter((a) => !isOwedAccount(a));
+  const owed = accounts.filter(isOwedAccount);
 
   const totalAvailable = spendable.reduce((sum, a) => sum + parseFloat(a.currentBalance), 0);
-  // Charges (OUTFLOW) push a BNPL account's balance negative as installments
-  // accumulate; a negative balance is what's owed, so flip the sign to show
-  // it as a positive amount. Any positive balance means nothing is owed.
-  const totalOwedBnpl = bnpl.reduce((sum, a) => sum + Math.max(0, -parseFloat(a.currentBalance)), 0);
+  // Charges (OUTFLOW) push a BNPL or credit card balance negative as
+  // installments/purchases accumulate; a negative balance is what's owed, so
+  // flip the sign to show it as a positive amount. Any positive balance
+  // means nothing is owed.
+  const totalOwed = owed.reduce((sum, a) => sum + Math.max(0, -parseFloat(a.currentBalance)), 0);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300 text-slate-100">
       <PageHeader
         title="Accounts"
-        description="Live balances across every bank, wallet, and BNPL app your SMS imports keep in sync — no manual entry, no laptop dependency."
+        description="Live balances across every bank, wallet, credit card, and BNPL app your SMS imports keep in sync — no manual entry, no laptop dependency."
       />
 
       {isLoading ? (
@@ -122,12 +129,12 @@ export default function AccountsClient() {
               </p>
             </div>
             <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6">
-              <p className="text-[10px] uppercase tracking-wider text-rose-300/80 font-semibold">Outstanding BNPL</p>
+              <p className="text-[10px] uppercase tracking-wider text-rose-300/80 font-semibold">Money You Owe</p>
               <p className="mt-2 text-2xl font-bold text-rose-300 tabular-nums tracking-tight">
-                {formatAED(totalOwedBnpl.toFixed(2))}
+                {formatAED(totalOwed.toFixed(2))}
               </p>
               <p className="mt-2 text-xs text-slate-500">
-                {bnpl.length === 0 ? "No Tabby or Tamara activity yet." : "Owed to Tabby / Tamara — not counted as spendable money."}
+                {owed.length === 0 ? "No BNPL or credit card activity yet." : "Owed to Tabby, Tamara, or a credit card — not counted as spendable money."}
               </p>
             </div>
           </div>
@@ -135,7 +142,7 @@ export default function AccountsClient() {
           {/* Per-institution cards */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {accounts.map((acc) => {
-              const Icon = iconFor(acc.type);
+              const Icon = iconFor(acc);
               const hasSynced = !!acc.lastSMSImported;
               const isSynced = hasSynced && acc.reconciliationStatus === "MATCHED";
               const hasDiscrepancy = acc.reconciliationStatus === "BANK_BALANCE_DIFFERENCE" && acc.bankDifference && parseFloat(acc.bankDifference) !== 0;
@@ -149,7 +156,7 @@ export default function AccountsClient() {
                       </div>
                       <div className="min-w-0">
                         <h3 className="font-bold text-white text-sm truncate">{acc.name}</h3>
-                        <span className="text-[10px] uppercase tracking-wide text-slate-500">{labelFor(acc.type)}</span>
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">{labelFor(acc)}</span>
                       </div>
                     </div>
                   </div>

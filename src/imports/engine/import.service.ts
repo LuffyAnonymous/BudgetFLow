@@ -25,6 +25,7 @@ import { determineBudgetMonth } from "@/lib/salary-month";
 import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
 
 import { resolveInstitution, ResolvedInstitution } from "./sender-normalizer";
+import { isCreditCardTransaction } from "./card-type-classifier";
 import { classifyDirection, TransactionDirection } from "./direction-classifier";
 import { categorizeMerchant, KnownCategory } from "./merchant-categorizer";
 import { resolveFallbackCategory, resolveCategoryByAlias } from "./category-resolver";
@@ -90,7 +91,15 @@ export class ImportService {
       const institution = resolveInstitution(sender);
       const maskedSenderValue = maskSender(sender);
 
-      console.log("[Import Service] Stage: Selecting parser", { institution: institution.displayName });
+      // A credit card purchase increases what's owed, not spendable cash —
+      // track it on its own account (suffixed so it never collides with the
+      // same bank's checking account) rather than debiting real money.
+      const isCreditCard = isCreditCardTransaction(message);
+      const institutionForAccount: ResolvedInstitution = isCreditCard
+        ? { ...institution, displayName: `${institution.displayName} Credit Card` }
+        : institution;
+
+      console.log("[Import Service] Stage: Selecting parser", { institution: institutionForAccount.displayName, isCreditCard });
       const selectionResult = smsParserRegistry.select(sender, message, importSetting.senderAllowlist);
 
       let normalized: NormalizedSmsTransaction;
@@ -135,7 +144,7 @@ export class ImportService {
         if (aiResult) {
           normalized = {
             source: "SMS",
-            institution: institution.displayName,
+            institution: institutionForAccount.displayName,
             parserKey: AI_SMS_PARSER_KEY,
             parserVersion: "1.0.0",
             amount: aiResult.amount,
@@ -157,7 +166,7 @@ export class ImportService {
           const importedTx = await db.importedTransaction.create({
             data: {
               source: ImportSource.SMS,
-              institution: institution.displayName,
+              institution: institutionForAccount.displayName,
               status: ImportStatus.REVIEW_REQUIRED,
               parserKey: null,
               redactedPayload: redacted,
@@ -198,6 +207,17 @@ export class ImportService {
         } else {
           console.log("[Import Service] AI merchant recovery found no merchant either");
         }
+      }
+
+      if (isCreditCard) {
+        // A credit card's reported figure ("Available Credit Limit",
+        // "Outstanding Balance") isn't cash on hand the way a checking
+        // account's "Available Balance" is, and can even carry the opposite
+        // sign meaning — never trust it as the account's authoritative
+        // balance. The account's tracked balance is instead computed purely
+        // from the transaction ledger (updateBalance's amount+direction
+        // math), the same way a BNPL account's balance already is.
+        normalized = { ...normalized, institution: institutionForAccount.displayName, availableBalance: null };
       }
 
       const fingerprint = buildFingerprint(normalized, maskedSenderValue);
@@ -250,7 +270,7 @@ export class ImportService {
           },
         });
 
-        await this.syncBalance(userId, institution, normalized.availableBalance, direction, null);
+        await this.syncBalance(userId, institutionForAccount, normalized.availableBalance, direction, null, isCreditCard);
 
         if (outcome === "pending_event") return { outcome: "pending_event", importedTransactionId: importedTx.id };
         return { outcome: "ignored" };
@@ -314,7 +334,7 @@ export class ImportService {
           },
         });
 
-        await this.syncBalance(userId, institution, normalized.availableBalance, direction, null);
+        await this.syncBalance(userId, institutionForAccount, normalized.availableBalance, direction, null, isCreditCard);
 
         return { outcome: "review_required", importedTransactionId: importedTx.id, parsedAmount: normalized.amount.toFixed(2), currency: normalized.currency };
       }
@@ -323,7 +343,7 @@ export class ImportService {
       const result = await db.$transaction(async (tx) => {
         const account = await accountService.ensureAccountForInstitution(
           userId,
-          { type: institution.accountType, name: institution.displayName },
+          { type: institutionForAccount.accountType, name: institutionForAccount.displayName, isCreditCard },
           tx
         );
         const primaryAccId = account.id;
@@ -631,11 +651,13 @@ export class ImportService {
     institution: ResolvedInstitution,
     authoritativeBalance: Decimal | null,
     direction: TransactionDirection,
-    amount: Decimal | null
+    amount: Decimal | null,
+    isCreditCard: boolean = false
   ) {
     const account = await accountService.ensureAccountForInstitution(userId, {
       type: institution.accountType,
       name: institution.displayName,
+      isCreditCard,
     });
 
     await updateBalance(account.id, amount, direction, authoritativeBalance);

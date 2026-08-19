@@ -18,6 +18,7 @@ export async function GET(request: Request) {
           id: acc.id,
           type: acc.type,
           name: acc.name,
+          isCreditCard: acc.isCreditCard,
           currentBalance: acc.currentBalance.toFixed(2),
           latestImportedBalance: acc.latestImportedBalance ? acc.latestImportedBalance.toFixed(2) : null,
           lastSMSImported: acc.lastSMSImportedAt ? acc.lastSMSImportedAt.toISOString() : null,

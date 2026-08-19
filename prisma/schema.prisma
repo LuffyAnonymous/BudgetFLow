@@ -161,6 +161,11 @@ model Account {
   id                    String      @id @default(uuid())
   type                  AccountType
   name                  String
+  // A credit card purchase increases what's owed rather than spending real
+  // cash on hand — this account's currentBalance is tracked as a liability
+  // (like a BNPL account) instead of spendable money, and excluded from
+  // "Total Available Money" on the Accounts page.
+  isCreditCard          Boolean     @default(false)
   currentBalance        Decimal     @default(0) @db.Decimal(12, 2)
   latestImportedBalance Decimal?    @db.Decimal(12, 2)
   lastSMSImportedAt     DateTime?
