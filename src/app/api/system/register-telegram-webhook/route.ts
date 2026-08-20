@@ -1,6 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
+
+function verifySecret(authHeader: string | null): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+
+  const provided = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+  if (!provided) return false;
+
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(secret, "utf8");
+
+  // timingSafeEqual requires equal-length buffers
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
+  if (!verifySecret(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
   const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
   const WEBHOOK_URL = "https://budgetflow-drab-nine.vercel.app/api/integrations/telegram/webhook";
