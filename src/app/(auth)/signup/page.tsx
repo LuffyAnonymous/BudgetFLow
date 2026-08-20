@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import Link from "next/link";
 import { LucideLock, LucideMail, LucideUser, LucideLoader2, LucideCheckCircle2 } from "lucide-react";
+import { BrandPanel } from "@/components/auth/brand-panel";
 
 const signupSchema = z.object({
   firstName: z.string().trim().min(1, "First name is required").max(50),
@@ -192,25 +193,32 @@ function SignupForm() {
 
 export default function SignupPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-radial from-slate-900 via-slate-950 to-black p-4 text-slate-100">
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur-xl p-8 shadow-2xl">
-        {/* Glow Effects */}
-        <div className="absolute -top-40 -left-40 h-80 w-80 rounded-full bg-indigo-500/10 blur-3xl" />
-        <div className="absolute -bottom-40 -right-40 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
+    <div className="flex min-h-screen w-full bg-neutral-950 text-slate-100">
+      <BrandPanel />
 
-        <div className="relative mb-8 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-500 to-cyan-500 shadow-lg shadow-indigo-500/25">
-            <span className="font-bold text-xl text-white">B</span>
+      {/* Form panel */}
+      <div className="flex w-full flex-1 items-center justify-center p-6 sm:p-10 lg:px-6 xl:px-10">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-500 to-cyan-500 shadow-md shadow-indigo-500/20">
+              <span className="text-base font-bold text-white">B</span>
+            </div>
+            <span className="text-base font-bold tracking-tight text-white">
+              BudgetFlow
+            </span>
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-            BudgetFlow
-          </h1>
-          <p className="mt-2 text-sm text-slate-400">
-            Create your account to start tracking your cash flow
-          </p>
-        </div>
 
-        <SignupForm />
+          <h2 className="text-2xl font-bold tracking-tight text-white">
+            Create your account
+          </h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Start tracking your cash flow automatically.
+          </p>
+
+          <div className="mt-8">
+            <SignupForm />
+          </div>
+        </div>
       </div>
     </div>
   );

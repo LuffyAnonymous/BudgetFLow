@@ -360,7 +360,7 @@ export function ProductCarousel({ className = "" }: { className?: string }) {
 
   useEffect(() => {
     if (reducedMotion || paused) return;
-    const t = setTimeout(() => setIndex((i) => (i + 1) % SLIDES.length), 4500);
+    const t = setTimeout(() => setIndex((i) => (i + 1) % SLIDES.length), 2000);
     return () => clearTimeout(t);
   }, [index, paused, reducedMotion]);
 
@@ -383,7 +383,7 @@ export function ProductCarousel({ className = "" }: { className?: string }) {
       {SLIDES.map(({ Slide }, i) => (
         <div
           key={i}
-          className={`absolute inset-0 flex flex-col justify-center p-5 pb-10 transition-all duration-700 ease-in-out sm:p-6 sm:pb-10 ${
+          className={`absolute inset-0 flex flex-col p-5 pb-10 transition-opacity duration-500 ease-in-out sm:p-6 sm:pb-10 ${
             i === index ? "opacity-100" : "pointer-events-none opacity-0"
           }`}
           aria-hidden={i !== index}
