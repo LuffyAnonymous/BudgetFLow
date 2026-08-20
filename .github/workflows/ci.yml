@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: budgetflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/budgetflow_test?schema=public
+      AUTH_SECRET: ci-placeholder-secret-not-used-in-production
+      NEXTAUTH_URL: http://localhost:3000
+      CRON_SECRET: ci-placeholder-cron-secret
+      IMPORT_CLEANUP_SECRET: ci-placeholder-cleanup-secret
+      N8N_SMS_WEBHOOK_SECRET: ci-placeholder-webhook-secret
+      RESEND_API_KEY: ci-placeholder-resend-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+      TELEGRAM_BOT_TOKEN: ci-placeholder-telegram-token
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit & integration tests
+        run: npm test
