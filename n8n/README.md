@@ -45,7 +45,8 @@ n8n/workflows/
 ├── 04-notifications/                      # delivery/fan-out only, no business logic
 │   ├── import-failed.json
 │   ├── low-confidence-import.json
-│   └── system-error.json
+│   ├── system-error.json
+│   └── error-trigger.json                 # instance-wide catch-all, see "Error handling & retries"
 │
 ├── 05-utilities/
 │   ├── logger.json
@@ -203,6 +204,14 @@ you set yourself.
 7. Test the pipeline manually before activating intake: `POST` a test SMS to
    `.../webhook/budgetflow/sms-import` with `{"body":"AED 45.50 at Carrefour
    today"}` and confirm a transaction appears in BudgetFlow.
+8. Wire up the crash safety net: open every workflow **except** those in
+   `04-notifications` and `05-utilities` (so 01-intake, 02-processing,
+   03-budgetflow-api-client, 06-scheduling-orchestration) → **Settings**
+   (gear icon, top right) → **Error Workflow** → select
+   `04 - Notifications / Error Trigger`. One-time, per workflow — n8n has no
+   single instance-wide default, so this doesn't batch. See
+   "Error handling & retries" below for what this buys you over the
+   explicit `System Error` calls already in the pipeline.
 
 ## Error handling & retries
 
@@ -214,6 +223,22 @@ explicit `Success?` branch instead of crashing the execution. Failures call
 **05 - Utilities / Retry Handler** workflow exists for the minority of cases
 needing custom backoff (e.g. respecting a `Retry-After` header) — most
 workflows don't need it.
+
+That covers every *designed* failure point — an HTTP call that comes back
+non-2xx. It does not cover a workflow crashing somewhere it wasn't expected
+to: a Code node throwing, a malformed trigger payload, a timeout, an
+unhandled exception mid-execution. Those fail silently unless something is
+watching for them.
+
+**04 - Notifications / Error Trigger** is that watcher. It starts with
+n8n's built-in Error Trigger node, which only fires when a workflow names it
+as *that workflow's* Error Workflow (Settings → Error Workflow — see step 8
+under Importing). Any workflow that crashes anywhere fires this one instead
+of failing silently; it reformats whatever n8n hands it (workflow name, last
+node executed, error message, execution URL) into the same
+`{ workflow, message, statusCode, context }` shape `System Error` already
+expects, and calls straight into it — so there's still exactly one place
+that talks to Telegram, not two.
 
 `02 - Categorize Transaction` uses a fan-out pattern worth knowing about: its
 low-confidence check runs in parallel with the main resolved/not-resolved

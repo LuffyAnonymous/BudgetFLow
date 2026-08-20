@@ -1,0 +1,130 @@
+{
+  "name": "04 - Notifications / Error Trigger",
+  "nodes": [
+    {
+      "id": "node-0021",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -140
+      ],
+      "parameters": {
+        "content": "## Error Trigger\n\nSingle Responsibility: the instance-wide safety net. Every other workflow already calls System Error explicitly on its designed failure branches (HTTP call fails after retries, health check returns non-2xx, etc.) — this one catches everything those branches don't: a node throwing an unhandled exception, a malformed trigger payload, a timeout, anything that crashes a workflow before it ever reaches its own error handling.\n\nSetup (one-time, per workflow, after import): open each workflow → Settings (gear icon) → Error Workflow → select \"04 - Notifications / Error Trigger\". Do this for every workflow in 01-intake, 02-processing, 03-budgetflow-api-client, and 06-scheduling-orchestration. This workflow's own trigger node only fires when referenced this way — it does nothing if just left inactive and unreferenced.\n\nDoes not need activating like a normal workflow — n8n runs error workflows regardless of their own active state.",
+        "height": 400,
+        "width": 560,
+        "color": 4
+      }
+    },
+    {
+      "id": "node-0020",
+      "name": "On Any Workflow Error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        340
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "node-0022",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        340
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0023",
+              "name": "workflow",
+              "type": "string",
+              "value": "={{ $json.workflow.name }}"
+            },
+            {
+              "id": "node-0024",
+              "name": "message",
+              "type": "string",
+              "value": "={{ ($json.execution.error && $json.execution.error.message) || 'Unhandled error' }}{{ $json.execution.lastNodeExecuted ? (' (node: ' + $json.execution.lastNodeExecuted + ')') : '' }}"
+            },
+            {
+              "id": "node-0025",
+              "name": "statusCode",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "node-0026",
+              "name": "context",
+              "type": "object",
+              "value": "={{ { executionId: $json.execution.id, executionUrl: $json.execution.url, mode: $json.execution.mode, retryOf: $json.execution.retryOf || null } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0027",
+      "name": "Notify Ops",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        800,
+        340
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at \"04 - Notifications / System Error\" (n8n assigns IDs on import)."
+    }
+  ],
+  "connections": {
+    "On Any Workflow Error": {
+      "main": [
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error": {
+      "main": [
+        [
+          {
+            "node": "Notify Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": []
+}

@@ -288,14 +288,131 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.2,
       "position": [
-        1920,
-        100
+        2200,
+        20
       ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ $json.body }}",
         "options": {
           "responseCode": "={{ $json.statusCode || 200 }}"
+        }
+      }
+    },
+    {
+      "id": "node-0030",
+      "name": "Import Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "node-0031",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 400,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0032",
+      "name": "Format Import Failure",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2200,
+        220
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "node-0033",
+              "name": "workflow",
+              "type": "string",
+              "value": "01 - Intake / SMS Import"
+            },
+            {
+              "id": "node-0034",
+              "name": "message",
+              "type": "string",
+              "value": "={{ ($json.body && ($json.body.error || $json.body.message)) || ('Import failed with HTTP ' + $json.statusCode) }}"
+            },
+            {
+              "id": "node-0035",
+              "name": "statusCode",
+              "type": "string",
+              "value": "={{ $json.statusCode }}"
+            },
+            {
+              "id": "node-0036",
+              "name": "context",
+              "type": "object",
+              "value": "={{ { senderHint: $(\"Normalize Payload\").item.json.senderHint, receivedAt: $(\"Normalize Payload\").item.json.receivedAt } }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-0037",
+      "name": "Notify Ops (Import Failed)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2480,
+        220
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "SELECT_AFTER_IMPORT:04 - Notifications / System Error",
+          "cachedResultName": "04 - Notifications / System Error"
+        },
+        "workflowInputs": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "notesInFlow": true,
+      "notes": "After importing, point this at \"04 - Notifications / System Error\" (n8n assigns IDs on import)."
+    },
+    {
+      "id": "node-0038",
+      "name": "Respond Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        2760,
+        220
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $(\"Forward to Import API\").item.json.body }}",
+        "options": {
+          "responseCode": "={{ $(\"Forward to Import API\").item.json.statusCode || 500 }}"
         }
       }
     }
@@ -396,7 +513,47 @@
       "main": [
         [
           {
+            "node": "Import Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Import Succeeded?": {
+      "main": [
+        [
+          {
             "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Import Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Import Failure": {
+      "main": [
+        [
+          {
+            "node": "Notify Ops (Import Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Ops (Import Failed)": {
+      "main": [
+        [
+          {
+            "node": "Respond Failed",
             "type": "main",
             "index": 0
           }
