@@ -13,6 +13,7 @@ import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api";
 import { checkRateLimit } from "@/lib/rate-limiter";
+import { getClientIp } from "@/lib/request-ip";
 import { provisionNewUser } from "@/server/services/user-provisioning.service";
 
 const registerSchema = z.object({
@@ -21,12 +22,6 @@ const registerSchema = z.object({
   firstName: z.string().trim().min(1, "First name is required").max(50),
   lastName: z.string().trim().min(1, "Last name is required").max(50),
 });
-
-function getClientIp(req: NextRequest): string {
-  const forwardedFor = req.headers.get("x-forwarded-for");
-  if (forwardedFor) return forwardedFor.split(",")[0].trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
-}
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {

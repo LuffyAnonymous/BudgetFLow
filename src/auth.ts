@@ -1,17 +1,29 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import { authConfig } from "./auth.config";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import bcrypt from "bcryptjs";
+import { checkRateLimit } from "@/lib/rate-limiter";
+import { getClientIp } from "@/lib/request-ip";
+
+class RateLimitedSignin extends CredentialsSignin {
+  code = "rate_limited";
+}
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   providers: [
     Credentials({
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         const isDev = process.env.NODE_ENV === "development";
-        
+
+        const ip = getClientIp(request);
+        const rateLimit = await checkRateLimit(`login:${ip}`, 10, 15 * 60 * 1000);
+        if (!rateLimit.allowed) {
+          throw new RateLimitedSignin();
+        }
+
         // Trim and lowercase email, preserve password exactly
         const email = typeof credentials?.email === "string" ? credentials.email.trim().toLowerCase() : "";
         const password = typeof credentials?.password === "string" ? credentials.password : "";
