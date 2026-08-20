@@ -176,6 +176,16 @@ function SignupForm() {
           Sign in
         </Link>
       </div>
+
+      <div className="mt-4 flex items-center justify-center gap-3 text-[11px] text-slate-600">
+        <Link href="/terms" className="hover:text-slate-400">
+          Terms & Conditions
+        </Link>
+        <span aria-hidden="true">·</span>
+        <Link href="/privacy" className="hover:text-slate-400">
+          Privacy Policy
+        </Link>
+      </div>
     </>
   );
 }
