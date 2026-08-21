@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  /* Color Palette Scale - Emerald & Slate (Finance / Cash Flow) */
+  /* Color Palette Scale - Indigo & Slate (BudgetFlow brand) */
   --neutral-50: #f8fafc;
   --neutral-100: #f1f5f9;
   --neutral-200: #e2e8f0;
@@ -14,14 +14,14 @@
   --neutral-900: #0f172a;
   --neutral-950: #020617;
 
-  --accent-50: #ecfdf5;
-  --accent-100: #d1fae5;
-  --accent-200: #a7f3d0;
-  --accent-500: #10b981;
-  --accent-600: #059669;
-  --accent-700: #047857;
-  --accent-800: #065f46;
-  --accent-900: #064e3b;
+  --accent-50: #eef2ff;
+  --accent-100: #e0e7ff;
+  --accent-200: #c7d2fe;
+  --accent-500: #6366f1;
+  --accent-600: #4f46e5;
+  --accent-700: #4338ca;
+  --accent-800: #3730a3;
+  --accent-900: #312e81;
 
   --background: var(--neutral-50);
   --foreground: var(--neutral-900);

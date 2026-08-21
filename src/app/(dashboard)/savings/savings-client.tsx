@@ -13,7 +13,13 @@ import {
   LucideInfo,
   LucideArchive,
   LucideTarget,
+  LucideLoader2,
 } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ProgressBar } from "@/components/ui/progress-bar";
+import { Button } from "@/components/ui/button";
+import type { Tone } from "@/components/ui/stat-tile";
 
 interface SavingGoal {
   id: string;
@@ -43,6 +49,13 @@ interface SavingTx {
   createdAt: string;
 }
 
+const statusMeta: Record<string, { label: string; tone: Tone }> = {
+  ACTIVE: { label: "Active", tone: "emerald" },
+  COMPLETED: { label: "Completed", tone: "indigo" },
+  ARCHIVED: { label: "Archived", tone: "slate" },
+  PAUSED: { label: "Paused", tone: "amber" },
+};
+
 export default function SavingsClient() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>("ACTIVE");
@@ -50,7 +63,6 @@ export default function SavingsClient() {
   const [showHistory, setShowHistory] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
-  // Form state
   const [txAmount, setTxAmount] = useState("");
   const [txNotes, setTxNotes] = useState("");
   const [syncLedger, setSyncLedger] = useState(true);
@@ -62,7 +74,6 @@ export default function SavingsClient() {
     notes: "",
   });
 
-  // Fetch goals
   const { data: goals = [], isLoading } = useQuery<SavingGoal[]>({
     queryKey: ["savings", statusFilter],
     queryFn: async () => {
@@ -72,7 +83,6 @@ export default function SavingsClient() {
     },
   });
 
-  // Fetch transactions
   const { data: txData } = useQuery<{
     items: SavingTx[];
     page: number;
@@ -89,7 +99,6 @@ export default function SavingsClient() {
     enabled: !!showHistory,
   });
 
-  // Record transaction mutation
   const txMutation = useMutation({
     mutationFn: async ({ goalId, amount, type, notes, sync }: { goalId: string; amount: string; type: string; notes: string; sync: boolean }) => {
       const res = await fetch(`/api/savings/${goalId}/transactions`, {
@@ -117,7 +126,6 @@ export default function SavingsClient() {
     },
   });
 
-  // Create goal mutation
   const createMutation = useMutation({
     mutationFn: async (data: typeof newGoal) => {
       const res = await fetch("/api/savings", {
@@ -141,7 +149,6 @@ export default function SavingsClient() {
     },
   });
 
-  // Archive goal mutation
   const archiveMutation = useMutation({
     mutationFn: async (goalId: string) => {
       const res = await fetch(`/api/savings/${goalId}`, {
@@ -165,17 +172,6 @@ export default function SavingsClient() {
     return Math.min(100, Math.round((current / target) * 100));
   };
 
-  const getStatusBadge = (status: string) => {
-    const map: Record<string, { label: string; cls: string }> = {
-      ACTIVE: { label: "Active", cls: "bg-emerald-500/10 text-emerald-400" },
-      COMPLETED: { label: "Completed", cls: "bg-indigo-500/10 text-indigo-400" },
-      ARCHIVED: { label: "Archived", cls: "bg-slate-700/50 text-slate-400" },
-      PAUSED: { label: "Paused", cls: "bg-amber-500/10 text-amber-400" },
-    };
-    const s = map[status] || map.ACTIVE;
-    return <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
-  };
-
   const formatTargetDate = (dateStr: string | null) => {
     if (!dateStr) return null;
     return new Date(dateStr).toLocaleDateString("en-AE", {
@@ -192,26 +188,24 @@ export default function SavingsClient() {
         title="Savings Goals"
         description="Track your savings progress, make deposits, and record withdrawals."
         action={
-          <button
-            onClick={() => setShowCreateDialog(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white px-4 py-2 text-sm font-semibold transition-colors"
-          >
-            <LucidePlus className="h-4 w-4" /> New Goal
-          </button>
+          <Button variant="primary" onClick={() => setShowCreateDialog(true)}>
+            <LucidePlus className="h-4 w-4" aria-hidden="true" /> New Goal
+          </Button>
         }
       />
 
       {/* Status filter */}
-      <div className="flex gap-2">
+      <div className="flex gap-2" role="tablist" aria-label="Filter by goal status">
         {["ACTIVE", "COMPLETED", "ARCHIVED", "PAUSED"].map((s) => (
           <button
             key={s}
+            role="tab"
+            aria-selected={statusFilter === s}
             onClick={() => setStatusFilter(s)}
-            className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
-              statusFilter === s
-                ? "bg-slate-700 text-white"
-                : "bg-slate-900/50 text-slate-400 hover:bg-slate-800 hover:text-slate-300"
-            }`}
+            className={
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors " +
+              (statusFilter === s ? "bg-indigo-600 text-white" : "bg-slate-900/50 text-slate-400 hover:bg-slate-800 hover:text-slate-300")
+            }
           >
             {s.charAt(0) + s.slice(1).toLowerCase()}
           </button>
@@ -220,7 +214,10 @@ export default function SavingsClient() {
 
       {/* Goals List */}
       {isLoading ? (
-        <div className="text-center py-12 text-slate-500">Loading savings goals...</div>
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-400">
+          <LucideLoader2 className="h-6 w-6 animate-spin text-indigo-500" aria-hidden="true" />
+          <p className="text-sm">Loading savings goals…</p>
+        </div>
       ) : goals.length === 0 ? (
         <EmptyState
           icon={LucideTarget}
@@ -230,238 +227,305 @@ export default function SavingsClient() {
             label: "New Goal",
             onClick: () => setShowCreateDialog(true),
             icon: LucidePlus,
-            className: "bg-indigo-500 hover:bg-indigo-400 text-white",
+            className: "bg-indigo-600 hover:bg-indigo-500 text-white",
           }}
         />
       ) : (
         <div className="space-y-4">
-          {goals.map((goal) => (
-            <div key={goal.id} className="rounded-2xl border border-slate-800 bg-slate-900/30 p-5 space-y-4">
-              {/* Header */}
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-white text-base">{goal.name}</h3>
-                    {getStatusBadge(goal.status)}
-                  </div>
-                  {goal.targetDate && (
-                    <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                      <LucideTarget className="h-3 w-3" /> Target: {formatTargetDate(goal.targetDate)}
-                    </p>
-                  )}
-                </div>
-                <div className="text-right">
-                  <p className="text-xl font-bold text-indigo-400">AED {parseFloat(goal.currentAmount).toFixed(2)}</p>
-                  <p className="text-xs text-slate-500">of AED {parseFloat(goal.targetAmount).toFixed(2)}</p>
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-slate-400">Progress</span>
-                  <span className="font-bold text-indigo-400">{getProgressPct(goal)}%</span>
-                </div>
-                <div className="w-full bg-slate-800 rounded-full h-2">
-                  <div
-                    className="bg-gradient-to-r from-indigo-500 to-violet-400 h-2 rounded-full transition-all duration-500"
-                    style={{ width: `${getProgressPct(goal)}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* Action buttons */}
-              <div className="flex flex-wrap gap-2 pt-1">
-                {(goal.status === "ACTIVE" || goal.status === "COMPLETED") && (
-                  <>
-                    <button
-                      onClick={() => { setShowTxDialog({ goalId: goal.id, type: "DEPOSIT" }); setTxAmount(""); }}
-                      className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                    >
-                      <LucideArrowDownCircle className="h-3.5 w-3.5" /> Deposit
-                    </button>
-                    <button
-                      onClick={() => { setShowTxDialog({ goalId: goal.id, type: "WITHDRAWAL" }); setTxAmount(""); }}
-                      className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
-                    >
-                      <LucideArrowUpCircle className="h-3.5 w-3.5" /> Withdraw
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={() => setShowHistory(showHistory === goal.id ? null : goal.id)}
-                  className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-300 hover:bg-slate-700/60 transition-colors"
-                >
-                  <LucideCalendarClock className="h-3.5 w-3.5" />
-                  {showHistory === goal.id ? "Hide History" : "Transaction History"}
-                </button>
-                {goal.status === "ACTIVE" && (
-                  <button
-                    onClick={() => archiveMutation.mutate(goal.id)}
-                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800/40 text-slate-500 hover:text-slate-300 hover:bg-slate-700/40 transition-colors ml-auto"
-                  >
-                    <LucideArchive className="h-3.5 w-3.5" /> Archive
-                  </button>
-                )}
-              </div>
-
-              {/* Transaction History */}
-              {showHistory === goal.id && txData && (
-                <div className="border-t border-slate-800 pt-4 mt-2">
-                  <h4 className="text-sm font-bold text-slate-300 mb-3">Transaction History</h4>
-                  {txData.items.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No transactions recorded yet.</p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="text-slate-500 border-b border-slate-800">
-                            <th className="text-left pb-2 font-semibold">Date</th>
-                            <th className="text-center pb-2 font-semibold">Type</th>
-                            <th className="text-right pb-2 font-semibold">Amount</th>
-                            <th className="text-right pb-2 font-semibold">Before</th>
-                            <th className="text-right pb-2 font-semibold">After</th>
-                            <th className="text-center pb-2 font-semibold">Ledger</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {txData.items.map((tx) => (
-                            <tr key={tx.id} className="border-b border-slate-800/50">
-                              <td className="py-2.5 text-slate-300">
-                                {new Date(tx.transactionDate).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric", year: "numeric" })}
-                              </td>
-                              <td className="py-2.5 text-center">
-                                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                                  tx.type === "DEPOSIT" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
-                                }`}>
-                                  {tx.type}
-                                </span>
-                              </td>
-                              <td className={`py-2.5 text-right font-bold ${tx.type === "DEPOSIT" ? "text-emerald-400" : "text-amber-400"}`}>
-                                AED {parseFloat(tx.amount).toFixed(2)}
-                              </td>
-                              <td className="py-2.5 text-right text-slate-400">AED {parseFloat(tx.balanceBefore).toFixed(2)}</td>
-                              <td className="py-2.5 text-right text-slate-300">AED {parseFloat(tx.balanceAfter).toFixed(2)}</td>
-                              <td className="py-2.5 text-center">
-                                {tx.transactionStatus === "LINKED" ? (
-                                  <span className="text-emerald-400 text-[10px] font-bold">Linked</span>
-                                ) : (
-                                  <span className="text-slate-500 text-[10px] flex items-center justify-center gap-0.5" title="Not included in cash flow">
-                                    <LucideInfo className="h-3 w-3" /> Unlinked
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+          {goals.map((goal) => {
+            const meta = statusMeta[goal.status] || statusMeta.ACTIVE;
+            return (
+              <Card key={goal.id} className="space-y-4 p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-bold text-white">{goal.name}</h3>
+                      <Badge tone={meta.tone}>{meta.label}</Badge>
                     </div>
+                    {goal.targetDate && (
+                      <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                        <LucideTarget className="h-3 w-3" aria-hidden="true" /> Target: {formatTargetDate(goal.targetDate)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-bold tabular-nums text-indigo-400">AED {parseFloat(goal.currentAmount).toFixed(2)}</p>
+                    <p className="text-xs tabular-nums text-slate-500">of AED {parseFloat(goal.targetAmount).toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1.5 flex justify-between text-xs">
+                    <span className="text-slate-400">Progress</span>
+                    <span className="font-bold tabular-nums text-indigo-400">{getProgressPct(goal)}%</span>
+                  </div>
+                  <ProgressBar value={getProgressPct(goal)} tone="indigo" />
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {(goal.status === "ACTIVE" || goal.status === "COMPLETED") && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setShowTxDialog({ goalId: goal.id, type: "DEPOSIT" });
+                          setTxAmount("");
+                        }}
+                        className="flex items-center gap-1 rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20"
+                      >
+                        <LucideArrowDownCircle className="h-3.5 w-3.5" aria-hidden="true" /> Deposit
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowTxDialog({ goalId: goal.id, type: "WITHDRAWAL" });
+                          setTxAmount("");
+                        }}
+                        className="flex items-center gap-1 rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-400 transition-colors hover:bg-amber-500/20"
+                      >
+                        <LucideArrowUpCircle className="h-3.5 w-3.5" aria-hidden="true" /> Withdraw
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => setShowHistory(showHistory === goal.id ? null : goal.id)}
+                    className="flex items-center gap-1 rounded-lg bg-slate-800/60 px-3 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-700/60"
+                    aria-expanded={showHistory === goal.id}
+                  >
+                    <LucideCalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+                    {showHistory === goal.id ? "Hide History" : "Transaction History"}
+                  </button>
+                  {goal.status === "ACTIVE" && (
+                    <button
+                      onClick={() => archiveMutation.mutate(goal.id)}
+                      className="ml-auto flex items-center gap-1 rounded-lg bg-slate-800/40 px-3 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-700/40 hover:text-slate-300"
+                    >
+                      <LucideArchive className="h-3.5 w-3.5" aria-hidden="true" /> Archive
+                    </button>
                   )}
                 </div>
-              )}
-            </div>
-          ))}
+
+                {showHistory === goal.id && txData && (
+                  <div className="mt-2 border-t border-slate-800 pt-4">
+                    <h4 className="mb-3 text-sm font-bold text-slate-300">Transaction History</h4>
+                    {txData.items.length === 0 ? (
+                      <p className="text-xs italic text-slate-500">No transactions recorded yet.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-500">
+                              <th className="pb-2 text-left font-semibold">Date</th>
+                              <th className="pb-2 text-center font-semibold">Type</th>
+                              <th className="pb-2 text-right font-semibold">Amount</th>
+                              <th className="pb-2 text-right font-semibold">Before</th>
+                              <th className="pb-2 text-right font-semibold">After</th>
+                              <th className="pb-2 text-center font-semibold">Ledger</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {txData.items.map((tx) => (
+                              <tr key={tx.id} className="border-b border-slate-800/50">
+                                <td className="py-2.5 text-slate-300">
+                                  {new Date(tx.transactionDate).toLocaleDateString("en-AE", {
+                                    timeZone: "Asia/Dubai",
+                                    month: "short",
+                                    day: "numeric",
+                                    year: "numeric",
+                                  })}
+                                </td>
+                                <td className="py-2.5 text-center">
+                                  <Badge tone={tx.type === "DEPOSIT" ? "emerald" : "amber"}>{tx.type}</Badge>
+                                </td>
+                                <td
+                                  className={
+                                    "py-2.5 text-right font-bold tabular-nums " + (tx.type === "DEPOSIT" ? "text-emerald-400" : "text-amber-400")
+                                  }
+                                >
+                                  AED {parseFloat(tx.amount).toFixed(2)}
+                                </td>
+                                <td className="py-2.5 text-right tabular-nums text-slate-400">AED {parseFloat(tx.balanceBefore).toFixed(2)}</td>
+                                <td className="py-2.5 text-right tabular-nums text-slate-300">AED {parseFloat(tx.balanceAfter).toFixed(2)}</td>
+                                <td className="py-2.5 text-center">
+                                  {tx.transactionStatus === "LINKED" ? (
+                                    <span className="text-[10px] font-bold text-emerald-400">Linked</span>
+                                  ) : (
+                                    <span
+                                      className="flex items-center justify-center gap-0.5 text-[10px] text-slate-500"
+                                      title="Not included in cash flow"
+                                    >
+                                      <LucideInfo className="h-3 w-3" aria-hidden="true" /> Unlinked
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
 
       {/* Deposit / Withdrawal Dialog */}
       {showTxDialog && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowTxDialog(null)}>
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-bold text-white">
-                {showTxDialog.type === "DEPOSIT" ? "Make a Deposit" : "Record Withdrawal"}
-              </h3>
-              <button onClick={() => setShowTxDialog(null)} className="text-slate-400 hover:text-white"><LucideX className="h-5 w-5" /></button>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setShowTxDialog(null)}
+        >
+          <Card className="w-full max-w-md space-y-4 border-slate-700 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">{showTxDialog.type === "DEPOSIT" ? "Make a Deposit" : "Record Withdrawal"}</h3>
+              <button onClick={() => setShowTxDialog(null)} className="text-slate-400 hover:text-white" aria-label="Close dialog">
+                <LucideX className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Amount (AED)</label>
+                <label htmlFor="tx-amount" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Amount (AED)
+                </label>
                 <input
+                  id="tx-amount"
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min="0.01"
                   value={txAmount}
                   onChange={(e) => setTxAmount(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
                   placeholder="0.00"
                 />
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Notes (optional)</label>
+                <label htmlFor="tx-notes" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Notes (optional)
+                </label>
                 <input
+                  id="tx-notes"
                   type="text"
                   value={txNotes}
                   onChange={(e) => setTxNotes(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
                   placeholder="e.g. Monthly deposit"
                 />
               </div>
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2">
                 <input type="checkbox" checked={syncLedger} onChange={(e) => setSyncLedger(e.target.checked)} className="rounded" />
                 <span className="text-xs text-slate-300">Add to ledger (cash-flow tracking)</span>
               </label>
               {!syncLedger && (
-                <p className="text-[10px] text-amber-400 flex items-center gap-1"><LucideInfo className="h-3 w-3" /> This transaction will not appear in cash-flow totals.</p>
+                <p className="flex items-center gap-1 text-[10px] text-amber-400">
+                  <LucideInfo className="h-3 w-3" aria-hidden="true" /> This transaction will not appear in cash-flow totals.
+                </p>
               )}
             </div>
             {txMutation.error && (
-              <p className="text-xs text-rose-400">{(txMutation.error as Error).message}</p>
+              <p role="alert" aria-live="polite" className="text-xs text-rose-400">
+                {(txMutation.error as Error).message}
+              </p>
             )}
             <button
               onClick={() => txMutation.mutate({ goalId: showTxDialog.goalId, amount: txAmount, type: showTxDialog.type, notes: txNotes, sync: syncLedger })}
               disabled={txMutation.isPending}
-              className={`w-full font-semibold py-2.5 rounded-xl text-sm transition-colors disabled:opacity-50 ${
-                showTxDialog.type === "DEPOSIT"
-                  ? "bg-emerald-500 hover:bg-emerald-400 text-white"
-                  : "bg-amber-500 hover:bg-amber-400 text-white"
-              }`}
+              className={
+                "w-full rounded-xl py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-50 " +
+                (showTxDialog.type === "DEPOSIT" ? "bg-emerald-600 hover:bg-emerald-500" : "bg-amber-600 hover:bg-amber-500")
+              }
             >
-              {txMutation.isPending ? "Processing..." : showTxDialog.type === "DEPOSIT" ? "Confirm Deposit" : "Confirm Withdrawal"}
+              {txMutation.isPending ? "Processing…" : showTxDialog.type === "DEPOSIT" ? "Confirm Deposit" : "Confirm Withdrawal"}
             </button>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Create Goal Dialog */}
       {showCreateDialog && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowCreateDialog(false)}>
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setShowCreateDialog(false)}
+        >
+          <Card className="w-full max-w-md space-y-4 border-slate-700 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-white">Create Savings Goal</h3>
-              <button onClick={() => setShowCreateDialog(false)} className="text-slate-400 hover:text-white"><LucideX className="h-5 w-5" /></button>
+              <button onClick={() => setShowCreateDialog(false)} className="text-slate-400 hover:text-white" aria-label="Close dialog">
+                <LucideX className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Goal Name</label>
-                <input type="text" value={newGoal.name} onChange={(e) => setNewGoal({ ...newGoal, name: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="e.g. Emergency Fund" />
+                <label htmlFor="goal-name" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Goal Name
+                </label>
+                <input
+                  id="goal-name"
+                  type="text"
+                  value={newGoal.name}
+                  onChange={(e) => setNewGoal({ ...newGoal, name: e.target.value })}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  placeholder="e.g. Emergency Fund"
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">Target Amount</label>
-                  <input type="number" step="0.01" value={newGoal.targetAmount} onChange={(e) => setNewGoal({ ...newGoal, targetAmount: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="0.00" />
+                  <label htmlFor="goal-target" className="mb-1 block text-xs font-semibold text-slate-400">
+                    Target Amount
+                  </label>
+                  <input
+                    id="goal-target"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={newGoal.targetAmount}
+                    onChange={(e) => setNewGoal({ ...newGoal, targetAmount: e.target.value })}
+                    autoComplete="off"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                    placeholder="0.00"
+                  />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">Target Date</label>
-                  <input type="date" value={newGoal.targetDate} onChange={(e) => setNewGoal({ ...newGoal, targetDate: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+                  <label htmlFor="goal-date" className="mb-1 block text-xs font-semibold text-slate-400">
+                    Target Date
+                  </label>
+                  <input
+                    id="goal-date"
+                    type="date"
+                    value={newGoal.targetDate}
+                    onChange={(e) => setNewGoal({ ...newGoal, targetDate: e.target.value })}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  />
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Notes (optional)</label>
-                <input type="text" value={newGoal.notes} onChange={(e) => setNewGoal({ ...newGoal, notes: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="Optional notes" />
+                <label htmlFor="goal-notes" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Notes (optional)
+                </label>
+                <input
+                  id="goal-notes"
+                  type="text"
+                  value={newGoal.notes}
+                  onChange={(e) => setNewGoal({ ...newGoal, notes: e.target.value })}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  placeholder="Optional notes"
+                />
               </div>
             </div>
             {createMutation.error && (
-              <p className="text-xs text-rose-400">{(createMutation.error as Error).message}</p>
+              <p role="alert" aria-live="polite" className="text-xs text-rose-400">
+                {(createMutation.error as Error).message}
+              </p>
             )}
-            <button
-              onClick={() => createMutation.mutate(newGoal)}
-              disabled={createMutation.isPending}
-              className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors disabled:opacity-50"
-            >
-              {createMutation.isPending ? "Creating..." : "Create Goal"}
-            </button>
-          </div>
+            <Button variant="primary" className="w-full" onClick={() => createMutation.mutate(newGoal)} disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Creating…" : "Create Goal"}
+            </Button>
+          </Card>
         </div>
       )}
     </div>

@@ -19,6 +19,7 @@ import {
   LucideCircleAlert,
   LucideBadgeCheck,
   LucideHourglass,
+  LucideLoader2,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -36,6 +37,8 @@ import {
   AreaChart,
   Area,
 } from "recharts";
+import { Card } from "@/components/ui/card";
+import { StatTile } from "@/components/ui/stat-tile";
 
 interface MonthlyReport {
   month: string;
@@ -115,16 +118,23 @@ const CATEGORY_COLORS = [
   "#f43f5e", // Rose
 ];
 
+const CHART_TOOLTIP_STYLE = { backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" };
+
+const TABS = [
+  { id: "monthly", label: "Monthly Summary" },
+  { id: "trends", label: "Historical Trends" },
+  { id: "insights", label: "Smart Insights" },
+  { id: "export", label: "Export Center" },
+] as const;
+
 export function ReportsClient() {
   const [activeTab, setActiveTab] = useState<"monthly" | "trends" | "insights" | "export">("monthly");
   const [mounted, setMounted] = useState(false);
 
-  // Date selections
   const [monthlyMonth, setMonthlyMonth] = useState("2026-07");
   const [trendFrom, setTrendFrom] = useState("2026-01");
   const [trendTo, setTrendTo] = useState("2026-07");
 
-  // Export filters
   const [exportStartDate, setExportStartDate] = useState("");
   const [exportEndDate, setExportEndDate] = useState("");
 
@@ -133,7 +143,6 @@ export function ReportsClient() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Queries
   const { data: monthlyData, isLoading: loadingMonthly } = useQuery<MonthlyReport>({
     queryKey: ["monthly-report", monthlyMonth],
     queryFn: async () => {
@@ -190,83 +199,48 @@ export function ReportsClient() {
   };
 
   return (
-    <div className="space-y-8 text-slate-100 animate-in fade-in duration-300">
-      <PageHeader
-        title="Financial Reports"
-        description="Analyze your income, outgoings, budget progress, debts, and PHP remittances."
-      />
+    <div className="animate-in fade-in space-y-8 text-slate-100 duration-300">
+      <PageHeader title="Financial Reports" description="Analyze your income, outgoings, budget progress, debts, and PHP remittances." />
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-800 gap-6">
-        <button
-          onClick={() => setActiveTab("monthly")}
-          className={`pb-4 text-sm font-semibold border-b-2 px-1 transition-colors ${
-            activeTab === "monthly"
-              ? "border-indigo-500 text-white font-bold"
-              : "border-transparent text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          Monthly Summary
-        </button>
-        <button
-          onClick={() => setActiveTab("trends")}
-          className={`pb-4 text-sm font-semibold border-b-2 px-1 transition-colors ${
-            activeTab === "trends"
-              ? "border-indigo-500 text-white font-bold"
-              : "border-transparent text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          Historical Trends
-        </button>
-        <button
-          onClick={() => setActiveTab("insights")}
-          className={`pb-4 text-sm font-semibold border-b-2 px-1 transition-colors ${
-            activeTab === "insights"
-              ? "border-indigo-500 text-white font-bold"
-              : "border-transparent text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          Smart Insights
-        </button>
-        <button
-          onClick={() => setActiveTab("export")}
-          className={`pb-4 text-sm font-semibold border-b-2 px-1 transition-colors ${
-            activeTab === "export"
-              ? "border-indigo-500 text-white font-bold"
-              : "border-transparent text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          Export Center
-        </button>
+      <div className="flex gap-6 border-b border-slate-800" role="tablist" aria-label="Report sections">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={
+              "border-b-2 px-1 pb-4 text-sm font-semibold transition-colors " +
+              (activeTab === tab.id ? "border-indigo-500 font-bold text-white" : "border-transparent text-slate-400 hover:text-slate-200")
+            }
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Monthly Report Tab */}
       {activeTab === "monthly" && (
         <div className="space-y-6">
-          {/* Controls */}
-          <div className="flex items-center justify-between bg-slate-900/30 border border-slate-800 rounded-2xl p-4">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Select Reporting Month</h3>
-            <div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl p-1.5 gap-2">
-              <button
-                onClick={() => changeMonthlyMonth(-1)}
-                className="rounded-lg p-1.5 hover:bg-slate-800 transition-colors"
-              >
-                <LucideChevronLeft className="h-4 w-4" />
+          <div className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-white">Select Reporting Month</h3>
+            <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 p-1.5">
+              <button onClick={() => changeMonthlyMonth(-1)} className="rounded-lg p-1.5 transition-colors hover:bg-slate-800" aria-label="Previous month">
+                <LucideChevronLeft className="h-4 w-4" aria-hidden="true" />
               </button>
-              <span className="text-xs font-bold min-w-32 text-center text-white">
-                {getMonthLabel(monthlyMonth)}
-              </span>
-              <button
-                onClick={() => changeMonthlyMonth(1)}
-                className="rounded-lg p-1.5 hover:bg-slate-800 transition-colors"
-              >
-                <LucideChevronRight className="h-4 w-4" />
+              <span className="min-w-32 text-center text-xs font-bold text-white">{getMonthLabel(monthlyMonth)}</span>
+              <button onClick={() => changeMonthlyMonth(1)} className="rounded-lg p-1.5 transition-colors hover:bg-slate-800" aria-label="Next month">
+                <LucideChevronRight className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           </div>
 
           {loadingMonthly ? (
-            <p className="text-center text-slate-500 py-12">Generating monthly analysis...</p>
+            <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-400">
+              <LucideLoader2 className="h-6 w-6 animate-spin text-indigo-500" aria-hidden="true" />
+              <p className="text-sm">Generating monthly analysis…</p>
+            </div>
           ) : !monthlyData ? (
             <EmptyState
               icon={LucideBarChart3}
@@ -275,53 +249,37 @@ export function ReportsClient() {
             />
           ) : (
             <div className="space-y-6">
-              {/* Cards Summary */}
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-5">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Net Cash Flow</span>
-                  <div className={`mt-2 text-2xl font-bold ${
-                    parseFloat(monthlyData.netCashFlow) >= 0 ? "text-emerald-400" : "text-rose-400"
-                  }`}>
-                    AED {parseFloat(monthlyData.netCashFlow).toFixed(2)}
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-1">Income - Expenses (Ledger)</div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-5">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Remittances (PH)</span>
-                  <div className="mt-2 text-2xl font-bold text-white">
-                    AED {parseFloat(monthlyData.remittances.netAmountSent).toFixed(2)}
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-1">
-                    PHP {parseFloat(monthlyData.remittances.netPhpReceived).toFixed(2)} received
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-5">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Debt Payments</span>
-                  <div className="mt-2 text-2xl font-bold text-rose-400">
-                    AED {parseFloat(monthlyData.debts.totalPayments).toFixed(2)}
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-1">Total installments paid</div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-5">
-                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Savings Goal Flow</span>
-                  <div className="mt-2 text-2xl font-bold text-indigo-400">
-                    AED {(parseFloat(monthlyData.savings.totalDeposits) - parseFloat(monthlyData.savings.totalWithdrawals)).toFixed(2)}
-                  </div>
-                  <div className="text-[10px] text-slate-500 mt-1">
-                    Deposits: +{parseFloat(monthlyData.savings.totalDeposits).toFixed(0)} | W/D: -{parseFloat(monthlyData.savings.totalWithdrawals).toFixed(0)}
-                  </div>
-                </div>
+                <StatTile
+                  label="Net Cash Flow"
+                  value={`AED ${parseFloat(monthlyData.netCashFlow).toFixed(2)}`}
+                  tone={parseFloat(monthlyData.netCashFlow) >= 0 ? "emerald" : "rose"}
+                  caption="Income - Expenses (Ledger)"
+                />
+                <StatTile
+                  label="Remittances (PH)"
+                  value={`AED ${parseFloat(monthlyData.remittances.netAmountSent).toFixed(2)}`}
+                  tone="slate"
+                  caption={`PHP ${parseFloat(monthlyData.remittances.netPhpReceived).toFixed(2)} received`}
+                />
+                <StatTile
+                  label="Debt Payments"
+                  value={`AED ${parseFloat(monthlyData.debts.totalPayments).toFixed(2)}`}
+                  tone="rose"
+                  caption="Total installments paid"
+                />
+                <StatTile
+                  label="Savings Goal Flow"
+                  value={`AED ${(parseFloat(monthlyData.savings.totalDeposits) - parseFloat(monthlyData.savings.totalWithdrawals)).toFixed(2)}`}
+                  tone="indigo"
+                  caption={`Deposits: +${parseFloat(monthlyData.savings.totalDeposits).toFixed(0)} | W/D: -${parseFloat(monthlyData.savings.totalWithdrawals).toFixed(0)}`}
+                />
               </div>
 
-              {/* Monthly Visualizations Grid */}
               <div className="grid gap-6 md:grid-cols-2">
-                {/* Income vs Outgoing Bar */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <LucideBarChart3 className="h-4.5 w-4.5 text-indigo-400" />
+                <Card className="space-y-4 p-6">
+                  <h4 className="flex items-center gap-2 text-sm font-bold text-white">
+                    <LucideBarChart3 className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
                     Income vs Outgoings
                   </h4>
                   <div className="h-64">
@@ -336,10 +294,7 @@ export function ReportsClient() {
                         >
                           <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} />
                           <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" }}
-                            labelStyle={{ color: "#fff", fontWeight: "bold" }}
-                          />
+                          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelStyle={{ color: "#fff", fontWeight: "bold" }} />
                           <Bar dataKey="Amount" radius={[10, 10, 0, 0]}>
                             <Cell fill="#6366f1" />
                             <Cell fill="#f43f5e" />
@@ -348,12 +303,11 @@ export function ReportsClient() {
                       </ResponsiveContainer>
                     )}
                   </div>
-                </div>
+                </Card>
 
-                {/* Spending by Category Pie */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <LucidePieChart className="h-4.5 w-4.5 text-indigo-400" />
+                <Card className="space-y-4 p-6">
+                  <h4 className="flex items-center gap-2 text-sm font-bold text-white">
+                    <LucidePieChart className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
                     Spending by Category
                   </h4>
                   <div className="grid grid-cols-2 items-center">
@@ -377,40 +331,35 @@ export function ReportsClient() {
                                 <Cell key={`cell-${idx}`} fill={CATEGORY_COLORS[idx % CATEGORY_COLORS.length]} />
                               ))}
                             </Pie>
-                            <Tooltip
-                              contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" }}
-                            />
+                            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                           </PieChart>
                         </ResponsiveContainer>
                       )}
                       {monthlyData.spendingByCategory.length === 0 && (
-                        <div className="h-full flex items-center justify-center text-slate-500 italic text-xs">
-                          No category records.
-                        </div>
+                        <div className="flex h-full items-center justify-center text-xs italic text-slate-500">No category records.</div>
                       )}
                     </div>
-                    {/* Pie Legend List */}
                     <div className="space-y-2 text-xs">
                       {monthlyData.spendingByCategory.slice(0, 6).map((c, idx) => (
                         <div key={c.categoryName} className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="flex min-w-0 items-center gap-1.5">
                             <span
                               className="h-2.5 w-2.5 shrink-0 rounded-full"
                               style={{ backgroundColor: CATEGORY_COLORS[idx % CATEGORY_COLORS.length] }}
+                              aria-hidden="true"
                             />
-                            <span className="text-slate-400 truncate">{c.categoryName}</span>
+                            <span className="truncate text-slate-400">{c.categoryName}</span>
                           </div>
-                          <span className="font-semibold text-slate-200">AED {parseFloat(c.amount).toFixed(0)}</span>
+                          <span className="font-semibold tabular-nums text-slate-200">AED {parseFloat(c.amount).toFixed(0)}</span>
                         </div>
                       ))}
                     </div>
                   </div>
-                </div>
+                </Card>
 
-                {/* Budget vs Actual Comparison */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4 md:col-span-2">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <LucideBarChart3 className="h-4.5 w-4.5 text-indigo-400" />
+                <Card className="space-y-4 p-6 md:col-span-2">
+                  <h4 className="flex items-center gap-2 text-sm font-bold text-white">
+                    <LucideBarChart3 className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
                     Budget vs Actual Spending
                   </h4>
                   <div className="h-72">
@@ -426,10 +375,7 @@ export function ReportsClient() {
                         >
                           <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} />
                           <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" }}
-                            labelStyle={{ color: "#white", fontWeight: "bold" }}
-                          />
+                          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelStyle={{ color: "#fff", fontWeight: "bold" }} />
                           <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
                           <Bar dataKey="Budgeted" fill="#475569" radius={[4, 4, 0, 0]} />
                           <Bar dataKey="Actual" fill="#6366f1" radius={[4, 4, 0, 0]} />
@@ -437,12 +383,10 @@ export function ReportsClient() {
                       </ResponsiveContainer>
                     )}
                     {monthlyData.budgetVsActual.length === 0 && (
-                      <div className="h-full flex items-center justify-center text-slate-500 italic text-xs">
-                        No active budget targets set for this month.
-                      </div>
+                      <div className="flex h-full items-center justify-center text-xs italic text-slate-500">No active budget targets set for this month.</div>
                     )}
                   </div>
-                </div>
+                </Card>
               </div>
             </div>
           )}
@@ -452,135 +396,118 @@ export function ReportsClient() {
       {/* Historical Trends Tab */}
       {activeTab === "trends" && (
         <div className="space-y-6">
-          {/* Range Controls */}
-          <div className="grid gap-4 sm:grid-cols-2 bg-slate-900/30 border border-slate-800 rounded-2xl p-4 text-sm">
+          <div className="grid gap-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4 text-sm sm:grid-cols-2">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-400 uppercase">From Month</label>
+              <label htmlFor="trend-from" className="text-xs font-semibold uppercase text-slate-400">
+                From Month
+              </label>
               <input
+                id="trend-from"
                 type="month"
                 value={trendFrom}
                 onChange={(e) => setTrendFrom(e.target.value)}
-                className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none text-white"
+                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-400 uppercase">To Month</label>
+              <label htmlFor="trend-to" className="text-xs font-semibold uppercase text-slate-400">
+                To Month
+              </label>
               <input
+                id="trend-to"
                 type="month"
                 value={trendTo}
                 onChange={(e) => setTrendTo(e.target.value)}
-                className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none text-white"
+                className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
               />
             </div>
           </div>
 
           {loadingTrends ? (
-            <p className="text-center text-slate-500 py-12">Compiling trend analysis...</p>
+            <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-400">
+              <LucideLoader2 className="h-6 w-6 animate-spin text-indigo-500" aria-hidden="true" />
+              <p className="text-sm">Compiling trend analysis…</p>
+            </div>
           ) : !trendData?.months.length ? (
-            <p className="text-center text-slate-500 py-12 italic">No trend data available for this range.</p>
+            <p className="py-12 text-center italic text-slate-500">No trend data available for this range.</p>
           ) : (
             <div className="space-y-6">
-              {/* Net Cash Flow Trend Chart */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
-                <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                  <LucideTrendingUp className="h-4.5 w-4.5 text-emerald-400" />
+              <Card className="space-y-4 p-6">
+                <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                  <LucideTrendingUp className="h-4.5 w-4.5 text-emerald-400" aria-hidden="true" />
                   Net Monthly Cash Flow Trend
-                </h4>
+                </h3>
                 <div className="h-64">
                   {mounted && (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart
-                        data={trendData.months}
-                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                      >
+                      <AreaChart data={trendData.months} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                         <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} />
                         <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
-                        <Tooltip
-                          contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" }}
-                        />
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                         <Area type="monotone" dataKey="netCashFlow" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={2} />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
                 </div>
-              </div>
+              </Card>
 
-              {/* Debt & Savings Balance Line Trend */}
               <div className="grid gap-6 md:grid-cols-2">
-                {/* Debt Balance line */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <LucideTrendingDown className="h-4.5 w-4.5 text-rose-400" />
+                <Card className="space-y-4 p-6">
+                  <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                    <LucideTrendingDown className="h-4.5 w-4.5 text-rose-400" aria-hidden="true" />
                     Debt Balance Trend (Historical Snapshot)
-                  </h4>
+                  </h3>
                   <div className="h-64">
                     {mounted && (
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={trendData.months}
-                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                        >
+                        <LineChart data={trendData.months} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                           <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} />
                           <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" }}
-                          />
+                          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                           <Line type="monotone" dataKey="debtBalance" stroke="#f43f5e" strokeWidth={2.5} dot={{ r: 4 }} />
                         </LineChart>
                       </ResponsiveContainer>
                     )}
                   </div>
-                </div>
+                </Card>
 
-                {/* Savings Balance line */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <LucidePiggyBank className="h-4.5 w-4.5 text-indigo-400" />
+                <Card className="space-y-4 p-6">
+                  <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                    <LucidePiggyBank className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
                     Savings Balance Trend (Historical Snapshot)
-                  </h4>
+                  </h3>
                   <div className="h-64">
                     {mounted && (
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={trendData.months}
-                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                        >
+                        <LineChart data={trendData.months} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                           <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} />
                           <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" }}
-                          />
+                          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                           <Line type="monotone" dataKey="savingsBalance" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 4 }} />
                         </LineChart>
                       </ResponsiveContainer>
                     )}
                   </div>
-                </div>
+                </Card>
 
-                {/* Remittances Sent Trend */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4 md:col-span-2">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    <LucideSend className="h-4.5 w-4.5 text-emerald-400" />
+                <Card className="space-y-4 p-6 md:col-span-2">
+                  <h3 className="flex items-center gap-2 text-sm font-bold text-white">
+                    <LucideSend className="h-4.5 w-4.5 text-emerald-400" aria-hidden="true" />
                     Philippines Remittances Sent Trend
-                  </h4>
+                  </h3>
                   <div className="h-64">
                     {mounted && (
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={trendData.months}
-                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                        >
+                        <BarChart data={trendData.months} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                           <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} />
                           <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px" }}
-                          />
+                          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                           <Bar dataKey="remittanceSent" fill="#10b981" radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     )}
                   </div>
-                </div>
+                </Card>
               </div>
             </div>
           )}
@@ -591,13 +518,12 @@ export function ReportsClient() {
       {activeTab === "insights" && (
         <div className="space-y-6">
           {loadingInsights ? (
-            <p className="text-center text-slate-500 py-12">Analyzing your transaction history...</p>
+            <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-400">
+              <LucideLoader2 className="h-6 w-6 animate-spin text-indigo-500" aria-hidden="true" />
+              <p className="text-sm">Analyzing your transaction history…</p>
+            </div>
           ) : !insightsData ? (
-            <EmptyState
-              icon={LucideSparkles}
-              title="No insights yet"
-              description="Nothing to analyze yet — insights appear once transactions start coming in."
-            />
+            <EmptyState icon={LucideSparkles} title="No insights yet" description="Nothing to analyze yet — insights appear once transactions start coming in." />
           ) : !insightsData.dataSufficient ? (
             <EmptyState
               icon={LucideHourglass}
@@ -606,11 +532,14 @@ export function ReportsClient() {
             />
           ) : (
             <div className="space-y-6">
-              {/* Salary: asymmetric hero + declared-vs-calculated comparison, not a repeated 3-card grid */}
-              <div className="rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/10 via-slate-900/40 to-slate-900/40 p-6">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <p className="text-[10px] uppercase tracking-wider text-indigo-300/80 font-semibold">
-                    {insightsData.salary.source === "SALARY_TAGGED" ? "Calculated Salary" : insightsData.salary.source === "ALL_INCOME" ? "Calculated From Income" : "Declared Salary"}
+              <Card className="border-indigo-500/20 bg-gradient-to-br from-indigo-500/10 via-slate-900/40 to-slate-900/40 p-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-300/80">
+                    {insightsData.salary.source === "SALARY_TAGGED"
+                      ? "Calculated Salary"
+                      : insightsData.salary.source === "ALL_INCOME"
+                      ? "Calculated From Income"
+                      : "Declared Salary"}
                   </p>
                   {insightsData.salary.source !== "DECLARED_FALLBACK" && (
                     <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-emerald-400">
@@ -618,91 +547,97 @@ export function ReportsClient() {
                     </span>
                   )}
                 </div>
-                <p className="mt-2 text-4xl font-bold text-white tabular-nums tracking-tight">
+                <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums text-white">
                   AED {parseFloat(insightsData.salary.calculated).toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
                 {insightsData.salary.source !== "DECLARED_FALLBACK" && (
                   <p className="mt-2 text-xs text-slate-400">
                     Your declared salary in Settings is AED {parseFloat(insightsData.salary.declared).toFixed(2)}.
                     {insightsData.salary.discrepancyPct && (
-                      <span className="text-amber-400 font-semibold"> That&apos;s a {insightsData.salary.discrepancyPct}% difference — consider updating Settings.</span>
+                      <span className="font-semibold text-amber-400"> That&apos;s a {insightsData.salary.discrepancyPct}% difference — consider updating Settings.</span>
                     )}
                   </p>
                 )}
-              </div>
+              </Card>
 
-              {/* Fixed commitments breakdown */}
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
-                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <Card className="space-y-4 p-6">
+                <h3 className="flex items-center gap-2 text-sm font-bold text-white">
                   <LucideWallet className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
                   Fixed Monthly Commitments
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="bg-slate-950/40 rounded-xl p-3">
+                </h3>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl bg-slate-950/40 p-3">
                     <p className="text-[10px] uppercase tracking-wider text-slate-500">Recurring Bills</p>
-                    <p className="font-bold text-sm text-slate-200 mt-1 tabular-nums">AED {parseFloat(insightsData.fixedCommitments.historicalFixedExpenses).toFixed(2)}</p>
+                    <p className="mt-1 text-sm font-bold tabular-nums text-slate-200">AED {parseFloat(insightsData.fixedCommitments.historicalFixedExpenses).toFixed(2)}</p>
                   </div>
-                  <div className="bg-slate-950/40 rounded-xl p-3">
+                  <div className="rounded-xl bg-slate-950/40 p-3">
                     <p className="text-[10px] uppercase tracking-wider text-slate-500">Debt Payments</p>
-                    <p className="font-bold text-sm text-slate-200 mt-1 tabular-nums">AED {parseFloat(insightsData.fixedCommitments.debtPayments).toFixed(2)}</p>
+                    <p className="mt-1 text-sm font-bold tabular-nums text-slate-200">AED {parseFloat(insightsData.fixedCommitments.debtPayments).toFixed(2)}</p>
                   </div>
-                  <div className="bg-slate-950/40 rounded-xl p-3">
+                  <div className="rounded-xl bg-slate-950/40 p-3">
                     <p className="text-[10px] uppercase tracking-wider text-slate-500">Remittances</p>
-                    <p className="font-bold text-sm text-slate-200 mt-1 tabular-nums">AED {parseFloat(insightsData.fixedCommitments.remittance).toFixed(2)}</p>
+                    <p className="mt-1 text-sm font-bold tabular-nums text-slate-200">AED {parseFloat(insightsData.fixedCommitments.remittance).toFixed(2)}</p>
                   </div>
                 </div>
-                <p className="text-xs text-slate-500 border-t border-slate-800 pt-3">
-                  Total committed: <span className="font-bold text-slate-300">AED {parseFloat(insightsData.fixedCommitments.total).toFixed(2)}</span> — derived from your recent bills, active debts, and remittance history.
+                <p className="border-t border-slate-800 pt-3 text-xs text-slate-500">
+                  Total committed: <span className="font-bold tabular-nums text-slate-300">AED {parseFloat(insightsData.fixedCommitments.total).toFixed(2)}</span> — derived
+                  from your recent bills, active debts, and remittance history.
                 </p>
-              </div>
+              </Card>
 
-              {/* Recommendation: over-committed warning, or safe-to-spend + savings */}
               {insightsData.recommendation?.isOverCommitted ? (
-                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6 flex items-start gap-3">
-                  <LucideCircleAlert className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" aria-hidden="true" />
+                <Card className="flex items-start gap-3 border-rose-500/20 bg-rose-500/5 p-6">
+                  <LucideCircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" aria-hidden="true" />
                   <div>
-                    <h4 className="text-sm font-bold text-rose-300">Your fixed commitments exceed your calculated salary</h4>
-                    <p className="text-xs text-rose-300/70 mt-1">
-                      There&apos;s no safe-to-spend budget to recommend this month — your recurring bills, debt payments, and remittances alone add up to more than you&apos;re earning. Review your commitments or debts before planning new spending.
+                    <h3 className="text-sm font-bold text-rose-300">Your fixed commitments exceed your calculated salary</h3>
+                    <p className="mt-1 text-xs text-rose-300/70">
+                      There&apos;s no safe-to-spend budget to recommend this month — your recurring bills, debt payments, and remittances alone add up to more than
+                      you&apos;re earning. Review your commitments or debts before planning new spending.
                     </p>
                   </div>
-                </div>
+                </Card>
               ) : insightsData.recommendation ? (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                  <div className="lg:col-span-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6">
-                    <p className="text-[10px] uppercase tracking-wider text-emerald-300/80 font-semibold">Safe to Spend This Month</p>
-                    <p className="mt-2 text-4xl font-bold text-white tabular-nums tracking-tight">
-                      AED {parseFloat(insightsData.recommendation.recommendedSafeToSpend).toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <Card className="border-emerald-500/20 bg-emerald-500/5 p-6 lg:col-span-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300/80">Safe to Spend This Month</p>
+                    <p className="mt-2 text-4xl font-bold tracking-tight tabular-nums text-white">
+                      AED{" "}
+                      {parseFloat(insightsData.recommendation.recommendedSafeToSpend).toLocaleString("en-AE", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
                     </p>
                     <p className="mt-2 text-xs text-slate-400">
-                      What&apos;s left after fixed commitments and your recommended savings — free to spend on groceries, dining, shopping, and other variable categories.
+                      What&apos;s left after fixed commitments and your recommended savings — free to spend on groceries, dining, shopping, and other variable
+                      categories.
                     </p>
-                  </div>
-                  <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-6">
-                    <p className="text-[10px] uppercase tracking-wider text-indigo-300/80 font-semibold">Recommended Savings</p>
-                    <p className="mt-2 text-2xl font-bold text-indigo-300 tabular-nums tracking-tight">
+                  </Card>
+                  <Card className="border-indigo-500/20 bg-indigo-500/5 p-6">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-300/80">Recommended Savings</p>
+                    <p className="mt-2 text-2xl font-bold tracking-tight tabular-nums text-indigo-300">
                       AED {parseFloat(insightsData.recommendation.recommendedSavings).toFixed(2)}
                     </p>
                     <p className="mt-2 text-xs text-slate-500">Based on your own best sustainable months, not a generic rule.</p>
-                  </div>
+                  </Card>
                 </div>
               ) : null}
 
-              {/* Category breakdown */}
               {insightsData.categoryBreakdown.length > 0 && (
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 space-y-4">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <Card className="space-y-4 p-6">
+                  <h3 className="flex items-center gap-2 text-sm font-bold text-white">
                     <LucidePieChart className="h-4.5 w-4.5 text-indigo-400" aria-hidden="true" />
                     Suggested Category Caps
-                  </h4>
+                  </h3>
                   <div className="space-y-3">
                     {insightsData.categoryBreakdown.map((c, idx) => (
                       <div key={c.categoryName}>
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="text-slate-300 font-semibold">{c.categoryName}</span>
-                          <span className="text-slate-400 tabular-nums">AED {parseFloat(c.suggestedCap).toFixed(2)} <span className="text-slate-600">({c.historicalSharePct}%)</span></span>
+                        <div className="mb-1 flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-300">{c.categoryName}</span>
+                          <span className="tabular-nums text-slate-400">
+                            AED {parseFloat(c.suggestedCap).toFixed(2)} <span className="text-slate-600">({c.historicalSharePct}%)</span>
+                          </span>
                         </div>
-                        <div className="w-full bg-slate-800 rounded-full h-1.5">
+                        <div className="h-1.5 w-full rounded-full bg-slate-800">
                           <div
                             className="h-1.5 rounded-full"
                             style={{ width: `${c.historicalSharePct}%`, backgroundColor: CATEGORY_COLORS[idx % CATEGORY_COLORS.length] }}
@@ -711,10 +646,10 @@ export function ReportsClient() {
                       </div>
                     ))}
                   </div>
-                  <p className="text-[11px] text-slate-500 border-t border-slate-800 pt-3">
+                  <p className="border-t border-slate-800 pt-3 text-[11px] text-slate-500">
                     Split proportionally to how you&apos;ve historically spent across these categories.
                   </p>
-                </div>
+                </Card>
               )}
             </div>
           )}
@@ -724,105 +659,62 @@ export function ReportsClient() {
       {/* Export Center Tab */}
       {activeTab === "export" && (
         <div className="space-y-6">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 space-y-6">
+          <Card className="space-y-6 p-6">
             <div>
               <h3 className="text-lg font-bold text-white">Export Center</h3>
-              <p className="text-sm text-slate-400 mt-1">
-                Filter by date and download spreadsheet-neutral CSV files of your financial records. Up to a 5 year range.
-              </p>
+              <p className="mt-1 text-sm text-slate-400">Filter by date and download spreadsheet-neutral CSV files of your financial records. Up to a 5 year range.</p>
             </div>
 
-            {/* Optional Date Filter */}
-            <div className="grid gap-4 sm:grid-cols-2 text-sm">
+            <div className="grid gap-4 text-sm sm:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-400 uppercase">Start Date</label>
+                <label htmlFor="export-start" className="text-xs font-semibold uppercase text-slate-400">
+                  Start Date
+                </label>
                 <input
+                  id="export-start"
                   type="date"
                   value={exportStartDate}
                   onChange={(e) => setExportStartDate(e.target.value)}
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none text-white"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-400 uppercase">End Date</label>
+                <label htmlFor="export-end" className="text-xs font-semibold uppercase text-slate-400">
+                  End Date
+                </label>
                 <input
+                  id="export-end"
                   type="date"
                   value={exportEndDate}
                   onChange={(e) => setExportEndDate(e.target.value)}
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none text-white"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
 
-            {/* Grid of export scopes */}
-            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 pt-4">
-              <button
-                onClick={() => handleExport("transactions")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
-              >
-                <div>
-                  <span className="block text-white font-bold">Ledger Transactions</span>
-                  <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">Full transactions log</span>
-                </div>
-                <LucideDownload className="h-4.5 w-4.5 text-indigo-400 group-hover:text-indigo-300 transition-colors" />
-              </button>
-
-              <button
-                onClick={() => handleExport("budgets")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
-              >
-                <div>
-                  <span className="block text-white font-bold">Budget Targets</span>
-                  <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">Budget limits by category</span>
-                </div>
-                <LucideDownload className="h-4.5 w-4.5 text-indigo-400 group-hover:text-indigo-300 transition-colors" />
-              </button>
-
-              <button
-                onClick={() => handleExport("debt_payments")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
-              >
-                <div>
-                  <span className="block text-white font-bold">Debt Payments</span>
-                  <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">Debt schedule payouts</span>
-                </div>
-                <LucideDownload className="h-4.5 w-4.5 text-indigo-400 group-hover:text-indigo-300 transition-colors" />
-              </button>
-
-              <button
-                onClick={() => handleExport("savings_transactions")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
-              >
-                <div>
-                  <span className="block text-white font-bold">Savings Transactions</span>
-                  <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">Deposits & withdrawals</span>
-                </div>
-                <LucideDownload className="h-4.5 w-4.5 text-indigo-400 group-hover:text-indigo-300 transition-colors" />
-              </button>
-
-              <button
-                onClick={() => handleExport("remittances")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
-              >
-                <div>
-                  <span className="block text-white font-bold">PH Remittances</span>
-                  <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">Remittance logs to Philippines</span>
-                </div>
-                <LucideDownload className="h-4.5 w-4.5 text-indigo-400 group-hover:text-indigo-300 transition-colors" />
-              </button>
-
-              <button
-                onClick={() => handleExport("monthly_summary")}
-                className="flex items-center justify-between rounded-xl bg-slate-950 border border-slate-800 p-4 text-sm font-semibold hover:bg-slate-900/60 hover:text-white transition-colors group text-left"
-              >
-                <div>
-                  <span className="block text-white font-bold">Monthly Trend Summary</span>
-                  <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">Monthly cash flow & balances</span>
-                </div>
-                <LucideDownload className="h-4.5 w-4.5 text-indigo-400 group-hover:text-indigo-300 transition-colors" />
-              </button>
+            <div className="grid gap-4 pt-4 sm:grid-cols-2 md:grid-cols-3">
+              {[
+                { type: "transactions", title: "Ledger Transactions", subtitle: "Full transactions log" },
+                { type: "budgets", title: "Budget Targets", subtitle: "Budget limits by category" },
+                { type: "debt_payments", title: "Debt Payments", subtitle: "Debt schedule payouts" },
+                { type: "savings_transactions", title: "Savings Transactions", subtitle: "Deposits & withdrawals" },
+                { type: "remittances", title: "PH Remittances", subtitle: "Remittance logs to Philippines" },
+                { type: "monthly_summary", title: "Monthly Trend Summary", subtitle: "Monthly cash flow & balances" },
+              ].map((item) => (
+                <button
+                  key={item.type}
+                  onClick={() => handleExport(item.type)}
+                  className="group flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-4 text-left text-sm font-semibold transition-colors hover:bg-slate-900/60 hover:text-white"
+                >
+                  <div>
+                    <span className="block font-bold text-white">{item.title}</span>
+                    <span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{item.subtitle}</span>
+                  </div>
+                  <LucideDownload className="h-4.5 w-4.5 text-indigo-400 transition-colors group-hover:text-indigo-300" aria-hidden="true" />
+                </button>
+              ))}
             </div>
-          </div>
+          </Card>
         </div>
       )}
     </div>

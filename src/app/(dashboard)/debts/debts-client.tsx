@@ -14,7 +14,13 @@ import {
   LucideArchive,
   LucideCalculator,
   LucideLandmark,
+  LucideLoader2,
 } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ProgressBar } from "@/components/ui/progress-bar";
+import { Button } from "@/components/ui/button";
+import type { Tone } from "@/components/ui/stat-tile";
 
 interface Debt {
   id: string;
@@ -71,6 +77,13 @@ interface DebtDetail extends Debt {
   projection: Projection;
 }
 
+const statusMeta: Record<string, { label: string; tone: Tone }> = {
+  ACTIVE: { label: "Active", tone: "emerald" },
+  PAID: { label: "Paid Off", tone: "indigo" },
+  ARCHIVED: { label: "Archived", tone: "slate" },
+  PAUSED: { label: "Paused", tone: "amber" },
+};
+
 export default function DebtsClient() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>("ACTIVE");
@@ -80,7 +93,6 @@ export default function DebtsClient() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [projectionMonths, setProjectionMonths] = useState(12);
 
-  // Form state
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   const [syncLedger, setSyncLedger] = useState(true);
@@ -94,7 +106,6 @@ export default function DebtsClient() {
     notes: "",
   });
 
-  // Fetch debts
   const { data: debts = [], isLoading } = useQuery<Debt[]>({
     queryKey: ["debts", statusFilter],
     queryFn: async () => {
@@ -104,7 +115,6 @@ export default function DebtsClient() {
     },
   });
 
-  // Fetch debt detail (with projection)
   const { data: debtDetail } = useQuery<DebtDetail>({
     queryKey: ["debtDetail", showProjection],
     queryFn: async () => {
@@ -115,7 +125,6 @@ export default function DebtsClient() {
     enabled: !!showProjection,
   });
 
-  // Fetch payments
   const { data: paymentsData } = useQuery<{
     items: Payment[];
     page: number;
@@ -132,7 +141,6 @@ export default function DebtsClient() {
     enabled: !!showPaymentHistory,
   });
 
-  // Record payment mutation
   const paymentMutation = useMutation({
     mutationFn: async ({ debtId, amount, notes, sync }: { debtId: string; amount: string; notes: string; sync: boolean }) => {
       const parsedVal = parseFloat(amount);
@@ -166,7 +174,6 @@ export default function DebtsClient() {
     },
   });
 
-  // Create debt mutation
   const createMutation = useMutation({
     mutationFn: async (data: typeof newDebt) => {
       const res = await fetch("/api/debts", {
@@ -192,7 +199,6 @@ export default function DebtsClient() {
     },
   });
 
-  // Archive debt mutation
   const archiveMutation = useMutation({
     mutationFn: async (debtId: string) => {
       const res = await fetch(`/api/debts/${debtId}`, {
@@ -216,17 +222,6 @@ export default function DebtsClient() {
     return Math.min(100, Math.round(((orig - cur) / orig) * 100));
   };
 
-  const getStatusBadge = (status: string) => {
-    const map: Record<string, { label: string; cls: string }> = {
-      ACTIVE: { label: "Active", cls: "bg-emerald-500/10 text-emerald-400" },
-      PAID: { label: "Paid Off", cls: "bg-indigo-500/10 text-indigo-400" },
-      ARCHIVED: { label: "Archived", cls: "bg-slate-700/50 text-slate-400" },
-      PAUSED: { label: "Paused", cls: "bg-amber-500/10 text-amber-400" },
-    };
-    const s = map[status] || map.ACTIVE;
-    return <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
-  };
-
   const projection = debtDetail?.projection;
   const visibleProjections = projection?.projections.slice(0, projectionMonths) || [];
 
@@ -236,26 +231,24 @@ export default function DebtsClient() {
         title="Debt Tracker"
         description="Monitor outstanding debt balances, record payments, and view payoff projections."
         action={
-          <button
-            onClick={() => setShowCreateDialog(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white px-4 py-2 text-sm font-semibold transition-colors"
-          >
-            <LucidePlus className="h-4 w-4" /> Add Debt
-          </button>
+          <Button variant="primary" onClick={() => setShowCreateDialog(true)}>
+            <LucidePlus className="h-4 w-4" aria-hidden="true" /> Add Debt
+          </Button>
         }
       />
 
       {/* Status filter */}
-      <div className="flex gap-2">
+      <div className="flex gap-2" role="tablist" aria-label="Filter by debt status">
         {["ACTIVE", "PAID", "ARCHIVED", "PAUSED"].map((s) => (
           <button
             key={s}
+            role="tab"
+            aria-selected={statusFilter === s}
             onClick={() => setStatusFilter(s)}
-            className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
-              statusFilter === s
-                ? "bg-slate-700 text-white"
-                : "bg-slate-900/50 text-slate-400 hover:bg-slate-800 hover:text-slate-300"
-            }`}
+            className={
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors " +
+              (statusFilter === s ? "bg-indigo-600 text-white" : "bg-slate-900/50 text-slate-400 hover:bg-slate-800 hover:text-slate-300")
+            }
           >
             {s.charAt(0) + s.slice(1).toLowerCase()}
           </button>
@@ -264,7 +257,10 @@ export default function DebtsClient() {
 
       {/* Debts List */}
       {isLoading ? (
-        <div className="text-center py-12 text-slate-500">Loading debts...</div>
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-400">
+          <LucideLoader2 className="h-6 w-6 animate-spin text-indigo-500" aria-hidden="true" />
+          <p className="text-sm">Loading debts…</p>
+        </div>
       ) : debts.length === 0 ? (
         <EmptyState
           icon={LucideLandmark}
@@ -274,315 +270,416 @@ export default function DebtsClient() {
             label: "Add Debt",
             onClick: () => setShowCreateDialog(true),
             icon: LucidePlus,
-            className: "bg-rose-500 hover:bg-rose-400 text-white",
+            className: "bg-indigo-600 hover:bg-indigo-500 text-white",
           }}
         />
       ) : (
         <div className="space-y-4">
-          {debts.map((debt) => (
-            <div key={debt.id} className="rounded-2xl border border-slate-800 bg-slate-900/30 p-5 space-y-4">
-              {/* Header */}
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-white text-base">{debt.name}</h3>
-                    {getStatusBadge(debt.status)}
+          {debts.map((debt) => {
+            const meta = statusMeta[debt.status] || statusMeta.ACTIVE;
+            return (
+              <Card key={debt.id} className="space-y-4 p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-bold text-white">{debt.name}</h3>
+                      <Badge tone={meta.tone}>{meta.label}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Due day: {debt.dueDay} of each month</p>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">Due day: {debt.dueDay} of each month</p>
+                  <div className="text-right">
+                    <p className="text-xl font-bold tabular-nums text-white">AED {parseFloat(debt.currentBalance).toFixed(2)}</p>
+                    <p className="text-xs tabular-nums text-slate-500">of AED {parseFloat(debt.originalBalance).toFixed(2)}</p>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-xl font-bold text-white">AED {parseFloat(debt.currentBalance).toFixed(2)}</p>
-                  <p className="text-xs text-slate-500">of AED {parseFloat(debt.originalBalance).toFixed(2)}</p>
-                </div>
-              </div>
 
-              {/* Progress bar */}
-              <div>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-slate-400">Payment Progress</span>
-                  <span className="font-bold text-emerald-400">{getProgressPct(debt)}%</span>
+                <div>
+                  <div className="mb-1.5 flex justify-between text-xs">
+                    <span className="text-slate-400">Payment Progress</span>
+                    <span className="font-bold tabular-nums text-emerald-400">{getProgressPct(debt)}%</span>
+                  </div>
+                  <ProgressBar value={getProgressPct(debt)} tone="emerald" />
                 </div>
-                <div className="w-full bg-slate-800 rounded-full h-2">
-                  <div
-                    className="bg-gradient-to-r from-emerald-500 to-emerald-400 h-2 rounded-full transition-all duration-500"
-                    style={{ width: `${getProgressPct(debt)}%` }}
-                  />
-                </div>
-              </div>
 
-              {/* Details row */}
-              <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="bg-slate-950/30 rounded-xl p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500">Monthly Payment</p>
-                  <p className="font-bold text-sm text-slate-200 mt-1">AED {parseFloat(debt.monthlyPayment).toFixed(2)}</p>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-xl bg-slate-950/30 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Monthly Payment</p>
+                    <p className="mt-1 text-sm font-bold tabular-nums text-slate-200">AED {parseFloat(debt.monthlyPayment).toFixed(2)}</p>
+                  </div>
+                  <div className="rounded-xl bg-slate-950/30 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Due Day</p>
+                    <p className="mt-1 text-sm font-bold tabular-nums text-slate-200">{debt.dueDay}</p>
+                  </div>
+                  <div className="rounded-xl bg-slate-950/30 p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">Fee Rate</p>
+                    <p className="mt-1 text-sm font-bold tabular-nums text-slate-200">{parseFloat(debt.rolloverFeeRate).toFixed(2)}%</p>
+                  </div>
                 </div>
-                <div className="bg-slate-950/30 rounded-xl p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500">Due Day</p>
-                  <p className="font-bold text-sm text-slate-200 mt-1">{debt.dueDay}</p>
-                </div>
-                <div className="bg-slate-950/30 rounded-xl p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500">Fee Rate</p>
-                  <p className="font-bold text-sm text-slate-200 mt-1">{parseFloat(debt.rolloverFeeRate).toFixed(2)}%</p>
-                </div>
-              </div>
 
-              {/* Action buttons */}
-              <div className="flex flex-wrap gap-2 pt-1">
-                {(debt.status === "ACTIVE" || debt.status === "PAUSED") && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {(debt.status === "ACTIVE" || debt.status === "PAUSED") && (
+                    <button
+                      onClick={() => {
+                        setShowPaymentDialog(debt.id);
+                        setPaymentAmount(Math.min(parseFloat(debt.currentBalance), parseFloat(debt.monthlyPayment)).toFixed(2));
+                      }}
+                      className="flex items-center gap-1 rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20"
+                    >
+                      <LucideCheck className="h-3.5 w-3.5" aria-hidden="true" /> Record Payment
+                    </button>
+                  )}
                   <button
-                    onClick={() => { setShowPaymentDialog(debt.id); setPaymentAmount(Math.min(parseFloat(debt.currentBalance), parseFloat(debt.monthlyPayment)).toFixed(2)); }}
-                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                    onClick={() => setShowPaymentHistory(showPaymentHistory === debt.id ? null : debt.id)}
+                    className="flex items-center gap-1 rounded-lg bg-slate-800/60 px-3 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-700/60"
+                    aria-expanded={showPaymentHistory === debt.id}
                   >
-                    <LucideCheck className="h-3.5 w-3.5" /> Record Payment
+                    <LucideCalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+                    {showPaymentHistory === debt.id ? "Hide History" : "Payment History"}
                   </button>
-                )}
-                <button
-                  onClick={() => setShowPaymentHistory(showPaymentHistory === debt.id ? null : debt.id)}
-                  className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800/60 text-slate-300 hover:bg-slate-700/60 transition-colors"
-                >
-                  <LucideCalendarClock className="h-3.5 w-3.5" />
-                  {showPaymentHistory === debt.id ? "Hide History" : "Payment History"}
-                </button>
-                <button
-                  onClick={() => setShowProjection(showProjection === debt.id ? null : debt.id)}
-                  className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-colors"
-                >
-                  <LucideCalculator className="h-3.5 w-3.5" />
-                  {showProjection === debt.id ? "Hide Projection" : "Payoff Projection"}
-                </button>
-                {debt.status === "ACTIVE" && (
                   <button
-                    onClick={() => archiveMutation.mutate(debt.id)}
-                    className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800/40 text-slate-500 hover:text-slate-300 hover:bg-slate-700/40 transition-colors ml-auto"
+                    onClick={() => setShowProjection(showProjection === debt.id ? null : debt.id)}
+                    className="flex items-center gap-1 rounded-lg bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-400 transition-colors hover:bg-indigo-500/20"
+                    aria-expanded={showProjection === debt.id}
                   >
-                    <LucideArchive className="h-3.5 w-3.5" /> Archive
+                    <LucideCalculator className="h-3.5 w-3.5" aria-hidden="true" />
+                    {showProjection === debt.id ? "Hide Projection" : "Payoff Projection"}
                   </button>
-                )}
-              </div>
+                  {debt.status === "ACTIVE" && (
+                    <button
+                      onClick={() => archiveMutation.mutate(debt.id)}
+                      className="ml-auto flex items-center gap-1 rounded-lg bg-slate-800/40 px-3 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-700/40 hover:text-slate-300"
+                    >
+                      <LucideArchive className="h-3.5 w-3.5" aria-hidden="true" /> Archive
+                    </button>
+                  )}
+                </div>
 
-              {/* Payment History */}
-              {showPaymentHistory === debt.id && paymentsData && (
-                <div className="border-t border-slate-800 pt-4 mt-2">
-                  <h4 className="text-sm font-bold text-slate-300 mb-3">Payment History</h4>
-                  {paymentsData.items.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No payments recorded yet.</p>
-                  ) : (
+                {showPaymentHistory === debt.id && paymentsData && (
+                  <div className="mt-2 border-t border-slate-800 pt-4">
+                    <h4 className="mb-3 text-sm font-bold text-slate-300">Payment History</h4>
+                    {paymentsData.items.length === 0 ? (
+                      <p className="text-xs italic text-slate-500">No payments recorded yet.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-800 text-slate-500">
+                              <th className="pb-2 text-left font-semibold">Date</th>
+                              <th className="pb-2 text-right font-semibold">Amount</th>
+                              <th className="pb-2 text-right font-semibold">Before</th>
+                              <th className="pb-2 text-right font-semibold">After</th>
+                              <th className="pb-2 text-center font-semibold">Ledger</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {paymentsData.items.map((p) => (
+                              <tr key={p.id} className="border-b border-slate-800/50">
+                                <td className="py-2.5 text-slate-300">
+                                  {new Date(p.paymentDate).toLocaleDateString("en-AE", {
+                                    timeZone: "Asia/Dubai",
+                                    month: "short",
+                                    day: "numeric",
+                                    year: "numeric",
+                                  })}
+                                </td>
+                                <td className="py-2.5 text-right font-bold tabular-nums text-emerald-400">AED {parseFloat(p.amount).toFixed(2)}</td>
+                                <td className="py-2.5 text-right tabular-nums text-slate-400">AED {parseFloat(p.balanceBefore).toFixed(2)}</td>
+                                <td className="py-2.5 text-right tabular-nums text-slate-300">AED {parseFloat(p.balanceAfter).toFixed(2)}</td>
+                                <td className="py-2.5 text-center">
+                                  {p.transactionStatus === "LINKED" ? (
+                                    <span className="text-[10px] font-bold text-emerald-400">Linked</span>
+                                  ) : (
+                                    <span
+                                      className="flex items-center justify-center gap-0.5 text-[10px] text-slate-500"
+                                      title="Not included in cash flow"
+                                    >
+                                      <LucideInfo className="h-3 w-3" aria-hidden="true" /> Unlinked
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {showProjection === debt.id && projection && (
+                  <div className="mt-2 space-y-3 border-t border-slate-800 pt-4">
+                    <div className="flex items-start justify-between">
+                      <h4 className="text-sm font-bold text-slate-300">Payoff Projection</h4>
+                      <div className="flex items-center gap-2">
+                        <label htmlFor="projection-months" className="text-[10px] uppercase tracking-wide text-slate-500">
+                          Months:
+                        </label>
+                        <input
+                          id="projection-months"
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={36}
+                          value={projectionMonths}
+                          onChange={(e) => setProjectionMonths(Math.min(36, Math.max(1, parseInt(e.target.value) || 1)))}
+                          className="w-14 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-center text-xs text-white outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <div className="rounded-xl bg-slate-950/40 p-3 text-center">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-500">Starting Balance</p>
+                        <p className="mt-1 text-sm font-bold tabular-nums text-white">AED {parseFloat(projection.startingBalance).toFixed(2)}</p>
+                      </div>
+                      <div className="rounded-xl bg-slate-950/40 p-3 text-center">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-500">Payoff In</p>
+                        <p className="mt-1 text-sm font-bold tabular-nums text-indigo-400">
+                          {projection.payoffMonthIndex ? `${projection.payoffMonthIndex} months` : "> 36 months"}
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-slate-950/40 p-3 text-center">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-500">Total Payments</p>
+                        <p className="mt-1 text-sm font-bold tabular-nums text-emerald-400">
+                          AED {parseFloat(projection.totalProjectedPayments).toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-slate-950/40 p-3 text-center">
+                        <p className="text-[10px] uppercase tracking-wider text-slate-500">Est. Total Fees</p>
+                        <p className="mt-1 text-sm font-bold tabular-nums text-rose-400">
+                          AED {parseFloat(projection.totalProjectedFees).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className="text-slate-500 border-b border-slate-800">
-                            <th className="text-left pb-2 font-semibold">Date</th>
-                            <th className="text-right pb-2 font-semibold">Amount</th>
-                            <th className="text-right pb-2 font-semibold">Before</th>
-                            <th className="text-right pb-2 font-semibold">After</th>
-                            <th className="text-center pb-2 font-semibold">Ledger</th>
+                          <tr className="border-b border-slate-800 text-slate-500">
+                            <th className="pb-2 text-left font-semibold">Month</th>
+                            <th className="pb-2 text-right font-semibold">Start</th>
+                            <th className="pb-2 text-right font-semibold">Payment</th>
+                            <th className="pb-2 text-right font-semibold">Est. Fee</th>
+                            <th className="pb-2 text-right font-semibold">End</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {paymentsData.items.map((p) => (
-                            <tr key={p.id} className="border-b border-slate-800/50">
-                              <td className="py-2.5 text-slate-300">
-                                {new Date(p.paymentDate).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric", year: "numeric" })}
-                              </td>
-                              <td className="py-2.5 text-right font-bold text-emerald-400">AED {parseFloat(p.amount).toFixed(2)}</td>
-                              <td className="py-2.5 text-right text-slate-400">AED {parseFloat(p.balanceBefore).toFixed(2)}</td>
-                              <td className="py-2.5 text-right text-slate-300">AED {parseFloat(p.balanceAfter).toFixed(2)}</td>
-                              <td className="py-2.5 text-center">
-                                {p.transactionStatus === "LINKED" ? (
-                                  <span className="text-emerald-400 text-[10px] font-bold">Linked</span>
-                                ) : (
-                                  <span className="text-slate-500 text-[10px] flex items-center justify-center gap-0.5" title="Not included in cash flow">
-                                    <LucideInfo className="h-3 w-3" /> Unlinked
-                                  </span>
-                                )}
+                          {visibleProjections.map((p) => (
+                            <tr key={p.monthIndex} className="border-b border-slate-800/50">
+                              <td className="py-2 text-slate-400">Month {p.monthIndex}</td>
+                              <td className="py-2 text-right tabular-nums text-slate-300">AED {parseFloat(p.startingBalance).toFixed(2)}</td>
+                              <td className="py-2 text-right tabular-nums text-emerald-400">AED {parseFloat(p.payment).toFixed(2)}</td>
+                              <td className="py-2 text-right tabular-nums text-rose-400">AED {parseFloat(p.estimatedRolloverFee).toFixed(2)}</td>
+                              <td className="py-2 text-right font-bold tabular-nums text-slate-200">
+                                AED {parseFloat(p.projectedEndingBalance).toFixed(2)}
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  )}
-                </div>
-              )}
 
-              {/* Projection */}
-              {showProjection === debt.id && projection && (
-                <div className="border-t border-slate-800 pt-4 mt-2 space-y-3">
-                  <div className="flex items-start justify-between">
-                    <h4 className="text-sm font-bold text-slate-300">Payoff Projection</h4>
-                    <div className="flex items-center gap-2">
-                      <label className="text-[10px] text-slate-500 uppercase tracking-wide">Months:</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={36}
-                        value={projectionMonths}
-                        onChange={(e) => setProjectionMonths(Math.min(36, Math.max(1, parseInt(e.target.value) || 1)))}
-                        className="w-14 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white text-center"
-                      />
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-500/10 bg-amber-500/5 p-3">
+                      <LucideCircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+                      <p className="text-[11px] leading-relaxed text-amber-300/80">{projection.disclaimer}</p>
                     </div>
                   </div>
-
-                  {/* Summary */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="bg-slate-950/40 rounded-xl p-3 text-center">
-                      <p className="text-[10px] uppercase tracking-wider text-slate-500">Starting Balance</p>
-                      <p className="font-bold text-sm text-white mt-1">AED {parseFloat(projection.startingBalance).toFixed(2)}</p>
-                    </div>
-                    <div className="bg-slate-950/40 rounded-xl p-3 text-center">
-                      <p className="text-[10px] uppercase tracking-wider text-slate-500">Payoff In</p>
-                      <p className="font-bold text-sm text-indigo-400 mt-1">{projection.payoffMonthIndex ? `${projection.payoffMonthIndex} months` : "> 36 months"}</p>
-                    </div>
-                    <div className="bg-slate-950/40 rounded-xl p-3 text-center">
-                      <p className="text-[10px] uppercase tracking-wider text-slate-500">Total Payments</p>
-                      <p className="font-bold text-sm text-emerald-400 mt-1">AED {parseFloat(projection.totalProjectedPayments).toFixed(2)}</p>
-                    </div>
-                    <div className="bg-slate-950/40 rounded-xl p-3 text-center">
-                      <p className="text-[10px] uppercase tracking-wider text-slate-500">Est. Total Fees</p>
-                      <p className="font-bold text-sm text-rose-400 mt-1">AED {parseFloat(projection.totalProjectedFees).toFixed(2)}</p>
-                    </div>
-                  </div>
-
-                  {/* Projection table */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-slate-500 border-b border-slate-800">
-                          <th className="text-left pb-2 font-semibold">Month</th>
-                          <th className="text-right pb-2 font-semibold">Start</th>
-                          <th className="text-right pb-2 font-semibold">Payment</th>
-                          <th className="text-right pb-2 font-semibold">Est. Fee</th>
-                          <th className="text-right pb-2 font-semibold">End</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleProjections.map((p) => (
-                          <tr key={p.monthIndex} className="border-b border-slate-800/50">
-                            <td className="py-2 text-slate-400">Month {p.monthIndex}</td>
-                            <td className="py-2 text-right text-slate-300">AED {parseFloat(p.startingBalance).toFixed(2)}</td>
-                            <td className="py-2 text-right text-emerald-400">AED {parseFloat(p.payment).toFixed(2)}</td>
-                            <td className="py-2 text-right text-rose-400">AED {parseFloat(p.estimatedRolloverFee).toFixed(2)}</td>
-                            <td className="py-2 text-right font-bold text-slate-200">AED {parseFloat(p.projectedEndingBalance).toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Disclaimer */}
-                  <div className="flex items-start gap-2 bg-amber-500/5 border border-amber-500/10 rounded-xl p-3">
-                    <LucideCircleAlert className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-amber-300/80 leading-relaxed">{projection.disclaimer}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
 
       {/* Record Payment Dialog */}
       {showPaymentDialog && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowPaymentDialog(null)}>
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setShowPaymentDialog(null)}
+        >
+          <Card className="w-full max-w-md space-y-4 border-slate-700 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-white">Record Payment</h3>
-              <button onClick={() => setShowPaymentDialog(null)} className="text-slate-400 hover:text-white"><LucideX className="h-5 w-5" /></button>
+              <button onClick={() => setShowPaymentDialog(null)} className="text-slate-400 hover:text-white" aria-label="Close dialog">
+                <LucideX className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Payment Amount (AED)</label>
+                <label htmlFor="payment-amount" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Payment Amount (AED)
+                </label>
                 <input
+                  id="payment-amount"
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min="0.01"
                   value={paymentAmount}
                   onChange={(e) => setPaymentAmount(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
                   placeholder="0.00"
                 />
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Notes (optional)</label>
+                <label htmlFor="payment-notes" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Notes (optional)
+                </label>
                 <input
+                  id="payment-notes"
                   type="text"
                   value={paymentNotes}
                   onChange={(e) => setPaymentNotes(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
                   placeholder="e.g. Monthly installment"
                 />
               </div>
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2">
                 <input type="checkbox" checked={syncLedger} onChange={(e) => setSyncLedger(e.target.checked)} className="rounded" />
                 <span className="text-xs text-slate-300">Add to ledger (cash-flow tracking)</span>
               </label>
               {!syncLedger && (
-                <p className="text-[10px] text-amber-400 flex items-center gap-1"><LucideInfo className="h-3 w-3" /> This payment will not appear in cash-flow totals.</p>
+                <p className="flex items-center gap-1 text-[10px] text-amber-400">
+                  <LucideInfo className="h-3 w-3" aria-hidden="true" /> This payment will not appear in cash-flow totals.
+                </p>
               )}
             </div>
             {paymentMutation.error && (
-              <p className="text-xs text-rose-400">{(paymentMutation.error as Error).message}</p>
+              <p role="alert" aria-live="polite" className="text-xs text-rose-400">
+                {(paymentMutation.error as Error).message}
+              </p>
             )}
             <button
               onClick={() => paymentMutation.mutate({ debtId: showPaymentDialog, amount: paymentAmount, notes: paymentNotes, sync: syncLedger })}
               disabled={paymentMutation.isPending}
-              className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors disabled:opacity-50"
+              className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
             >
-              {paymentMutation.isPending ? "Processing..." : "Confirm Payment"}
+              {paymentMutation.isPending ? "Processing…" : "Confirm Payment"}
             </button>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Create Debt Dialog */}
       {showCreateDialog && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowCreateDialog(false)}>
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setShowCreateDialog(false)}
+        >
+          <Card className="w-full max-w-md space-y-4 border-slate-700 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold text-white">Add New Debt</h3>
-              <button onClick={() => setShowCreateDialog(false)} className="text-slate-400 hover:text-white"><LucideX className="h-5 w-5" /></button>
+              <button onClick={() => setShowCreateDialog(false)} className="text-slate-400 hover:text-white" aria-label="Close dialog">
+                <LucideX className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Debt Name</label>
-                <input type="text" value={newDebt.name} onChange={(e) => setNewDebt({ ...newDebt, name: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="e.g. Tabby" />
+                <label htmlFor="debt-name" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Debt Name
+                </label>
+                <input
+                  id="debt-name"
+                  type="text"
+                  value={newDebt.name}
+                  onChange={(e) => setNewDebt({ ...newDebt, name: e.target.value })}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  placeholder="e.g. Tabby"
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">Original Balance</label>
-                  <input type="number" step="0.01" value={newDebt.originalBalance} onChange={(e) => setNewDebt({ ...newDebt, originalBalance: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="0.00" />
+                  <label htmlFor="debt-original" className="mb-1 block text-xs font-semibold text-slate-400">
+                    Original Balance
+                  </label>
+                  <input
+                    id="debt-original"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={newDebt.originalBalance}
+                    onChange={(e) => setNewDebt({ ...newDebt, originalBalance: e.target.value })}
+                    autoComplete="off"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                    placeholder="0.00"
+                  />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">Monthly Payment</label>
-                  <input type="number" step="0.01" value={newDebt.monthlyPayment} onChange={(e) => setNewDebt({ ...newDebt, monthlyPayment: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="0.00" />
+                  <label htmlFor="debt-monthly" className="mb-1 block text-xs font-semibold text-slate-400">
+                    Monthly Payment
+                  </label>
+                  <input
+                    id="debt-monthly"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    value={newDebt.monthlyPayment}
+                    onChange={(e) => setNewDebt({ ...newDebt, monthlyPayment: e.target.value })}
+                    autoComplete="off"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                    placeholder="0.00"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">Due Day (1-31)</label>
-                  <input type="number" min="1" max="31" value={newDebt.dueDay} onChange={(e) => setNewDebt({ ...newDebt, dueDay: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+                  <label htmlFor="debt-due-day" className="mb-1 block text-xs font-semibold text-slate-400">
+                    Due Day (1-31)
+                  </label>
+                  <input
+                    id="debt-due-day"
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    max="31"
+                    value={newDebt.dueDay}
+                    onChange={(e) => setNewDebt({ ...newDebt, dueDay: e.target.value })}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-400 block mb-1">Rollover Fee Rate (%)</label>
-                  <input type="number" step="0.01" min="0" value={newDebt.rolloverFeeRate} onChange={(e) => setNewDebt({ ...newDebt, rolloverFeeRate: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+                  <label htmlFor="debt-fee-rate" className="mb-1 block text-xs font-semibold text-slate-400">
+                    Rollover Fee Rate (%)
+                  </label>
+                  <input
+                    id="debt-fee-rate"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={newDebt.rolloverFeeRate}
+                    onChange={(e) => setNewDebt({ ...newDebt, rolloverFeeRate: e.target.value })}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  />
                 </div>
               </div>
               <div>
-                <label className="text-xs font-semibold text-slate-400 block mb-1">Notes (optional)</label>
-                <input type="text" value={newDebt.notes} onChange={(e) => setNewDebt({ ...newDebt, notes: e.target.value })} className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" placeholder="Optional notes" />
+                <label htmlFor="debt-notes" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Notes (optional)
+                </label>
+                <input
+                  id="debt-notes"
+                  type="text"
+                  value={newDebt.notes}
+                  onChange={(e) => setNewDebt({ ...newDebt, notes: e.target.value })}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  placeholder="Optional notes"
+                />
               </div>
             </div>
             {createMutation.error && (
-              <p className="text-xs text-rose-400">{(createMutation.error as Error).message}</p>
+              <p role="alert" aria-live="polite" className="text-xs text-rose-400">
+                {(createMutation.error as Error).message}
+              </p>
             )}
-            <button
-              onClick={() => createMutation.mutate(newDebt)}
-              disabled={createMutation.isPending}
-              className="w-full bg-rose-500 hover:bg-rose-400 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors disabled:opacity-50"
-            >
-              {createMutation.isPending ? "Creating..." : "Create Debt"}
-            </button>
-          </div>
+            <Button variant="primary" className="w-full" onClick={() => createMutation.mutate(newDebt)} disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Creating…" : "Create Debt"}
+            </Button>
+          </Card>
         </div>
       )}
     </div>

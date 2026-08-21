@@ -23,6 +23,10 @@ import { clsx } from "clsx";
 import type { UpcomingPaymentItem } from "@/server/services/upcoming-payment.service";
 import { AutomationStatusPanel } from "@/components/imports/automation-status-panel";
 import { SalarySafetyAlert } from "@/components/dashboard/salary-safety-alert";
+import { Card, CardHeader } from "@/components/ui/card";
+import { StatTile, type Tone } from "@/components/ui/stat-tile";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 interface TransactionSummary {
   id: string;
@@ -105,15 +109,19 @@ interface DashboardClientProps {
   initialData: DashboardData;
 }
 
+const healthMeta: Record<string, { label: string; tone: Tone }> = {
+  excellent: { label: "Excellent", tone: "emerald" },
+  good: { label: "Good", tone: "indigo" },
+  fair: { label: "Fair", tone: "amber" },
+  poor: { label: "Needs Attention", tone: "rose" },
+};
+
 export function DashboardClient({ initialData }: DashboardClientProps) {
   const [selectedMonth, setSelectedMonth] = useState(initialData.month);
 
   const queryClient = useQueryClient();
   const [isRolloverModalOpen, setIsRolloverModalOpen] = useState(false);
   const [rolloverError, setRolloverError] = useState("");
-
-  // Quick Actions state removed — dashboard is now monitoring-only
-  // Manual forms remain available in /transactions, /debts, /savings, /remittances
 
   const { data = initialData } = useQuery<DashboardData>({
     queryKey: ["dashboard", selectedMonth],
@@ -125,14 +133,12 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     initialData: selectedMonth === initialData.month ? initialData : undefined,
   });
 
-  // Calculate previous month relative to selected month
   const [y, monthNum] = selectedMonth.split("-").map(Number);
   const prevDate = new Date(Date.UTC(y, monthNum - 2, 1));
   const prevY = prevDate.getUTCFullYear();
   const prevM = String(prevDate.getUTCMonth() + 1).padStart(2, "0");
   const previousMonth = `${prevY}-${prevM}`;
 
-  // Query rollover preview
   const { data: rolloverPreview, refetch: refetchRolloverPreview } = useQuery({
     queryKey: ["rollover-preview", previousMonth, selectedMonth],
     queryFn: async () => {
@@ -143,7 +149,6 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     enabled: !!selectedMonth,
   });
 
-  // Query upcoming payments feed
   const { data: upcomingPayments = [] } = useQuery<UpcomingPaymentItem[]>({
     queryKey: ["upcoming-payments"],
     queryFn: async () => {
@@ -153,7 +158,6 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     },
   });
 
-  // Mutations
   const handlePaymentMutation = useMutation({
     mutationFn: async ({ id, action, createTransaction }: { id: string; action: "COMPLETED" | "SKIPPED"; createTransaction?: boolean }) => {
       const res = await fetch(`/api/upcoming-payments/${id}/handle`, {
@@ -217,221 +221,195 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
     });
   };
 
+  const income = parseFloat(data.actual.income);
+  const expenses = parseFloat(data.actual.expenses);
+  const remittances = parseFloat(data.actual.remittances);
+  const debtPayments = parseFloat(data.actual.debtPayments);
+  const net = parseFloat(data.actual.remaining);
+  const totalOutflow = expenses + remittances + debtPayments;
+  const savingsRate = income > 0 ? ((income - totalOutflow) / income) * 100 : 0;
+  const healthScore =
+    net >= 0 && savingsRate >= 20 ? "excellent" : net >= 0 && savingsRate >= 10 ? "good" : net >= 0 ? "fair" : "poor";
+  const meta = healthMeta[healthScore];
+
   return (
     <div className="space-y-8 animate-in fade-in duration-300 text-slate-100">
       <PageHeader
         title="Financial Overview"
         description="Here is your financial status for the selected month."
         action={
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1.5 gap-2">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 p-1.5">
             <button
               onClick={() => changeMonth(-1)}
-              className="rounded-lg p-1.5 hover:bg-slate-800 transition-colors"
+              className="rounded-lg p-1.5 transition-colors hover:bg-slate-800"
+              aria-label="Previous month"
             >
               <LucideChevronLeft className="h-4.5 w-4.5" />
             </button>
-            <span className="text-sm font-bold min-w-32 text-center text-white">
+            <span className="min-w-32 text-center text-sm font-bold text-white">
               {getMonthLabel(selectedMonth)}
             </span>
             <button
               onClick={() => changeMonth(1)}
-              className="rounded-lg p-1.5 hover:bg-slate-800 transition-colors"
+              className="rounded-lg p-1.5 transition-colors hover:bg-slate-800"
+              aria-label="Next month"
             >
               <LucideChevronRight className="h-4.5 w-4.5" />
             </button>
           </div>
         }
       />
-      {/* Salary Safety & Webhook Health Alert */}
+
       <SalarySafetyAlert />
-      
-      {/* Automation Status Panel — replaces quick actions */}
       <AutomationStatusPanel activeMonth={selectedMonth} />
 
-
-
       {/* Financial Health Summary */}
-      {(() => {
-        const income = parseFloat(data.actual.income);
-        const expenses = parseFloat(data.actual.expenses);
-        const remittances = parseFloat(data.actual.remittances);
-        const debtPayments = parseFloat(data.actual.debtPayments);
-        const net = parseFloat(data.actual.remaining);
-        const totalOutflow = expenses + remittances + debtPayments;
-        const savingsRate = income > 0 ? ((income - totalOutflow) / income) * 100 : 0;
-        const healthScore =
-          net >= 0 && savingsRate >= 20
-            ? "excellent"
-            : net >= 0 && savingsRate >= 10
-            ? "good"
-            : net >= 0
-            ? "fair"
-            : "poor";
-        const healthMeta: Record<string, { label: string; color: string; bg: string }> = {
-          excellent: { label: "Excellent", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
-          good:      { label: "Good",      color: "text-indigo-400",  bg: "bg-indigo-500/10 border-indigo-500/20" },
-          fair:      { label: "Fair",      color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/20" },
-          poor:      { label: "Needs Attention", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20" },
-        };
-        const meta = healthMeta[healthScore];
-
-        return (
-          <div className={`rounded-2xl border p-5 ${meta.bg} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5`}>
-            <div className="flex items-start gap-4">
-              <div className={`rounded-full p-2 border ${meta.bg}`}>
-                <LucideTrendingUp className={`h-5 w-5 ${meta.color}`} aria-hidden="true" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Financial Health</p>
-                <p className={`text-xl font-bold mt-0.5 ${meta.color}`}>{meta.label}</p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Net cash flow:{" "}
-                  <span className={net >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
-                    {net >= 0 ? "+" : ""}AED {net.toFixed(2)}
-                  </span>
-                  {income > 0 && (
-                    <span className="ml-2 text-slate-500">
-                      · Savings rate: {Math.max(0, savingsRate).toFixed(1)}%
-                    </span>
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-6 text-right">
-              <div>
-                <p className="text-xs text-slate-500">Outstanding Debt</p>
-                <p className="text-base font-bold text-rose-400 mt-0.5">
-                  AED {parseFloat(data.outstandingDebt).toFixed(2)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500">Total Savings</p>
-                <p className="text-base font-bold text-emerald-400 mt-0.5">
-                  AED {parseFloat(data.totalSavings).toFixed(2)}
-                </p>
-              </div>
-            </div>
+      <Card
+        className={clsx(
+          "flex flex-col items-start justify-between gap-5 p-5 sm:flex-row sm:items-center",
+          meta.tone === "emerald" && "border-emerald-500/20 bg-emerald-500/10",
+          meta.tone === "indigo" && "border-indigo-500/20 bg-indigo-500/10",
+          meta.tone === "amber" && "border-amber-500/20 bg-amber-500/10",
+          meta.tone === "rose" && "border-rose-500/20 bg-rose-500/10"
+        )}
+      >
+        <div className="flex items-start gap-4">
+          <span
+            className={clsx(
+              "rounded-full border p-2",
+              meta.tone === "emerald" && "border-emerald-500/20 bg-emerald-500/10",
+              meta.tone === "indigo" && "border-indigo-500/20 bg-indigo-500/10",
+              meta.tone === "amber" && "border-amber-500/20 bg-amber-500/10",
+              meta.tone === "rose" && "border-rose-500/20 bg-rose-500/10"
+            )}
+          >
+            <LucideTrendingUp
+              className={clsx(
+                "h-5 w-5",
+                meta.tone === "emerald" && "text-emerald-400",
+                meta.tone === "indigo" && "text-indigo-400",
+                meta.tone === "amber" && "text-amber-400",
+                meta.tone === "rose" && "text-rose-400"
+              )}
+              aria-hidden="true"
+            />
+          </span>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Financial Health</p>
+            <p
+              className={clsx(
+                "mt-0.5 text-xl font-bold",
+                meta.tone === "emerald" && "text-emerald-400",
+                meta.tone === "indigo" && "text-indigo-400",
+                meta.tone === "amber" && "text-amber-400",
+                meta.tone === "rose" && "text-rose-400"
+              )}
+            >
+              {meta.label}
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              Net cash flow:{" "}
+              <span className={net >= 0 ? "font-bold text-emerald-400" : "font-bold text-rose-400"}>
+                {net >= 0 ? "+" : ""}AED {net.toFixed(2)}
+              </span>
+              {income > 0 && (
+                <span className="ml-2 text-slate-500">· Savings rate: {Math.max(0, savingsRate).toFixed(1)}%</span>
+              )}
+            </p>
           </div>
-        );
-      })()}
-
+        </div>
+        <div className="flex gap-6 text-right">
+          <div>
+            <p className="text-xs text-slate-500">Outstanding Debt</p>
+            <p className="mt-0.5 text-base font-bold text-rose-400 tabular-nums">AED {parseFloat(data.outstandingDebt).toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Total Savings</p>
+            <p className="mt-0.5 text-base font-bold text-emerald-400 tabular-nums">AED {parseFloat(data.totalSavings).toFixed(2)}</p>
+          </div>
+        </div>
+      </Card>
 
       {/* Rollover Banner Alert */}
       {rolloverPreview && !rolloverPreview.alreadyRolledOver && rolloverPreview.existingTargetBudgets.length === 0 && rolloverPreview.budgetsToCopy.length > 0 && (
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 rounded-2xl border border-indigo-500/20 bg-indigo-500/10 p-5 backdrop-blur-md animate-in fade-in slide-in-from-top duration-300">
+        <Card className="flex animate-in fade-in slide-in-from-top flex-col items-start justify-between gap-4 border-indigo-500/20 bg-indigo-500/10 p-5 duration-300 md:flex-row md:items-center">
           <div className="flex gap-3">
-            <LucideClock className="h-5 w-5 text-indigo-400 mt-0.5 flex-shrink-0 animate-pulse" />
+            <LucideClock className="mt-0.5 h-5 w-5 flex-shrink-0 animate-pulse text-indigo-400" aria-hidden="true" />
             <div>
-              <h4 className="font-semibold text-white text-sm">Monthly Budget Rollover Available</h4>
-              <p className="text-xs text-slate-400 mt-1">
+              <h3 className="text-sm font-semibold text-white">Monthly Budget Rollover Available</h3>
+              <p className="mt-1 text-xs text-slate-400">
                 Carry forward {rolloverPreview.budgetsToCopy.length} budget templates from {getMonthLabel(previousMonth)} to {getMonthLabel(selectedMonth)}.
               </p>
             </div>
           </div>
-          <button
-            onClick={() => setIsRolloverModalOpen(true)}
-            className="flex-shrink-0 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2.5 transition-all shadow-md shadow-indigo-600/15"
-          >
+          <Button variant="primary" size="sm" className="flex-shrink-0" onClick={() => setIsRolloverModalOpen(true)}>
             Review Rollover
-          </button>
-        </div>
+          </Button>
+        </Card>
       )}
 
-      {/* Top Level Summary Cards */}
+      {/* Top Level Summary Tiles */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {/* Remaining Cash Flow */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Remaining Cash Flow
-          </p>
-          <p className={`mt-3 text-3xl font-bold tracking-tight ${
-            parseFloat(data.actual.remaining) >= 0 ? "text-emerald-400" : "text-rose-400"
-          }`}>
-            AED {parseFloat(data.actual.remaining).toFixed(2)}
-          </p>
-          <p className="mt-2 text-xs text-slate-500">
-            Actual Income - Outgoings this month
-          </p>
-        </div>
-
-        {/* Total Current Savings */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Total Current Savings
-          </p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-indigo-400">
-            AED {parseFloat(data.totalSavings).toFixed(2)}
-          </p>
-          <p className="mt-2 text-xs text-slate-500">
-            Balance in all active savings goals
-          </p>
-        </div>
-
-        {/* Daily Food Allowance Widget */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6 sm:col-span-2 lg:col-span-1">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Daily Food Allowance
-              </p>
-              <p className={`mt-3 text-3xl font-bold tracking-tight ${
-                parseFloat(data.food.remaining) > 0 ? "text-indigo-400" : "text-rose-400"
-              }`}>
-                AED {parseFloat(data.food.dailyAllowance).toFixed(2)}
-              </p>
-            </div>
-            <div className="rounded-lg bg-indigo-500/10 p-2 text-indigo-400">
-              <LucideUtensilsCrossed className="h-5 w-5" />
-            </div>
-          </div>
-          <p className="mt-2 text-xs text-slate-500 flex items-center gap-1">
-            {parseFloat(data.food.remaining) > 0 ? (
+        <StatTile
+          label="Remaining Cash Flow"
+          value={`AED ${parseFloat(data.actual.remaining).toFixed(2)}`}
+          tone={parseFloat(data.actual.remaining) >= 0 ? "emerald" : "rose"}
+          caption="Actual Income - Outgoings this month"
+        />
+        <StatTile
+          label="Total Current Savings"
+          value={`AED ${parseFloat(data.totalSavings).toFixed(2)}`}
+          tone="indigo"
+          caption="Balance in all active savings goals"
+        />
+        <StatTile
+          className="sm:col-span-2 lg:col-span-1"
+          label="Daily Food Allowance"
+          value={`AED ${parseFloat(data.food.dailyAllowance).toFixed(2)}`}
+          tone={parseFloat(data.food.remaining) > 0 ? "indigo" : "rose"}
+          icon={<LucideUtensilsCrossed className="h-5 w-5" />}
+          caption={
+            parseFloat(data.food.remaining) > 0 ? (
               <>
-                <span>AED {parseFloat(data.food.remaining).toFixed(2)} remaining</span>
-                <span>•</span>
-                <span>{data.food.remainingDays} days left</span>
+                AED {parseFloat(data.food.remaining).toFixed(2)} remaining • {data.food.remainingDays} days left
               </>
             ) : (
-              <span className="text-rose-400 font-semibold flex items-center gap-1">
+              <span className="flex items-center gap-1 font-semibold text-rose-400">
                 <LucideBadgeAlert className="h-3.5 w-3.5" /> Food budget overdrawn!
               </span>
-            )}
-          </p>
-        </div>
+            )
+          }
+        />
       </div>
 
       {/* Debts, Savings & Remittances Columns */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Debt Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-6 space-y-6">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-            <LucideFlame className="h-5 w-5 text-rose-400" />
-            Debts Status
-          </h3>
+        <Card className="space-y-6 p-6">
+          <CardHeader icon={<LucideFlame className="h-5 w-5 text-rose-400" aria-hidden="true" />} title="Debts Status" />
           <div className="space-y-4">
-            <div className="flex justify-between items-center text-sm">
+            <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">Total Outstanding Debt</span>
-              <span className="font-bold text-white text-base">AED {parseFloat(data.outstandingDebt).toFixed(2)}</span>
+              <span className="text-base font-bold text-white tabular-nums">AED {parseFloat(data.outstandingDebt).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm">
+            <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">Planned Monthly Payments</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.planned.debtPayments).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.planned.debtPayments).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm">
+            <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">Actual Payments (This Month)</span>
-              <span className="font-bold text-emerald-400">AED {parseFloat(data.actual.debtPayments).toFixed(2)}</span>
+              <span className="font-bold text-emerald-400 tabular-nums">AED {parseFloat(data.actual.debtPayments).toFixed(2)}</span>
             </div>
           </div>
 
-          {/* Nearest Due Payment */}
-          <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-4 space-y-2">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upcoming Schedule</p>
+          <div className="space-y-2 rounded-xl border border-slate-800/80 bg-slate-950/40 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Upcoming Schedule</p>
             {data.nearestPayment ? (
-              <div className="flex justify-between items-start">
+              <div className="flex items-start justify-between">
                 <div>
-                  <p className="font-semibold text-slate-200 text-sm">{data.nearestPayment.debtName}</p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Due: {new Date(data.nearestPayment.dueDate).toLocaleDateString("en-AE", {
+                  <p className="text-sm font-semibold text-slate-200">{data.nearestPayment.debtName}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Due:{" "}
+                    {new Date(data.nearestPayment.dueDate).toLocaleDateString("en-AE", {
                       timeZone: "Asia/Dubai",
                       month: "short",
                       day: "numeric",
@@ -439,106 +417,92 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="font-bold text-sm text-slate-200">AED {parseFloat(data.nearestPayment.amount).toFixed(2)}</p>
+                  <p className="text-sm font-bold text-slate-200 tabular-nums">AED {parseFloat(data.nearestPayment.amount).toFixed(2)}</p>
                   {data.nearestPayment.isOverdue ? (
-                    <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold text-rose-400 uppercase tracking-wide bg-rose-500/10 px-2 py-0.5 rounded-full">
+                    <Badge tone="rose" className="mt-1">
                       <LucideCircleAlert className="h-3 w-3" /> Overdue
-                    </span>
+                    </Badge>
                   ) : (
-                    <span className="inline-flex items-center mt-1 text-[10px] font-medium text-slate-400 uppercase tracking-wide bg-slate-800 px-2 py-0.5 rounded-full">
+                    <Badge tone="slate" className="mt-1">
                       Upcoming
-                    </span>
+                    </Badge>
                   )}
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-slate-500 italic py-2">No active debt schedules found.</p>
+              <p className="py-2 text-xs italic text-slate-500">No active debt schedules found.</p>
             )}
           </div>
 
           <div className="text-center">
-            <Link
-              href="/debts"
-              className="inline-block text-xs font-semibold text-rose-400 hover:text-rose-300 transition-colors"
-            >
+            <Link href="/debts" className="inline-block text-xs font-semibold text-rose-400 transition-colors hover:text-rose-300">
               Manage Debts & Projections →
             </Link>
           </div>
-        </div>
+        </Card>
 
-        {/* Savings Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-6 space-y-6">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-            <LucidePiggyBank className="h-5 w-5 text-indigo-400" />
-            Savings Goals
-          </h3>
+        <Card className="space-y-6 p-6">
+          <CardHeader icon={<LucidePiggyBank className="h-5 w-5 text-indigo-400" aria-hidden="true" />} title="Savings Goals" />
           <div className="space-y-4">
-            <div className="flex justify-between items-center text-sm">
+            <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">Total Savings Balances</span>
-              <span className="font-bold text-white text-base">AED {parseFloat(data.totalSavings).toFixed(2)}</span>
+              <span className="text-base font-bold text-white tabular-nums">AED {parseFloat(data.totalSavings).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm">
+            <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">Planned Monthly Allocation</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.planned.savings).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.planned.savings).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm">
+            <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">Actual Deposits (Outflows)</span>
-              <span className="font-bold text-emerald-400">AED {parseFloat(data.actual.savingsDeposits).toFixed(2)}</span>
+              <span className="font-bold text-emerald-400 tabular-nums">AED {parseFloat(data.actual.savingsDeposits).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm">
+            <div className="flex items-center justify-between text-sm">
               <span className="text-slate-400">Actual Withdrawals (Inflows)</span>
-              <span className="font-bold text-indigo-300">AED {parseFloat(data.actual.savingsWithdrawals).toFixed(2)}</span>
+              <span className="font-bold text-indigo-300 tabular-nums">AED {parseFloat(data.actual.savingsWithdrawals).toFixed(2)}</span>
             </div>
           </div>
 
-          <div className="text-center pt-2">
-            <Link
-              href="/savings"
-              className="inline-block text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
-            >
+          <div className="pt-2 text-center">
+            <Link href="/savings" className="inline-block text-xs font-semibold text-indigo-400 transition-colors hover:text-indigo-300">
               View Savings Progress →
             </Link>
           </div>
-        </div>
+        </Card>
 
-        {/* Remittances Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-6 space-y-6 flex flex-col justify-between">
+        <Card className="flex flex-col justify-between space-y-6 p-6">
           <div className="space-y-6">
-            <h3 className="text-lg font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-              <LucideTrendingUp className="h-5 w-5 text-emerald-400" />
-              Remittances (PH)
-            </h3>
+            <CardHeader icon={<LucideTrendingUp className="h-5 w-5 text-emerald-400" aria-hidden="true" />} title="Remittances (PH)" />
             <div className="space-y-4">
-              <div className="flex justify-between items-center text-sm">
+              <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-400">Completed Sent</span>
-                <span className="font-bold text-white text-base">AED {parseFloat(data.remittanceOperations.amountSent).toFixed(2)}</span>
+                <span className="text-base font-bold text-white tabular-nums">AED {parseFloat(data.remittanceOperations.amountSent).toFixed(2)}</span>
               </div>
-              <div className="flex justify-between items-center text-sm">
+              <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-400">PHP Received</span>
-                <span className="font-bold text-emerald-400">PHP {parseFloat(data.remittanceOperations.phpReceived).toFixed(2)}</span>
+                <span className="font-bold text-emerald-400 tabular-nums">PHP {parseFloat(data.remittanceOperations.phpReceived).toFixed(2)}</span>
               </div>
-              <div className="flex justify-between items-center text-sm">
+              <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-400">Fees Paid</span>
-                <span className="font-bold text-slate-200">AED {parseFloat(data.remittanceOperations.fees).toFixed(2)}</span>
+                <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.remittanceOperations.fees).toFixed(2)}</span>
               </div>
               {parseFloat(data.remittanceOperations.reversedAmount) > 0 && (
-                <div className="flex justify-between items-center text-sm text-rose-400">
+                <div className="flex items-center justify-between text-sm text-rose-400">
                   <span>Reversed Amount</span>
-                  <span className="font-bold">AED {parseFloat(data.remittanceOperations.reversedAmount).toFixed(2)}</span>
+                  <span className="font-bold tabular-nums">AED {parseFloat(data.remittanceOperations.reversedAmount).toFixed(2)}</span>
                 </div>
               )}
             </div>
 
-            {/* Latest Remittance */}
-            <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-4 space-y-2">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Latest Remittance</p>
+            <div className="space-y-2 rounded-xl border border-slate-800/80 bg-slate-950/40 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Latest Remittance</p>
               {data.remittanceOperations.latestRemittance ? (
                 <div>
-                  <p className="font-semibold text-slate-200 text-sm">To: {data.remittanceOperations.latestRemittance.recipient}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    AED {parseFloat(data.remittanceOperations.latestRemittance.amountSentAed).toFixed(2)} via {data.remittanceOperations.latestRemittance.transferProvider}
+                  <p className="text-sm font-semibold text-slate-200">To: {data.remittanceOperations.latestRemittance.recipient}</p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    AED {parseFloat(data.remittanceOperations.latestRemittance.amountSentAed).toFixed(2)} via{" "}
+                    {data.remittanceOperations.latestRemittance.transferProvider}
                   </p>
-                  <div className="flex justify-between items-center mt-2">
+                  <div className="mt-2 flex items-center justify-between">
                     <span className="text-[10px] text-slate-500">
                       {new Date(data.remittanceOperations.latestRemittance.transferDate).toLocaleDateString("en-AE", {
                         timeZone: "Asia/Dubai",
@@ -546,138 +510,123 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                         day: "numeric",
                       })}
                     </span>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase ${
-                      data.remittanceOperations.latestRemittance.status === "REVERSED"
-                        ? "bg-rose-500/10 text-rose-400"
-                        : "bg-emerald-500/10 text-emerald-400"
-                    }`}>
+                    <Badge tone={data.remittanceOperations.latestRemittance.status === "REVERSED" ? "rose" : "emerald"}>
                       {data.remittanceOperations.latestRemittance.status}
-                    </span>
+                    </Badge>
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 italic py-2">No remittances recorded this month.</p>
+                <p className="py-2 text-xs italic text-slate-500">No remittances recorded this month.</p>
               )}
             </div>
           </div>
 
           <div className="space-y-3 pt-4">
-            <p className="text-[10px] text-slate-500 leading-tight italic text-center">
+            <p className="text-center text-[10px] italic leading-tight text-slate-500">
               * Note: Unlinked remittances appear in PH totals but are excluded from actual cash-flow calculations.
             </p>
             <div className="text-center">
-              <Link
-                href="/remittances"
-                className="inline-block text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition-colors"
-              >
+              <Link href="/remittances" className="inline-block text-xs font-semibold text-emerald-400 transition-colors hover:text-emerald-300">
                 Track & Send Remittances →
               </Link>
             </div>
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Actual Cash Flow vs Planned Allocation */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Actual Cash Flow Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-6">
-          <h3 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
-            <LucideTrendingUp className="h-5 w-5 text-emerald-400" />
+        <Card className="p-6">
+          <h3 className="mb-5 flex items-center gap-2 text-lg font-bold text-white">
+            <LucideTrendingUp className="h-5 w-5 text-emerald-400" aria-hidden="true" />
             Actual Cash Flow (Recorded)
           </h3>
           <div className="space-y-4">
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Actual Income</span>
-              <span className="font-bold text-white">AED {parseFloat(data.actual.income).toFixed(2)}</span>
+              <span className="font-bold text-white tabular-nums">AED {parseFloat(data.actual.income).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Actual Expenses</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.actual.expenses).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.actual.expenses).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2 flex-col sm:flex-row">
+            <div className="flex flex-col items-center justify-between border-b border-slate-800 pb-2 text-sm sm:flex-row">
               <div className="flex items-center gap-1.5 text-slate-400">
                 <span>Net Savings Flow</span>
                 <span className="inline-flex" title="Deposits minus Withdrawals. Positive means money transferred to savings.">
-                  <LucideInfo className="h-3.5 w-3.5 text-slate-500 cursor-help" />
+                  <LucideInfo className="h-3.5 w-3.5 cursor-help text-slate-500" />
                 </span>
               </div>
-              <span className="font-bold text-slate-200 mt-1 sm:mt-0">AED {parseFloat(data.actual.savings).toFixed(2)}</span>
+              <span className="mt-1 font-bold text-slate-200 tabular-nums sm:mt-0">AED {parseFloat(data.actual.savings).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Actual Remittances</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.actual.remittances).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.actual.remittances).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Actual Debt Payments</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.actual.debtPayments).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.actual.debtPayments).toFixed(2)}</span>
             </div>
           </div>
-        </div>
+        </Card>
 
-        {/* Planned Allocation Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/20 p-6">
-          <h3 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
-            <LucideCalendar className="h-5 w-5 text-indigo-400" />
+        <Card className="p-6">
+          <h3 className="mb-5 flex items-center gap-2 text-lg font-bold text-white">
+            <LucideCalendar className="h-5 w-5 text-indigo-400" aria-hidden="true" />
             Planned Budget Plan (Month allocation)
           </h3>
           <div className="space-y-4">
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Target Monthly Salary</span>
-              <span className="font-bold text-white">AED {parseFloat(data.planned.salary).toFixed(2)}</span>
+              <span className="font-bold text-white tabular-nums">AED {parseFloat(data.planned.salary).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Planned Expenses (Fixed/Variable)</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.planned.expenses).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.planned.expenses).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Planned Savings Targets</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.planned.savings).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.planned.savings).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Planned Remittances (Family)</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.planned.remittances).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.planned.remittances).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm border-b border-slate-800 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-sm">
               <span className="text-slate-400">Planned Debt Installments</span>
-              <span className="font-bold text-slate-200">AED {parseFloat(data.planned.debtPayments).toFixed(2)}</span>
+              <span className="font-bold text-slate-200 tabular-nums">AED {parseFloat(data.planned.debtPayments).toFixed(2)}</span>
             </div>
-            <div className="flex justify-between items-center text-sm text-emerald-400 pt-1">
+            <div className="flex items-center justify-between pt-1 text-sm text-emerald-400">
               <span>Unallocated Salary Balance</span>
-              <span className="font-extrabold">AED {parseFloat(data.planned.unallocated).toFixed(2)}</span>
+              <span className="font-extrabold tabular-nums">AED {parseFloat(data.planned.unallocated).toFixed(2)}</span>
             </div>
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Two-Column Grid: Transactions & Upcoming Feed */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Recent Transactions List */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 flex flex-col justify-between">
+        <Card className="flex flex-col justify-between p-6">
           <div>
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <LucideReceipt className="h-5 w-5 text-slate-400" />
+            <div className="mb-5 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-base font-bold text-white">
+                <LucideReceipt className="h-5 w-5 text-slate-400" aria-hidden="true" />
                 Recent Transactions (Current Month)
               </h3>
-              <Link
-                href="/transactions"
-                className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
+              <Link href="/transactions" className="text-xs font-semibold text-indigo-400 transition-colors hover:text-indigo-300">
                 View Ledger →
               </Link>
             </div>
 
             {!data.recentTransactions.length ? (
-              <p className="text-sm text-slate-500 py-12 text-center italic">
-                No transactions recorded yet for this month.
-              </p>
+              <p className="py-12 text-center text-sm italic text-slate-500">No transactions recorded yet for this month.</p>
             ) : (
-              <div className="divide-y divide-slate-800 max-h-80 overflow-y-auto pr-1 space-y-0.5">
+              <div className="max-h-80 space-y-0.5 divide-y divide-slate-800 overflow-y-auto pr-1">
                 {data.recentTransactions.map((tx) => (
-                  <div key={tx.id} className="flex justify-between items-center py-3">
+                  <div key={tx.id} className="flex items-center justify-between py-3">
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-200 text-sm truncate">{tx.description}</p>
-                      <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5">
+                      <p className="truncate text-sm font-semibold text-slate-200">{tx.description}</p>
+                      <p className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
                         <span>{tx.categoryName}</span>
                         <span>•</span>
                         <span>
@@ -689,10 +638,12 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                         </span>
                       </p>
                     </div>
-                    <span className={`font-bold text-sm whitespace-nowrap ml-4 ${
-                      tx.type === "INCOME" ? "text-emerald-400" :
-                      tx.type === "SAVINGS" ? "text-slate-400" : "text-rose-400"
-                    }`}>
+                    <span
+                      className={clsx(
+                        "ml-4 whitespace-nowrap text-sm font-bold tabular-nums",
+                        tx.type === "INCOME" ? "text-emerald-400" : tx.type === "SAVINGS" ? "text-slate-400" : "text-rose-400"
+                      )}
+                    >
                       {tx.type === "INCOME" ? "+" : "-"}AED {parseFloat(tx.amount).toFixed(2)}
                     </span>
                   </div>
@@ -700,49 +651,49 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
               </div>
             )}
           </div>
-        </div>
+        </Card>
 
-        {/* Unified Upcoming Payments Feed */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/10 p-6 flex flex-col justify-between">
+        <Card className="flex flex-col justify-between p-6">
           <div>
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <LucideClock className="h-5 w-5 text-indigo-400" />
+            <div className="mb-5 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-base font-bold text-white">
+                <LucideClock className="h-5 w-5 text-indigo-400" aria-hidden="true" />
                 Upcoming Payments & Reminders
               </h3>
-              <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                Dubai Timezone
-              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Dubai Timezone</span>
             </div>
 
             {upcomingPayments.length === 0 ? (
-              <p className="text-sm text-slate-500 py-12 text-center italic">
-                No upcoming payments or active alerts.
-              </p>
+              <p className="py-12 text-center text-sm italic text-slate-500">No upcoming payments or active alerts.</p>
             ) : (
-              <div className="divide-y divide-slate-800 max-h-80 overflow-y-auto pr-1 space-y-2">
+              <div className="max-h-80 space-y-2 divide-y divide-slate-800 overflow-y-auto pr-1">
                 {upcomingPayments.slice(0, 5).map((item) => (
-                  <div key={item.id} className="flex justify-between items-center py-2.5">
+                  <div key={item.id} className="flex flex-wrap items-center justify-between gap-y-2 py-2.5">
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-200 text-sm truncate">{item.title}</p>
-                      <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5">
+                      <p className="truncate text-sm font-semibold text-slate-200">{item.title}</p>
+                      <p className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
                         <span>Due: {item.dueDate}</span>
                         <span>•</span>
-                        <span className={clsx(
-                          "rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase",
-                          item.status === "OVERDUE" ? "bg-red-500/15 text-red-400 animate-pulse" :
-                          item.status === "DUE_TODAY" ? "bg-amber-500/15 text-amber-400" :
-                          item.status === "HANDLED" ? "bg-emerald-500/15 text-emerald-400" :
-                          "bg-slate-800 text-slate-400"
-                        )}>
+                        <Badge
+                          tone={
+                            item.status === "OVERDUE"
+                              ? "rose"
+                              : item.status === "DUE_TODAY"
+                              ? "amber"
+                              : item.status === "HANDLED"
+                              ? "emerald"
+                              : "slate"
+                          }
+                          pulse={item.status === "OVERDUE"}
+                        >
                           {item.status}
-                        </span>
+                        </Badge>
                       </p>
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <span className="font-bold text-sm text-white">AED {item.amount}</span>
-                      
+                      <span className="text-sm font-bold text-white tabular-nums">AED {item.amount}</span>
+
                       {item.canMarkHandled && item.status !== "HANDLED" && item.status !== "SKIPPED" ? (
                         <div className="flex gap-1.5">
                           <button
@@ -756,7 +707,7 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                                 });
                               }
                             }}
-                            className="rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 px-2.5 py-1 text-[10px] font-bold"
+                            className={buttonVariants({ variant: "primary", size: "sm", className: "bg-emerald-600 shadow-emerald-600/20 hover:bg-emerald-500" })}
                           >
                             Mark Paid
                           </button>
@@ -770,17 +721,14 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
                                   });
                                 }
                               }}
-                              className="rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 px-2 py-1 text-[10px]"
+                              className={buttonVariants({ variant: "secondary", size: "sm" })}
                             >
                               Skip
                             </button>
                           )}
                         </div>
                       ) : !item.canMarkHandled && item.status !== "HANDLED" ? (
-                        <Link
-                          href={item.destinationPath}
-                          className="rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 px-2.5 py-1 text-[10px] font-bold"
-                        >
+                        <Link href={item.destinationPath} className={buttonVariants({ variant: "primary", size: "sm" })}>
                           Pay Info
                         </Link>
                       ) : null}
@@ -790,59 +738,62 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
               </div>
             )}
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Rollover Prompt Modal */}
       {isRolloverModalOpen && rolloverPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-md space-y-5">
+          <Card className="w-full max-w-lg space-y-5 border-slate-800 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-md">
             <div>
               <h3 className="text-lg font-bold text-white">Monthly Budget Rollover Preview</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="mt-0.5 text-xs text-slate-500">
                 Copy category budget allocations from {getMonthLabel(previousMonth)} to {getMonthLabel(selectedMonth)}.
               </p>
             </div>
 
             {rolloverError && (
-              <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-semibold text-red-400 border border-red-500/20">
-                <LucideAlertTriangle className="h-4 w-4" />
+              <div
+                role="alert"
+                aria-live="polite"
+                className="flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs font-semibold text-rose-400"
+              >
+                <LucideAlertTriangle className="h-4 w-4" aria-hidden="true" />
                 {rolloverError}
               </div>
             )}
 
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-xs bg-slate-950/45 p-3 rounded-xl">
+              <div className="grid grid-cols-2 gap-4 rounded-xl bg-slate-950/45 p-3 text-xs">
                 <div>
-                  <span className="text-slate-400 block mb-0.5">Planned Salary</span>
-                  <span className="font-bold text-white text-sm">AED {parseFloat(rolloverPreview.plannedSalary).toFixed(2)}</span>
+                  <span className="mb-0.5 block text-slate-400">Planned Salary</span>
+                  <span className="text-sm font-bold text-white tabular-nums">AED {parseFloat(rolloverPreview.plannedSalary).toFixed(2)}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block mb-0.5">Planned Allocation</span>
-                  <span className="font-bold text-white text-sm">AED {parseFloat(rolloverPreview.totalPlannedAllocation).toFixed(2)}</span>
+                  <span className="mb-0.5 block text-slate-400">Planned Allocation</span>
+                  <span className="text-sm font-bold text-white tabular-nums">AED {parseFloat(rolloverPreview.totalPlannedAllocation).toFixed(2)}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block mb-0.5">Unallocated Amount</span>
-                  <span className="font-bold text-emerald-400 text-sm">AED {parseFloat(rolloverPreview.unallocatedAmount).toFixed(2)}</span>
+                  <span className="mb-0.5 block text-slate-400">Unallocated Amount</span>
+                  <span className="text-sm font-bold text-emerald-400 tabular-nums">AED {parseFloat(rolloverPreview.unallocatedAmount).toFixed(2)}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block mb-0.5">Overdue Reminders</span>
-                  <span className={clsx(
-                    "font-bold text-sm",
-                    rolloverPreview.overdueRemindersCount > 0 ? "text-rose-450" : "text-slate-300"
-                  )}>
+                  <span className="mb-0.5 block text-slate-400">Overdue Reminders</span>
+                  <span className={clsx("text-sm font-bold", rolloverPreview.overdueRemindersCount > 0 ? "text-rose-400" : "text-slate-300")}>
                     {rolloverPreview.overdueRemindersCount} unresolved
                   </span>
                 </div>
               </div>
 
               <div>
-                <h4 className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">Budgets to copy ({rolloverPreview.budgetsToCopy.length})</h4>
-                <div className="max-h-40 overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800 bg-slate-950/20 px-3">
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  Budgets to copy ({rolloverPreview.budgetsToCopy.length})
+                </h4>
+                <div className="max-h-40 divide-y divide-slate-800 overflow-y-auto overscroll-contain rounded-xl border border-slate-800 bg-slate-950/20 px-3">
                   {rolloverPreview.budgetsToCopy.map((b: { categoryName: string; amount: string }, idx: number) => (
-                    <div key={idx} className="flex justify-between items-center py-2 text-xs">
+                    <div key={idx} className="flex items-center justify-between py-2 text-xs">
                       <span className="font-medium text-slate-300">{b.categoryName}</span>
-                      <span className="font-bold text-slate-200">AED {b.amount}</span>
+                      <span className="font-bold text-slate-200 tabular-nums">AED {b.amount}</span>
                     </div>
                   ))}
                 </div>
@@ -850,29 +801,22 @@ export function DashboardClient({ initialData }: DashboardClientProps) {
             </div>
 
             <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 onClick={() => {
                   setIsRolloverModalOpen(false);
                   setRolloverError("");
                 }}
-                className="rounded-xl border border-slate-800 bg-slate-900/50 hover:bg-slate-800 px-5 py-2 text-sm text-slate-400 transition-all"
               >
                 Cancel
-              </button>
-              <button
-                onClick={() => confirmRolloverMutation.mutate()}
-                disabled={confirmRolloverMutation.isPending}
-                className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 shadow-md shadow-indigo-600/20 disabled:opacity-50"
-              >
-                {confirmRolloverMutation.isPending ? "Confirming..." : "Confirm & Copy"}
-              </button>
+              </Button>
+              <Button variant="primary" onClick={() => confirmRolloverMutation.mutate()} disabled={confirmRolloverMutation.isPending}>
+                {confirmRolloverMutation.isPending ? "Confirming…" : "Confirm & Copy"}
+              </Button>
             </div>
-          </div>
+          </Card>
         </div>
       )}
-
-
     </div>
   );
 }

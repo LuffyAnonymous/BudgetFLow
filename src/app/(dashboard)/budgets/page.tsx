@@ -3,19 +3,24 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
-import { 
-  LucideChevronLeft, 
-  LucideChevronRight, 
-  LucideEdit, 
-  LucideTrash2, 
-  LucideCopy, 
-  LucideLoader2, 
-  LucideX 
+import {
+  LucideChevronLeft,
+  LucideChevronRight,
+  LucideEdit,
+  LucideTrash2,
+  LucideCopy,
+  LucideLoader2,
+  LucideX,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { budgetFormSchema } from "@/features/budgets/schemas/budget.schema";
 import { z } from "zod";
+import { Card } from "@/components/ui/card";
+import { StatTile, type Tone } from "@/components/ui/stat-tile";
+import { Badge } from "@/components/ui/badge";
+import { ProgressBar } from "@/components/ui/progress-bar";
+import { Button } from "@/components/ui/button";
 
 interface BudgetOverviewItem {
   id?: string;
@@ -30,13 +35,18 @@ interface BudgetOverviewItem {
   status: "ON_TRACK" | "NEAR_LIMIT" | "OVER_BUDGET" | "COMPLETED";
 }
 
+const statusMeta: Record<BudgetOverviewItem["status"], { label: string; tone: Tone }> = {
+  COMPLETED: { label: "Completed", tone: "indigo" },
+  OVER_BUDGET: { label: "Over Budget", tone: "rose" },
+  NEAR_LIMIT: { label: "Near Limit", tone: "amber" },
+  ON_TRACK: { label: "On Track", tone: "emerald" },
+};
+
 export default function BudgetsPage() {
   const queryClient = useQueryClient();
 
-  // Current Month State (YYYY-MM in Dubai)
   const getInitialMonth = () => {
     const d = new Date();
-    // Adjust by +4 hours for Dubai
     const dubaiDate = new Date(d.getTime() + 4 * 60 * 60 * 1000);
     const y = dubaiDate.getUTCFullYear();
     const m = String(dubaiDate.getUTCMonth() + 1).padStart(2, "0");
@@ -48,15 +58,13 @@ export default function BudgetsPage() {
   const [editingBudget, setEditingBudget] = useState<BudgetOverviewItem | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Copy Budgets state
   const [isCopying, setIsCopying] = useState(false);
   const [copyStatusMsg, setCopyStatusMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  // Delete configuration state
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [budgetToDelete, setBudgetToDelete] = useState<BudgetOverviewItem | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Fetch Budget Overview
   const { data: budgets = [], isLoading } = useQuery<BudgetOverviewItem[]>({
     queryKey: ["budgets", selectedMonth],
     queryFn: async () => {
@@ -66,14 +74,10 @@ export default function BudgetsPage() {
     },
   });
 
-  // Income (Salary) is money coming in, not an allocation of money out - excluded
-  // from these totals so they represent actual planned/actual spending, not
-  // spending-plus-income double-counted together.
   const allocationItems = budgets.filter((b) => b.categoryType !== "INCOME");
   const totalPlanned = allocationItems.reduce((sum, b) => sum + parseFloat(b.planned), 0);
   const totalActual = allocationItems.reduce((sum, b) => sum + parseFloat(b.actual), 0);
 
-  // Form Setup
   const {
     register,
     handleSubmit,
@@ -88,7 +92,6 @@ export default function BudgetsPage() {
     },
   });
 
-  // Keep month inside form synchronized
   useEffect(() => {
     reset({
       categoryId: "",
@@ -97,7 +100,6 @@ export default function BudgetsPage() {
     });
   }, [selectedMonth, reset]);
 
-  // Open edit planned amount modal
   const handleOpenEdit = (b: BudgetOverviewItem) => {
     setEditingBudget(b);
     setFormError(null);
@@ -111,7 +113,6 @@ export default function BudgetsPage() {
 
   type FormValues = z.infer<typeof budgetFormSchema>;
 
-  // Upsert Mutation
   const upsertMutation = useMutation({
     mutationFn: async (data: FormValues) => {
       const res = await fetch("/api/budgets", {
@@ -132,7 +133,6 @@ export default function BudgetsPage() {
     },
   });
 
-  // Deletion Mutation
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/budgets/${id}`, { method: "DELETE" });
@@ -143,9 +143,10 @@ export default function BudgetsPage() {
       queryClient.invalidateQueries({ queryKey: ["budgets"] });
       setIsDeleteConfirmOpen(false);
       setBudgetToDelete(null);
+      setDeleteError(null);
     },
     onError: (err: Error) => {
-      alert(`Error deleting budget: ${err.message}`);
+      setDeleteError(err.message);
     },
   });
 
@@ -154,7 +155,6 @@ export default function BudgetsPage() {
     upsertMutation.mutate(data);
   };
 
-  // Adjust active month
   const changeMonth = (offset: number) => {
     const [y, m] = selectedMonth.split("-").map(Number);
     const date = new Date(Date.UTC(y, m - 1 + offset, 1));
@@ -164,12 +164,10 @@ export default function BudgetsPage() {
     setCopyStatusMsg(null);
   };
 
-  // Copy budgets function
   const handleCopyBudgets = async () => {
     setIsCopying(true);
     setCopyStatusMsg(null);
-    
-    // Determine previous month
+
     const [y, m] = selectedMonth.split("-").map(Number);
     const prevDate = new Date(Date.UTC(y, m - 2, 1));
     const prevMonthStr = `${prevDate.getUTCFullYear()}-${String(prevDate.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -203,6 +201,7 @@ export default function BudgetsPage() {
 
   const handleDeleteClick = (b: BudgetOverviewItem) => {
     setBudgetToDelete(b);
+    setDeleteError(null);
     setIsDeleteConfirmOpen(true);
   };
 
@@ -212,7 +211,6 @@ export default function BudgetsPage() {
     }
   };
 
-  // Helper to parse nice month label (e.g. July 2026)
   const getMonthLabel = (monthStr: string) => {
     const [y, m] = monthStr.split("-").map(Number);
     const date = new Date(Date.UTC(y, m - 1, 1));
@@ -223,20 +221,6 @@ export default function BudgetsPage() {
     });
   };
 
-  const getStatusBadge = (status: BudgetOverviewItem["status"]) => {
-    switch (status) {
-      case "COMPLETED":
-        return <span className="inline-flex items-center rounded-full bg-indigo-500/10 border border-indigo-500/35 px-2.5 py-0.5 text-xs font-semibold text-indigo-400">Completed</span>;
-      case "OVER_BUDGET":
-        return <span className="inline-flex items-center rounded-full bg-red-500/10 border border-red-500/35 px-2.5 py-0.5 text-xs font-semibold text-red-400">Over Budget</span>;
-      case "NEAR_LIMIT":
-        return <span className="inline-flex items-center rounded-full bg-amber-500/10 border border-amber-500/35 px-2.5 py-0.5 text-xs font-semibold text-amber-400">Near Limit</span>;
-      case "ON_TRACK":
-      default:
-        return <span className="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/35 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">On Track</span>;
-    }
-  };
-
   const hasConfiguredBudgets = budgets.some((b) => parseFloat(b.planned) > 0);
 
   return (
@@ -245,82 +229,63 @@ export default function BudgetsPage() {
         title="Monthly Budgets"
         description="Allocate planned caps and track your actual outlays by category."
         action={
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1.5 gap-2">
-            <button
-              onClick={() => changeMonth(-1)}
-              className="rounded-lg p-1.5 hover:bg-slate-800 transition-colors"
-            >
-              <LucideChevronLeft className="h-4.5 w-4.5" />
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900 p-1.5">
+            <button onClick={() => changeMonth(-1)} className="rounded-lg p-1.5 transition-colors hover:bg-slate-800" aria-label="Previous month">
+              <LucideChevronLeft className="h-4.5 w-4.5" aria-hidden="true" />
             </button>
-            <span className="text-sm font-bold min-w-32 text-center text-white">
-              {getMonthLabel(selectedMonth)}
-            </span>
-            <button
-              onClick={() => changeMonth(1)}
-              className="rounded-lg p-1.5 hover:bg-slate-800 transition-colors"
-            >
-              <LucideChevronRight className="h-4.5 w-4.5" />
+            <span className="min-w-32 text-center text-sm font-bold text-white">{getMonthLabel(selectedMonth)}</span>
+            <button onClick={() => changeMonth(1)} className="rounded-lg p-1.5 transition-colors hover:bg-slate-800" aria-label="Next month">
+              <LucideChevronRight className="h-4.5 w-4.5" aria-hidden="true" />
             </button>
           </div>
         }
       />
 
       {copyStatusMsg && (
-        <div className={`rounded-xl border p-4 text-sm ${
-          copyStatusMsg.type === "success" 
-            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
-            : "border-red-500/20 bg-red-500/10 text-red-400"
-        }`}>
+        <div
+          role="status"
+          aria-live="polite"
+          className={
+            copyStatusMsg.type === "success"
+              ? "rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-400"
+              : "rounded-xl border border-rose-500/20 bg-rose-500/10 p-4 text-sm text-rose-400"
+          }
+        >
           {copyStatusMsg.text}
         </div>
       )}
 
-      {/* Copy plan notification when empty */}
       {!isLoading && !hasConfiguredBudgets && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-indigo-500/25 bg-indigo-500/5 p-6 backdrop-blur-sm animate-pulse">
+        <Card className="flex flex-col items-center justify-between gap-4 border-indigo-500/25 bg-indigo-500/5 p-6 sm:flex-row">
           <div>
-            <h4 className="font-bold text-white">No budget allocations found for this month</h4>
-            <p className="text-sm text-slate-400 mt-1">
-              Set planned caps manually, or duplicate the previous month&apos;s plan atomically.
-            </p>
+            <h3 className="font-bold text-white">No budget allocations found for this month</h3>
+            <p className="mt-1 text-sm text-slate-400">Set planned caps manually, or duplicate the previous month&apos;s plan atomically.</p>
           </div>
-          <button
-            onClick={handleCopyBudgets}
-            disabled={isCopying}
-            className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-500 disabled:opacity-40"
-          >
-            {isCopying ? <LucideLoader2 className="h-4.5 w-4.5 animate-spin" /> : <LucideCopy className="h-4.5 w-4.5" />}
+          <Button variant="primary" onClick={handleCopyBudgets} disabled={isCopying}>
+            {isCopying ? <LucideLoader2 className="h-4.5 w-4.5 animate-spin" aria-hidden="true" /> : <LucideCopy className="h-4.5 w-4.5" aria-hidden="true" />}
             Copy Previous Plan
-          </button>
-        </div>
+          </Button>
+        </Card>
       )}
 
       {/* Summary totals */}
       <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Planned Allocation</p>
-          <p className="mt-2 text-2xl font-bold text-white">AED {totalPlanned.toFixed(2)}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Actual Spending</p>
-          <p className="mt-2 text-2xl font-bold text-white">AED {totalActual.toFixed(2)}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-5 sm:col-span-2 md:col-span-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Month Budget Remaining</p>
-          <p className={`mt-2 text-2xl font-bold ${
-            totalPlanned - totalActual >= 0 ? "text-emerald-400" : "text-rose-400"
-          }`}>
-            AED {(totalPlanned - totalActual).toFixed(2)}
-          </p>
-        </div>
+        <StatTile label="Total Planned Allocation" value={`AED ${totalPlanned.toFixed(2)}`} tone="slate" />
+        <StatTile label="Total Actual Spending" value={`AED ${totalActual.toFixed(2)}`} tone="slate" />
+        <StatTile
+          className="sm:col-span-2 md:col-span-1"
+          label="Month Budget Remaining"
+          value={`AED ${(totalPlanned - totalActual).toFixed(2)}`}
+          tone={totalPlanned - totalActual >= 0 ? "emerald" : "rose"}
+        />
       </div>
 
       {/* Reconciled table */}
-      <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/20 backdrop-blur-sm">
+      <Card className="overflow-hidden p-0">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-400">
-            <LucideLoader2 className="h-8 w-8 animate-spin text-indigo-500" />
-            <p className="text-sm">Loading budget overview...</p>
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-400">
+            <LucideLoader2 className="h-8 w-8 animate-spin text-indigo-500" aria-hidden="true" />
+            <p className="text-sm">Loading budget overview…</p>
           </div>
         ) : !budgets.length ? (
           <div className="py-20 text-center text-slate-500">
@@ -328,7 +293,7 @@ export default function BudgetsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
+            <table className="w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-900/60 font-semibold text-slate-400">
                   <th className="px-6 py-4">Category</th>
@@ -345,66 +310,63 @@ export default function BudgetsPage() {
                 {budgets.map((b) => {
                   const progressVal = Math.min(100, parseFloat(b.progressPercent));
                   const showProgressBar = parseFloat(b.planned) > 0;
-                  
+                  const meta = statusMeta[b.status];
+
                   return (
-                    <tr key={b.categoryId} className="hover:bg-slate-900/30 transition-colors text-slate-300">
-                      <td className="px-6 py-4 font-semibold text-white whitespace-nowrap">
-                        {b.categoryName}
-                      </td>
-                      <td className="px-6 py-4 text-xs font-semibold text-slate-500 whitespace-nowrap uppercase">
+                    <tr key={b.categoryId} className="text-slate-300 transition-colors hover:bg-slate-900/30">
+                      <td className="whitespace-nowrap px-6 py-4 font-semibold text-white">{b.categoryName}</td>
+                      <td className="whitespace-nowrap px-6 py-4 text-xs font-semibold uppercase text-slate-500">
                         {b.budgetGroupKey || b.categoryType.replace("_EXPENSE", "")}
                       </td>
-                      <td className="px-6 py-4 text-right font-bold text-slate-100 whitespace-nowrap">
+                      <td className="whitespace-nowrap px-6 py-4 text-right font-bold tabular-nums text-slate-100">
                         AED {parseFloat(b.planned).toFixed(2)}
                       </td>
-                      <td className="px-6 py-4 text-right font-semibold text-slate-400 whitespace-nowrap">
+                      <td className="whitespace-nowrap px-6 py-4 text-right font-semibold tabular-nums text-slate-400">
                         AED {parseFloat(b.actual).toFixed(2)}
                       </td>
-                      <td className={`px-6 py-4 text-right font-bold whitespace-nowrap ${
-                        parseFloat(b.remaining) >= 0 ? "text-emerald-500/90" : "text-rose-500/90"
-                      }`}>
+                      <td
+                        className={
+                          "whitespace-nowrap px-6 py-4 text-right font-bold tabular-nums " +
+                          (parseFloat(b.remaining) >= 0 ? "text-emerald-400" : "text-rose-400")
+                        }
+                      >
                         AED {parseFloat(b.remaining).toFixed(2)}
                       </td>
-                      <td className="px-6 py-4 text-center min-w-32">
+                      <td className="min-w-32 px-6 py-4 text-center">
                         {showProgressBar ? (
                           <div className="flex items-center justify-center gap-3">
-                            <div className="w-20 bg-slate-800 h-2 rounded-full overflow-hidden">
-                              <div
-                                style={{ width: `${progressVal}%` }}
-                                className={`h-full rounded-full ${
-                                  b.status === "OVER_BUDGET"
-                                    ? "bg-red-500"
-                                    : b.status === "NEAR_LIMIT"
-                                    ? "bg-amber-500"
-                                    : "bg-indigo-500"
-                                }`}
-                              />
-                            </div>
-                            <span className="text-xs font-semibold text-slate-400">
+                            <ProgressBar
+                              className="w-20"
+                              value={progressVal}
+                              tone={b.status === "OVER_BUDGET" ? "rose" : b.status === "NEAR_LIMIT" ? "amber" : "indigo"}
+                            />
+                            <span className="text-xs font-semibold tabular-nums text-slate-400">
                               {parseFloat(b.progressPercent).toFixed(0)}%
                             </span>
                           </div>
                         ) : (
-                          <span className="text-xs text-slate-500 italic">No budget set</span>
+                          <span className="text-xs italic text-slate-500">No budget set</span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(b.status)}
+                      <td className="whitespace-nowrap px-6 py-4">
+                        <Badge tone={meta.tone}>{meta.label}</Badge>
                       </td>
-                      <td className="px-6 py-4 text-center whitespace-nowrap">
+                      <td className="whitespace-nowrap px-6 py-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <button
                             onClick={() => handleOpenEdit(b)}
-                            className="rounded-lg p-1.5 hover:bg-slate-800 text-slate-400 hover:text-indigo-400"
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-400"
+                            aria-label={`Edit budget for ${b.categoryName}`}
                           >
-                            <LucideEdit className="h-4.5 w-4.5" />
+                            <LucideEdit className="h-4.5 w-4.5" aria-hidden="true" />
                           </button>
                           {b.id && (
                             <button
                               onClick={() => handleDeleteClick(b)}
-                              className="rounded-lg p-1.5 hover:bg-slate-800 text-slate-400 hover:text-red-400"
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400"
+                              aria-label={`Remove budget for ${b.categoryName}`}
                             >
-                              <LucideTrash2 className="h-4.5 w-4.5" />
+                              <LucideTrash2 className="h-4.5 w-4.5" aria-hidden="true" />
                             </button>
                           )}
                         </div>
@@ -416,27 +378,26 @@ export default function BudgetsPage() {
             </table>
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Edit Budget overlay */}
       {isFormOpen && editingBudget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex animate-in fade-in items-center justify-center bg-black/60 p-4 backdrop-blur-xs duration-200">
+          <Card className="relative w-full max-w-md animate-in zoom-in-95 border-slate-800 bg-slate-900 p-6 shadow-2xl duration-200">
             <button
               onClick={() => setIsFormOpen(false)}
-              className="absolute top-4 right-4 rounded-lg p-1 hover:bg-slate-800 text-slate-400 hover:text-white"
+              className="absolute right-4 top-4 rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+              aria-label="Close dialog"
             >
-              <LucideX className="h-5 w-5" />
+              <LucideX className="h-5 w-5" aria-hidden="true" />
             </button>
-            <h3 className="text-xl font-bold text-white mb-1">
-              Configure Category Budget
-            </h3>
-            <p className="text-xs text-slate-400 mb-6">
+            <h3 className="mb-1 text-xl font-bold text-white">Configure Category Budget</h3>
+            <p className="mb-6 text-xs text-slate-400">
               Category: <span className="font-semibold text-white">{editingBudget.categoryName}</span> ({getMonthLabel(selectedMonth)})
             </p>
 
             {formError && (
-              <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400">
+              <div role="alert" aria-live="polite" className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-sm text-rose-400">
                 {formError}
               </div>
             )}
@@ -446,77 +407,77 @@ export default function BudgetsPage() {
               <input type="hidden" {...register("month")} />
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <label htmlFor="budget-amount" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Planned Monthly Cap (AED)
                 </label>
                 <input
+                  id="budget-amount"
                   type="number"
+                  inputMode="decimal"
                   step="1"
                   placeholder="0.00"
+                  autoComplete="off"
                   {...register("amount")}
                   className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
                   autoFocus
                 />
-                {errors.amount && <span className="text-xs text-red-400">{errors.amount.message}</span>}
+                {errors.amount && (
+                  <span className="text-xs text-rose-400" role="alert">
+                    {errors.amount.message}
+                  </span>
+                )}
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsFormOpen(false)}
-                  className="rounded-xl border border-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
-                >
+              <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                <Button type="button" variant="secondary" onClick={() => setIsFormOpen(false)}>
                   Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-500 active:scale-95"
-                >
-                  {isSubmitting && <LucideLoader2 className="h-4 w-4 animate-spin" />}
+                </Button>
+                <Button type="submit" variant="primary" disabled={isSubmitting}>
+                  {isSubmitting && <LucideLoader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                   Save Cap
-                </button>
+                </Button>
               </div>
             </form>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Delete Confirmation Modal */}
       {isDeleteConfirmOpen && budgetToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h3 className="text-lg font-bold text-white mb-2">Remove Budget Configuration</h3>
-            
-            <p className="text-sm text-slate-400 mb-4">
+        <div className="fixed inset-0 z-50 flex animate-in fade-in items-center justify-center bg-black/60 p-4 backdrop-blur-xs duration-200">
+          <Card className="w-full max-w-md animate-in zoom-in-95 border-slate-800 bg-slate-900 p-6 shadow-2xl duration-200">
+            <h3 className="mb-2 text-lg font-bold text-white">Remove Budget Configuration</h3>
+
+            <p className="mb-4 text-sm text-slate-400">
               Are you sure you want to remove the budget plan for{" "}
               <span className="font-semibold text-white">{budgetToDelete.categoryName}</span> in{" "}
               <span className="font-semibold text-white">{getMonthLabel(selectedMonth)}</span>?
             </p>
 
             {parseFloat(budgetToDelete.actual) > 0 && (
-              <div className="mb-6 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-400">
+              <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-400">
                 <strong>Warning:</strong> This category has actual spending of{" "}
-                <span className="font-bold">AED {parseFloat(budgetToDelete.actual).toFixed(2)}</span>. 
-                Deleting the budget plan will not delete the transactions.
+                <span className="font-bold tabular-nums">AED {parseFloat(budgetToDelete.actual).toFixed(2)}</span>. Deleting the budget plan will
+                not delete the transactions.
+              </div>
+            )}
+
+            {deleteError && (
+              <div role="alert" aria-live="polite" className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs text-rose-400">
+                {deleteError}
               </div>
             )}
 
             <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setIsDeleteConfirmOpen(false)}
-                className="rounded-xl border border-slate-800 px-4 py-2.5 text-sm font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
-              >
+              <Button variant="secondary" onClick={() => setIsDeleteConfirmOpen(false)}>
                 Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-red-500 active:scale-95"
-              >
+              </Button>
+              <Button variant="danger" onClick={confirmDelete} disabled={deleteMutation.isPending}>
+                {deleteMutation.isPending && <LucideLoader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                 Confirm Remove
-              </button>
+              </Button>
             </div>
-          </div>
+          </Card>
         </div>
       )}
     </div>
