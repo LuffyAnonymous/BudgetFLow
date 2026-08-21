@@ -6,7 +6,11 @@ export function evaluateConfidence(
   direction: TransactionDirection,
   merchantCategory: KnownCategory,
   hasReference: boolean,
-  hasAvailableBalance: boolean
+  hasAvailableBalance: boolean,
+  /** True when the description matches a payee the user has explicitly
+   *  registered on one of their debts — as trustworthy a signal as a
+   *  recognized merchant brand, so it earns the same exemption. */
+  isKnownDebtPayee = false
 ): number {
   let score = 100;
 
@@ -18,7 +22,7 @@ export function evaluateConfidence(
     return 100; // Confident it's an informational/ignored message
   }
 
-  if (merchantCategory === KnownCategory.UNCATEGORIZED && direction !== TransactionDirection.INFLOW) {
+  if (merchantCategory === KnownCategory.UNCATEGORIZED && direction !== TransactionDirection.INFLOW && !isKnownDebtPayee) {
     score -= 35; // Drops to 65 (Review queue)
   }
 

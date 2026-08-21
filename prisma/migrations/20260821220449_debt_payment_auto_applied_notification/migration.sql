@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE 'DEBT_PAYMENT_AUTO_APPLIED';

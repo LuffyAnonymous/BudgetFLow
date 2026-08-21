@@ -45,7 +45,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       where: { userId },
       select: {
         enabled: true,
-        autoImportSalary: true,
         senderAllowlist: true,
         salaryCategoryId: true,
         tokenHash: true,
@@ -256,7 +255,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   return NextResponse.json({
     data: {
       importEnabled: importSetting?.enabled ?? false,
-      autoImportEnabled: importSetting?.autoImportSalary ?? false,
 
       token: {
         hasToken,

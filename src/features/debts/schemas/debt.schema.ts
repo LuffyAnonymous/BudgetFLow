@@ -8,6 +8,7 @@ export const createDebtSchema = z.object({
   rolloverFeeRate: z.coerce.number().nonnegative("Rollover fee rate cannot be negative"),
   categoryId: z.string().uuid().nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
+  payeeAliases: z.array(z.string().min(1).max(100)).max(20).optional(),
 });
 
 export const updateDebtSchema = z.object({
@@ -18,6 +19,7 @@ export const updateDebtSchema = z.object({
   categoryId: z.string().uuid().nullable().optional(),
   status: z.enum(["ACTIVE", "PAID", "ARCHIVED", "PAUSED"]).optional(),
   notes: z.string().max(500).nullable().optional(),
+  payeeAliases: z.array(z.string().min(1).max(100)).max(20).optional(),
 });
 
 export const recordPaymentSchema = z.object({

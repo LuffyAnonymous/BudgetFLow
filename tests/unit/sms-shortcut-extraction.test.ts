@@ -56,7 +56,6 @@ describe("SMS Shortcut Payload Extraction & Webhook Behavior", () => {
       data: {
         userId,
         enabled: true,
-        autoImportSalary: true,
         senderAllowlist: ["ENBD"],
       },
     });

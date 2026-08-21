@@ -15,6 +15,7 @@ import {
   LucideCalculator,
   LucideLandmark,
   LucideLoader2,
+  LucideUserRound,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,7 @@ interface Debt {
   notes: string | null;
   categoryId: string | null;
   categoryName: string | null;
+  payeeAliases: string[];
   version: number;
   createdAt: string;
 }
@@ -91,11 +93,13 @@ export default function DebtsClient() {
   const [showProjection, setShowProjection] = useState<string | null>(null);
   const [showPaymentHistory, setShowPaymentHistory] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showPayeeDialog, setShowPayeeDialog] = useState<string | null>(null);
   const [projectionMonths, setProjectionMonths] = useState(12);
 
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   const [syncLedger, setSyncLedger] = useState(true);
+  const [payeeInput, setPayeeInput] = useState("");
 
   const [newDebt, setNewDebt] = useState({
     name: "",
@@ -104,6 +108,7 @@ export default function DebtsClient() {
     dueDay: "25",
     rolloverFeeRate: "0",
     notes: "",
+    payeeAliases: "",
   });
 
   const { data: debts = [], isLoading } = useQuery<Debt[]>({
@@ -186,6 +191,7 @@ export default function DebtsClient() {
           dueDay: parseInt(data.dueDay),
           rolloverFeeRate: parseFloat(data.rolloverFeeRate),
           notes: data.notes || null,
+          payeeAliases: data.payeeAliases.split(",").map((s) => s.trim()).filter(Boolean),
         }),
       });
       const json = await res.json();
@@ -195,7 +201,27 @@ export default function DebtsClient() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["debts"] });
       setShowCreateDialog(false);
-      setNewDebt({ name: "", originalBalance: "", monthlyPayment: "", dueDay: "25", rolloverFeeRate: "0", notes: "" });
+      setNewDebt({ name: "", originalBalance: "", monthlyPayment: "", dueDay: "25", rolloverFeeRate: "0", notes: "", payeeAliases: "" });
+    },
+  });
+
+  const payeeMutation = useMutation({
+    mutationFn: async ({ debtId, aliases }: { debtId: string; aliases: string }) => {
+      const res = await fetch(`/api/debts/${debtId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          payeeAliases: aliases.split(",").map((s) => s.trim()).filter(Boolean),
+        }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.message);
+      return json.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["debts"] });
+      setShowPayeeDialog(null);
+      setPayeeInput("");
     },
   });
 
@@ -286,6 +312,12 @@ export default function DebtsClient() {
                       <Badge tone={meta.tone}>{meta.label}</Badge>
                     </div>
                     <p className="mt-1 text-xs text-slate-500">Due day: {debt.dueDay} of each month</p>
+                    {debt.payeeAliases.length > 0 && (
+                      <p className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
+                        <LucideUserRound className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        Auto-matches transfers to: {debt.payeeAliases.join(", ")}
+                      </p>
+                    )}
                   </div>
                   <div className="text-right">
                     <p className="text-xl font-bold tabular-nums text-white">AED {parseFloat(debt.currentBalance).toFixed(2)}</p>
@@ -343,6 +375,16 @@ export default function DebtsClient() {
                   >
                     <LucideCalculator className="h-3.5 w-3.5" aria-hidden="true" />
                     {showProjection === debt.id ? "Hide Projection" : "Payoff Projection"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowPayeeDialog(debt.id);
+                      setPayeeInput(debt.payeeAliases.join(", "));
+                    }}
+                    className="flex items-center gap-1 rounded-lg bg-slate-800/60 px-3 py-1.5 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-700/60"
+                  >
+                    <LucideUserRound className="h-3.5 w-3.5" aria-hidden="true" />
+                    {debt.payeeAliases.length > 0 ? "Auto-Match Names" : "Set Auto-Match"}
                   </button>
                   {debt.status === "ACTIVE" && (
                     <button
@@ -562,6 +604,55 @@ export default function DebtsClient() {
         </div>
       )}
 
+      {/* Payee Auto-Match Dialog */}
+      {showPayeeDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setShowPayeeDialog(null)}
+        >
+          <Card className="w-full max-w-md space-y-4 border-slate-700 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">Auto-Match Payments</h3>
+              <button onClick={() => setShowPayeeDialog(null)} className="text-slate-400 hover:text-white" aria-label="Close dialog">
+                <LucideX className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <p className="text-xs leading-relaxed text-slate-400">
+              When an imported transaction&apos;s description matches one of these names, it&apos;s applied to this debt automatically — no manual Record Payment click needed.
+            </p>
+            <div>
+              <label htmlFor="payee-aliases" className="mb-1 block text-xs font-semibold text-slate-400">
+                Payee Names (comma-separated)
+              </label>
+              <input
+                id="payee-aliases"
+                type="text"
+                value={payeeInput}
+                onChange={(e) => setPayeeInput(e.target.value)}
+                autoComplete="off"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                placeholder="e.g. Ahmed Ali, AHMED ALI M"
+              />
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Match exactly how the name appears in your bank transfer SMS. Add multiple spellings if your bank formats it differently.
+              </p>
+            </div>
+            {payeeMutation.error && (
+              <p role="alert" aria-live="polite" className="text-xs text-rose-400">
+                {(payeeMutation.error as Error).message}
+              </p>
+            )}
+            <button
+              onClick={() => payeeMutation.mutate({ debtId: showPayeeDialog, aliases: payeeInput })}
+              disabled={payeeMutation.isPending}
+              className="w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {payeeMutation.isPending ? "Saving…" : "Save"}
+            </button>
+          </Card>
+        </div>
+      )}
+
       {/* Create Debt Dialog */}
       {showCreateDialog && (
         <div
@@ -669,6 +760,23 @@ export default function DebtsClient() {
                   className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
                   placeholder="Optional notes"
                 />
+              </div>
+              <div>
+                <label htmlFor="debt-payee-aliases" className="mb-1 block text-xs font-semibold text-slate-400">
+                  Payee Names for Auto-Match (optional)
+                </label>
+                <input
+                  id="debt-payee-aliases"
+                  type="text"
+                  value={newDebt.payeeAliases}
+                  onChange={(e) => setNewDebt({ ...newDebt, payeeAliases: e.target.value })}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                  placeholder="e.g. Ahmed Ali"
+                />
+                <p className="mt-1.5 text-[11px] text-slate-500">
+                  A transfer whose description matches one of these names auto-applies as a payment on this debt.
+                </p>
               </div>
             </div>
             {createMutation.error && (

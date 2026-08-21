@@ -34,6 +34,7 @@ export class DebtService {
     rolloverFeeRate: number | string | Decimal;
     categoryId?: string | null;
     notes?: string | null;
+    payeeAliases?: string[];
   }) {
     if (data.dueDay < 1 || data.dueDay > 31) {
       throw new Error("INVALID_DUE_DAY: Due day must be between 1 and 31.");
@@ -55,6 +56,7 @@ export class DebtService {
       rolloverFeeRate: new Decimal(data.rolloverFeeRate),
       categoryId: data.categoryId ?? null,
       notes: data.notes ?? null,
+      payeeAliases: data.payeeAliases ?? [],
       status: DebtStatus.ACTIVE,
     });
   }
@@ -67,6 +69,7 @@ export class DebtService {
     categoryId?: string | null;
     status?: DebtStatus;
     notes?: string | null;
+    payeeAliases?: string[];
   }) {
     await this.getDebtById(id, userId);
 
@@ -89,6 +92,7 @@ export class DebtService {
     if (data.categoryId !== undefined) updateData.categoryId = data.categoryId;
     if (data.status !== undefined) updateData.status = data.status;
     if (data.notes !== undefined) updateData.notes = data.notes;
+    if (data.payeeAliases !== undefined) updateData.payeeAliases = data.payeeAliases;
 
     return this.debtRepo.update(id, userId, updateData, undefined);
   }
@@ -120,11 +124,19 @@ export class DebtService {
       notes?: string | null;
       idempotencyKey?: string | null;
       syncLedger?: boolean;
-    }
+      /** Link to a transaction that already exists (e.g. an auto-matched
+       *  import) instead of creating a new one. Takes precedence over
+       *  syncLedger, since the ledger row is already there. */
+      existingTransactionId?: string | null;
+    },
+    /** Pass the caller's own transaction client to participate in an
+     *  already-open transaction (e.g. import processing) instead of
+     *  opening a separate one. */
+    outerTx?: Prisma.TransactionClient
   ): Promise<DebtPayment> {
     // 1. Idempotency Check
     if (data.idempotencyKey) {
-      const existing = await this.debtPaymentRepo.findByIdempotencyKey(userId, data.idempotencyKey);
+      const existing = await this.debtPaymentRepo.findByIdempotencyKey(userId, data.idempotencyKey, outerTx);
       if (existing) {
         return existing;
       }
@@ -137,8 +149,7 @@ export class DebtService {
 
     const paymentDateObj = typeof data.paymentDate === "string" ? new Date(data.paymentDate) : data.paymentDate;
 
-    // Run inside database transaction for atomicity
-    return db.$transaction(async (tx) => {
+    const run = async (tx: Prisma.TransactionClient): Promise<DebtPayment> => {
       const debt = await this.debtRepo.findById(debtId, userId, tx);
       if (!debt) {
         throw new Error("DEBT_NOT_FOUND: Debt not found or unauthorized.");
@@ -156,10 +167,10 @@ export class DebtService {
       const balanceAfter = balanceBefore.minus(amount);
       const newStatus = balanceAfter.isZero() ? DebtStatus.PAID : debt.status;
 
-      let transactionId: string | null = null;
+      let transactionId: string | null = data.existingTransactionId ?? null;
 
       // Category / Ledger sync rules
-      if (data.syncLedger) {
+      if (!transactionId && data.syncLedger) {
         let targetCategoryId: string | null = debt.categoryId;
         if (targetCategoryId) {
           const category = await this.categoryRepo.findByIdAndUserId(targetCategoryId, userId, tx);
@@ -251,7 +262,9 @@ export class DebtService {
       );
 
       return payment;
-    });
+    };
+
+    return outerTx ? run(outerTx) : db.$transaction(run);
   }
 
   /**

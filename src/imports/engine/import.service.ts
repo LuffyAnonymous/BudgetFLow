@@ -13,8 +13,7 @@ import {
   AccountType,
   CategoryType,
   ImportConfidence,
-  NotificationType,
-  NotificationSeverity,
+  DebtStatus,
 } from "@prisma/client";
 import { Decimal } from "decimal.js";
 import { sha256, maskSender, redactFinancialText } from "./redaction";
@@ -33,6 +32,8 @@ import { matchInternalTransfer } from "./transfer-matcher";
 import { evaluateConfidence } from "./confidence-evaluator";
 import { updateBalance } from "./balance-updater";
 import { extractSmsTransaction, AI_SMS_PARSER_KEY } from "./ai-sms-extractor";
+import { tryApplyDebtLinkage } from "./debt-linkage";
+import { matchDebtByDescription } from "./debt-matcher";
 
 const DUBAI_OFFSET_HOURS = 4;
 
@@ -278,12 +279,20 @@ export class ImportService {
 
       console.log("[Import Service] Stage: Categorizing merchant");
       const category = categorizeMerchant(normalized.merchant);
+
+      const debtPayeeCandidates = await db.debt.findMany({
+        where: { userId, status: DebtStatus.ACTIVE, payeeAliases: { isEmpty: false } },
+        select: { id: true, name: true, payeeAliases: true },
+      });
+      const isKnownDebtPayee = !!matchDebtByDescription(debtPayeeCandidates, normalized.merchant);
+
       const confidenceScore = evaluateConfidence(
         normalized.amount.greaterThan(0),
         direction,
         category,
         !!normalized.reference,
-        !!normalized.availableBalance
+        !!normalized.availableBalance,
+        isKnownDebtPayee
       );
 
       const confidence = confidenceScore >= 90 ? ImportConfidence.HIGH
@@ -421,6 +430,19 @@ export class ImportService {
                 }
             });
             ledgerTxId = ledgerTx.id;
+
+            await tryApplyDebtLinkage(
+              tx,
+              userId,
+              {
+                id: ledgerTx.id,
+                amount: normalized.amount,
+                date: financialDate,
+                categoryId: dbCategory!.id,
+                description: normalized.merchant || "Auto-imported",
+              },
+              cashFlowDir
+            );
         }
 
         const computedBudgetMonth = isSalary
@@ -604,34 +626,12 @@ export class ImportService {
         });
       }
 
-      // Process debt payment logic if category is DEBT
-      const category = await tx.category.findUnique({ where: { id: categoryId } });
-      if (category && category.type === "DEBT") {
-        const debt = await tx.debt.findFirst({
-          where: { userId, categoryId },
-        });
-        if (debt) {
-          const newBalance = new Prisma.Decimal(debt.currentBalance).minus(amount);
-          const status = newBalance.lte(0) ? "PAID" : debt.status;
-          await tx.debt.update({
-            where: { id: debt.id },
-            data: { currentBalance: newBalance, status },
-          });
-
-          if (status === "PAID" && debt.status !== "PAID") {
-            await tx.notification.create({
-              data: {
-                  userId,
-                  type: NotificationType.DEBT_PAID_OFF,
-                  severity: NotificationSeverity.INFO, // Assuming SUCCESS is not valid, INFO is used earlier
-                  title: "Debt Paid Off!",
-                  message: `You have successfully paid off your debt: ${debt.name}.`,
-                  eventKey: `debt-paid-${debt.id}-${ledgerTx.id}`,
-              }
-            });
-          }
-        }
-      }
+      await tryApplyDebtLinkage(
+        tx,
+        userId,
+        { id: ledgerTx.id, amount, date: effectiveDate, categoryId, description },
+        cashFlowDir
+      );
 
       return { transactionId: ledgerTx.id };
     });

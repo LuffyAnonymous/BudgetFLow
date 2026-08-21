@@ -43,7 +43,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const [importSetting, settings] = await Promise.all([
     db.importSetting.findUnique({
       where: { userId },
-      select: { enabled: true, autoImportSalary: true },
+      select: { enabled: true },
     }),
     db.setting.findUnique({
       where: { userId },
@@ -59,7 +59,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         latestImport: null,
         expectedPayday: null,
         importEnabled: false,
-        autoImportEnabled: false,
       },
     });
   }
@@ -148,7 +147,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         : null,
       expectedPayday,
       importEnabled: importSetting.enabled,
-      autoImportEnabled: importSetting.autoImportSalary,
     },
   });
 }

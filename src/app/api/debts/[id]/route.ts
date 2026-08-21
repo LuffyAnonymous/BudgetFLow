@@ -34,6 +34,7 @@ export async function GET(
       notes: d.notes,
       categoryId: d.categoryId,
       categoryName: d.category?.name || null,
+      payeeAliases: d.payeeAliases,
       version: d.version,
       createdAt: d.createdAt.toISOString(),
       projection,
@@ -75,6 +76,7 @@ export async function PATCH(
       status: updatedDebt.status,
       notes: updatedDebt.notes,
       categoryId: updatedDebt.categoryId,
+      payeeAliases: updatedDebt.payeeAliases,
       version: updatedDebt.version,
     });
   } catch (error) {

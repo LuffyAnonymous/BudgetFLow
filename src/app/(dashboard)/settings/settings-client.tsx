@@ -216,7 +216,7 @@ export function SettingsClient() {
     queryFn: async () => {
       const res = await fetch("/api/settings/import");
       const json = await res.json();
-      return json.data; // { enabled: boolean, autoImportSalary: boolean, senderAllowlist: string[], salaryCategoryId: string | null, ... }
+      return json.data; // { enabled: boolean, senderAllowlist: string[], salaryCategoryId: string | null, ... }
     },
   });
 

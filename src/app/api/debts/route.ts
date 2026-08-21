@@ -37,6 +37,7 @@ export async function GET(request: Request) {
         notes: d.notes,
         categoryId: d.categoryId,
         categoryName: d.category?.name || null,
+        payeeAliases: d.payeeAliases,
         version: d.version,
         createdAt: d.createdAt.toISOString(),
       };
@@ -76,6 +77,7 @@ export async function POST(request: Request) {
       status: debt.status,
       notes: debt.notes,
       categoryId: debt.categoryId,
+      payeeAliases: debt.payeeAliases,
       version: debt.version,
     }, 201);
   } catch (error) {

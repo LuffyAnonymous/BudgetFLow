@@ -79,12 +79,11 @@ test.describe("Import Engine — webhook flow", () => {
     const salaryCat = catJson.data.find((c: { name: string }) => c.name === "Salary");
     expect(salaryCat).toBeTruthy();
 
-    // Ensure import setting is ready: enabled, ENBD sender, auto-import OFF, and set salary category ID
+    // Ensure import setting is ready: enabled, ENBD sender, and set salary category ID
     await request.post(`${BASE_URL}/api/settings/import`, {
       headers: { Cookie: authCookie, "Content-Type": "application/json" },
       data: {
         enabled: true,
-        autoImportSalary: false,
         senderAllowlist: [TEST_SENDER],
         salaryCategoryId: salaryCat.id,
       },
@@ -136,7 +135,7 @@ test.describe("Import Engine — webhook flow", () => {
     expect(res.ok(), `Import failed: ${res.status()} ${await res.text()}`).toBe(true);
     const json = await res.json();
 
-    // autoImportSalary is false → should be REVIEW_REQUIRED
+    // Outcome depends on the confidence engine's scoring of this SMS
     expect(["review_required", "processed"]).toContain(json.data.outcome);
     importId = json.data.importedTransactionId;
     expect(importId, "importId missing from response").toBeTruthy();

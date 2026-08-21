@@ -32,7 +32,7 @@ import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { db } from "@/lib/db";
-import { AuditAction, AuditEntityType, ImportStatus, type ImportSetting } from "@prisma/client";
+import { AuditAction, AuditEntityType, type ImportSetting } from "@prisma/client";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -85,74 +85,16 @@ export class ImportSettingService {
     userId: string,
     data: {
       enabled?: boolean;
-      autoImportSalary?: boolean;
       senderAllowlist?: string[];
       salaryCategoryId?: string | null;
       expectedCurrency?: string;
       minimumAmount?: number | null;
       maximumAmount?: number | null;
       rawPayloadRetentionDays?: number;
-      amountBoundsWaived?: boolean;
     }
   ): Promise<ImportSetting> {
-    const setting = await this.getOrCreate(userId);
-
-    // ── Safety gate: autoImportSalary=true requires pre-conditions (Check #10) ──
-    if (data.autoImportSalary === true) {
-      const errors: string[] = [];
-
-      // 1. At least one real import must have been reviewed and confirmed
-      const confirmedCount = await db.importedTransaction.count({
-        where: {
-          userId,
-          status: ImportStatus.PROCESSED,
-          transactionId: { not: null }, // confirmed (not auto-processed)
-        },
-      });
-      if (confirmedCount === 0) {
-        errors.push(
-          "At least one import must be manually reviewed and confirmed before enabling automatic import."
-        );
-      }
-
-      // 2. Sender matching must be configured
-      const senders = data.senderAllowlist ?? setting.senderAllowlist ?? [];
-      if (senders.length === 0) {
-        errors.push("Sender allowlist must be configured before enabling automatic import.");
-      }
-
-      // 3. Salary category must be set (from data or existing setting)
-      const categoryId = data.salaryCategoryId ?? setting.salaryCategoryId;
-      if (!categoryId) {
-        errors.push("Salary category must be configured before enabling automatic import.");
-      }
-
-      // 4. Amount bounds must be set or explicitly waived
-      const hasMinAmount =
-        data.minimumAmount != null || setting.minimumAmount != null;
-      const hasMaxAmount =
-        data.maximumAmount != null || setting.maximumAmount != null;
-      const boundsWaived = data.amountBoundsWaived === true;
-
-      if (!hasMinAmount || !hasMaxAmount) {
-        if (!boundsWaived) {
-          errors.push(
-            "Minimum and maximum expected salary amount must be configured, or explicitly waived via amountBoundsWaived=true."
-          );
-        }
-      }
-
-      if (errors.length > 0) {
-        const safeError = new Error(errors.join(" | "));
-        (safeError as Error & { code: string }).code = "AUTO_IMPORT_PRECONDITIONS_NOT_MET";
-        throw safeError;
-      }
-    }
-
-    // Strip internal-only field before persisting (amountBoundsWaived is intentionally discarded)
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { amountBoundsWaived, ...persistData } = data;
-    return db.importSetting.update({ where: { userId }, data: persistData });
+    await this.getOrCreate(userId);
+    return db.importSetting.update({ where: { userId }, data });
   }
 
   // ─── Token Management ───────────────────────────────────────────────────────

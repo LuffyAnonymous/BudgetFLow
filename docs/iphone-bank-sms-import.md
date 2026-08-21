@@ -30,7 +30,6 @@ Before your first import:
 2. **Sender allowlist**: add your bank's sender name exactly as it appears on your iPhone (e.g. `ENBD`).
 3. **Salary category**: select your `Salary` income category.
 4. **Expected currency**: set to `AED` (default).
-5. **Auto-import**: leave **off** for the first import — confirm manually first.
 
 ---
 
@@ -79,18 +78,19 @@ Before your first import:
 
 ---
 
-## 4. Testing Without Auto-Import
-
-With auto-import **disabled** (the default):
+## 4. Testing Your First Import
 
 1. Forward your sample salary SMS through the Shortcut.
-2. Open BudgetFlow → **Import Review** (`/imports`).
-3. You should see a pending import with status **Review Required**.
-4. Verify:
+2. A clean, recognized salary credit usually auto-posts straight to your
+   ledger — check **Transactions** for it directly. If it instead needed
+   review (unfamiliar format, missing balance/reference line), open
+   BudgetFlow → **Import Review** (`/imports`) and you'll find it there
+   with status **Review Required**.
+3. Either way, verify:
    - Parsed amount is correct (e.g. AED 5,750.00).
    - The available balance parsed from the SMS (e.g. AED 5,752.56) is captured for reference but is **not** the imported amount.
    - Reference number matches the SMS.
-5. Tap **Confirm Import** to create the transaction.
+4. If it landed in Import Review, tap **Confirm Import** to create the transaction.
 
 ---
 
@@ -103,15 +103,20 @@ On the Import Review page:
 
 ---
 
-## 6. Enabling Auto-Import
+## 6. How Auto-Import Works
 
-Once you have confirmed at least one import successfully:
+There's no separate switch to flip — as soon as **SMS Import Enabled** is on
+(Settings → Import Settings), every incoming message is scored for
+confidence automatically:
 
-1. Go to **Settings → Import Settings**.
-2. Enable **Auto-Import Salary**.
-3. Future HIGH-confidence imports will automatically create transactions without requiring review.
+- **HIGH or MEDIUM confidence** (clear amount, recognized merchant, balance
+  and reference present) → posts straight to your ledger, no review needed.
+- **LOW confidence** (unrecognized merchant, missing balance/reference) →
+  held in **Import Review** (`/imports`) for you to confirm.
 
-> **Only HIGH-confidence matches** (e.g., a recognized salary payment) are auto-created. Ambiguous or unrecognized messages from your bank will still require manual review.
+Recognized merchants are matched against a fixed list
+(`src/imports/engine/merchant-categorizer.ts`) — expanding that list is how
+more of your everyday spending qualifies for auto-post over time.
 
 ---
 
