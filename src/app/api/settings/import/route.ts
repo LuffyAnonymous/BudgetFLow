@@ -12,6 +12,11 @@
  *     "expectedCurrency": string
  *     "rawPayloadRetentionDays": number
  *   }
+ *
+ * Every parseable SMS auto-posts as soon as import is enabled — there is
+ * no separate opt-in switch, and no confidence tier is held back for
+ * review. Confidence (and an ambiguous debit/credit direction) only
+ * decides whether the post gets flagged "needs a second look" afterward.
  */
 
 import { NextRequest, NextResponse } from "next/server";

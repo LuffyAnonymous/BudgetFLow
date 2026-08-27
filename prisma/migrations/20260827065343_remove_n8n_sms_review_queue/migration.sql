@@ -1,6 +1,6 @@
 -- AlterTable
-ALTER TABLE "ImportSetting" DROP COLUMN "autoImportSalary",
-DROP COLUMN "maximumAmount",
+-- autoImportSalary was already dropped by 20260821214459_drop_auto_import_salary
+ALTER TABLE "ImportSetting" DROP COLUMN "maximumAmount",
 DROP COLUMN "minimumAmount";
 
 -- AlterTable

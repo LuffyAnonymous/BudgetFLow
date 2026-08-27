@@ -17,7 +17,50 @@ import {
   LucideShieldCheck,
   LucideSend,
   LucideUnlink,
+  LucideSmartphone,
 } from "lucide-react";
+
+const IMPORT_ENDPOINT = "https://budgetflow-drab-nine.vercel.app/api/imports/sms";
+
+function buildDeviceSnippet(device: "iphone" | "android", token: string) {
+  const body = {
+    sender: device === "iphone" ? "[Sender from Get Details of Messages]" : "[sms_sender]",
+    message: device === "iphone" ? "[Message from Get Details of Messages]" : "[sms_body]",
+    receivedAt: device === "iphone" ? "[Current Date, ISO 8601]" : "[timestamp_iso]",
+    deviceId: device,
+  };
+  return [
+    `URL:     ${IMPORT_ENDPOINT}`,
+    `Method:  POST`,
+    `Headers: Authorization: Bearer ${token}`,
+    `         Content-Type: application/json`,
+    `Body:`,
+    JSON.stringify(body, null, 2),
+  ].join("\n");
+}
+
+function DeviceSnippet({ text, copied, onCopy }: { text: string; copied: boolean; onCopy: () => void }) {
+  return (
+    <div className="relative rounded-lg border border-slate-800 bg-slate-900/50">
+      <button
+        type="button"
+        onClick={onCopy}
+        className="absolute right-2 top-2 p-1.5 rounded-md hover:bg-slate-800 text-slate-400 hover:text-white transition-all"
+        title="Copy to clipboard"
+      >
+        <LucideCopy className="h-3.5 w-3.5" />
+      </button>
+      <pre className="overflow-x-auto p-3 pr-10 text-[10.5px] text-indigo-300 font-mono leading-relaxed whitespace-pre">
+        {text}
+      </pre>
+      {copied && (
+        <p className="absolute -bottom-5 right-0 flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
+          <LucideCheckCircle2 className="h-3 w-3" aria-hidden="true" /> Copied!
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function SettingsClient() {
   const queryClient = useQueryClient();
@@ -63,6 +106,8 @@ export function SettingsClient() {
   const [tokenWarning, setTokenWarning] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [selectedDevice, setSelectedDevice] = useState<"iphone" | "android" | null>(null);
+  const [snippetCopied, setSnippetCopied] = useState(false);
 
   // Token Status Query
   const { data: tokenStatus, isLoading: isLoadingToken } = useQuery({
@@ -923,6 +968,84 @@ export function SettingsClient() {
                 <LucideKey className="h-4 w-4" />
                 {generateTokenMutation.isPending ? "Generating..." : "Generate Token"}
               </button>
+            </div>
+          )}
+
+          {(tokenStatus?.isActive || generatedToken) && (
+            <div className="space-y-4 border-t border-slate-800 pt-6">
+              <div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Connect a Device
+                </h3>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Pick the phone that will forward bank SMS to get its setup steps.
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                {(["iphone", "android"] as const).map((device) => (
+                  <button
+                    key={device}
+                    type="button"
+                    onClick={() => setSelectedDevice(selectedDevice === device ? null : device)}
+                    className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl border py-2.5 text-xs font-bold transition-all ${
+                      selectedDevice === device
+                        ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-400"
+                        : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    <LucideSmartphone className="h-3.5 w-3.5" />
+                    {device === "iphone" ? "iPhone" : "Android"}
+                  </button>
+                ))}
+              </div>
+
+              {selectedDevice === "iphone" && (
+                <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                  <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-slate-400 leading-relaxed">
+                    <li>Shortcuts app → Automation tab → New Automation → <span className="text-slate-300">Message Received</span>, filtered to your bank&apos;s sender name.</li>
+                    <li>Add actions: <span className="text-slate-300">Get Details of Messages</span>, then <span className="text-slate-300">Get Current Date</span>.</li>
+                    <li>Add <span className="text-slate-300">Get Contents of URL</span> using the request below.</li>
+                    <li>Turn on <span className="text-slate-300">Run Immediately</span>, turn off <span className="text-slate-300">Notify When Run</span>.</li>
+                  </ol>
+                  <DeviceSnippet
+                    text={buildDeviceSnippet("iphone", generatedToken || "YOUR_TOKEN")}
+                    copied={snippetCopied}
+                    onCopy={() => {
+                      navigator.clipboard.writeText(buildDeviceSnippet("iphone", generatedToken || "YOUR_TOKEN"));
+                      setSnippetCopied(true);
+                      setTimeout(() => setSnippetCopied(false), 2000);
+                    }}
+                  />
+                </div>
+              )}
+
+              {selectedDevice === "android" && (
+                <div className="space-y-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                  <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-slate-400 leading-relaxed">
+                    <li>Install <span className="text-slate-300">MacroDroid</span> from the Play Store and grant it SMS read permission.</li>
+                    <li>Add Macro → Trigger: <span className="text-slate-300">SMS/MMS Received</span>, filtered to your bank&apos;s sender name.</li>
+                    <li>Action → Connectivity → <span className="text-slate-300">HTTP Request</span> using the request below (this action requires MacroDroid Pro).</li>
+                    <li>Turn off &quot;Notify on run&quot; for silent background operation, then enable the macro.</li>
+                  </ol>
+                  <DeviceSnippet
+                    text={buildDeviceSnippet("android", generatedToken || "YOUR_TOKEN")}
+                    copied={snippetCopied}
+                    onCopy={() => {
+                      navigator.clipboard.writeText(buildDeviceSnippet("android", generatedToken || "YOUR_TOKEN"));
+                      setSnippetCopied(true);
+                      setTimeout(() => setSnippetCopied(false), 2000);
+                    }}
+                  />
+                </div>
+              )}
+
+              {!generatedToken && selectedDevice && (
+                <p className="flex items-start gap-1 text-[10px] text-amber-400 leading-normal">
+                  <LucideAlertCircle className="h-3 w-3 mt-0.5 shrink-0" aria-hidden="true" />
+                  Replace YOUR_TOKEN with your saved token — rotate above if you no longer have it.
+                </p>
+              )}
             </div>
           )}
         </div>

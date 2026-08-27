@@ -30,7 +30,6 @@ Before your first import:
 2. **Sender allowlist**: add your bank's sender name exactly as it appears on your iPhone (e.g. `ENBD`).
 3. **Salary category**: select your `Salary` income category.
 4. **Expected currency**: set to `AED` (default).
-5. **Auto-import**: leave **off** for the first import — confirm manually first.
 
 ---
 
@@ -79,39 +78,54 @@ Before your first import:
 
 ---
 
-## 4. Testing Without Auto-Import
-
-With auto-import **disabled** (the default):
+## 4. Testing Your First Import
 
 1. Forward your sample salary SMS through the Shortcut.
-2. Open BudgetFlow → **Import Review** (`/imports`).
-3. You should see a pending import with status **Review Required**.
-4. Verify:
+2. It posts straight to your ledger immediately — check **Transactions**
+   for it directly. There is no review or confirm step for bank SMS.
+3. Verify:
    - Parsed amount is correct (e.g. AED 5,750.00).
    - The available balance parsed from the SMS (e.g. AED 5,752.56) is captured for reference but is **not** the imported amount.
    - Reference number matches the SMS.
-5. Tap **Confirm Import** to create the transaction.
+4. Check **Imports** (`/imports`) → the transaction should show your
+   confidence tier. If it's tagged "needs a second look" (MEDIUM/LOW
+   confidence, or an ambiguous debit/credit direction), double-check the
+   amount and category — you'll also get a Telegram notification if you've
+   linked a chat (Settings → Telegram).
 
 ---
 
-## 5. Confirming the First Import
+## 5. If Something Looks Wrong
 
-On the Import Review page:
-- The **financial date** defaults to the parsed date. You can adjust it.
-- The **category** defaults to your configured Salary category. You can override it for this import.
-- Click **Confirm Import** — the transaction appears in your ledger immediately.
+Every SMS import posts as a transaction — there's no separate confirm step
+to catch mistakes before they land. If a posted transaction has the wrong
+amount, category, or account, edit or delete it directly from
+**Transactions**. If the message couldn't be parsed at all (unrecognized
+sender, or nothing extractable), it shows up under **Imports** → **Failed**
+instead, with no transaction created.
 
 ---
 
-## 6. Enabling Auto-Import
+## 6. How Auto-Import Works
 
-Once you have confirmed at least one import successfully:
+There's no separate switch to flip — as soon as **SMS Import Enabled** is on
+(Settings → Import Settings), every parseable message posts immediately,
+regardless of confidence:
 
-1. Go to **Settings → Import Settings**.
-2. Enable **Auto-Import Salary**.
-3. Future HIGH-confidence imports will automatically create transactions without requiring review.
+- **HIGH confidence** (clear amount, recognized merchant, balance and
+  reference present) → posts silently, no flag.
+- **MEDIUM/LOW confidence**, or an **ambiguous debit/credit direction**
+  (e.g. "Transfer received of AED 500", which could read either way) →
+  still posts immediately, but gets tagged "needs a second look" on the
+  Imports page and triggers a Telegram notification, so you can correct it
+  after the fact instead of being blocked beforehand.
+- A message that can't be parsed at all (unrecognized sender, no
+  extractable amount) never becomes a transaction — it's recorded as
+  **Failed** on the Imports page instead, with a notification either way.
 
-> **Only HIGH-confidence matches** (e.g., a recognized salary payment) are auto-created. Ambiguous or unrecognized messages from your bank will still require manual review.
+Recognized merchants are matched against a fixed list
+(`src/imports/engine/merchant-categorizer.ts`) — expanding that list is how
+more of your everyday spending qualifies for a clean HIGH-confidence post.
 
 ---
 

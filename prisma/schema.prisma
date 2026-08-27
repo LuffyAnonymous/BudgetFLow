@@ -277,6 +277,9 @@ model Debt {
   rolloverFeeRate Decimal       @db.Decimal(7, 4) // percentage, e.g. 4.50
   status          DebtStatus    @default(ACTIVE)
   notes           String?
+  /// Names this debt is paid to, matched against imported transaction
+  /// descriptions to auto-apply payments (e.g. ["Ahmed Ali", "AHMED ALI M"])
+  payeeAliases    String[]      @default([])
   categoryId      String?
   category        Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   userId          String
@@ -467,6 +470,7 @@ enum NotificationType {
   BUDGET_EXCEEDED
   SAVINGS_GOAL_REACHED
   DEBT_PAID_OFF
+  DEBT_PAYMENT_AUTO_APPLIED
   RECURRING_ENTRY_CREATED
   ROLLOVER_AVAILABLE
 }
