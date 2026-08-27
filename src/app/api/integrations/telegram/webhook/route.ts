@@ -206,11 +206,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       importedTransactionId: "importedTransactionId" in result ? result.importedTransactionId : undefined,
     });
 
-    if (result.outcome === "auto_posted" && "transactionId" in result) {
+    if (result.outcome === "auto_posted") {
       const ledgerTx = await db.transaction.findUnique({
         where: { id: result.transactionId },
         include: { category: true, account: true },
       });
+
+      const needsSecondLook = result.confidence !== "HIGH" || result.directionAmbiguous;
+      const flagLine = needsSecondLook
+        ? `\n⚠️ Needs a second look: ${result.directionAmbiguous ? "direction was ambiguous" : `${result.confidence.toLowerCase()} confidence`}`
+        : "";
 
       if (ledgerTx) {
         const amountVal = Number(ledgerTx.amount).toLocaleString("en-US", {
@@ -219,18 +224,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         });
         const bankName = ledgerTx.account?.name || "Unknown Bank";
         const typeName = ledgerTx.category?.name || "Expense";
-        replyText = `✅ Imported\nBank: ${bankName}\nType: ${typeName}\nAmount: AED ${amountVal}\nAccount: ${bankName}`;
+        replyText = `✅ Imported\nBank: ${bankName}\nType: ${typeName}\nAmount: AED ${amountVal}\nAccount: ${bankName}${flagLine}`;
       } else {
-        replyText = "✅ Imported\nDetails: Transaction was successfully posted.";
+        replyText = `✅ Imported\nDetails: Transaction was successfully posted.${flagLine}`;
       }
-    } else if (result.outcome === "review_required") {
-      const reason = "reason" in result && result.reason ? result.reason : "Could not confidently identify the transaction type.";
-      replyText = `⚠️ Saved for review\nReason: ${reason}`;
     } else if (result.outcome === "duplicate" || result.outcome === "idempotent") {
       replyText = "ℹ️ Already imported";
+    } else if (result.outcome === "failed") {
+      replyText = `❌ Import failed\nReason: ${result.reason}`;
     } else {
-      const reason = "reason" in result && result.reason ? result.reason : "Could not extract transaction amount.";
-      replyText = `❌ Import failed\nReason: ${reason}`;
+      const reason = "reason" in result && result.reason ? result.reason : "Message was not imported.";
+      replyText = `ℹ️ Not imported\nReason: ${reason}`;
     }
   } catch (err) {
     console.error("[Telegram Webhook] Server error while processing import:", err);

@@ -75,7 +75,7 @@ describe("Salary Status Scoped to Active Budget Month", () => {
     const julyDbMatch = await db.importedTransaction.findFirst({
       where: {
         userId,
-        status: { in: [ImportStatus.PROCESSED, ImportStatus.REVIEW_REQUIRED] },
+        status: ImportStatus.PROCESSED,
         OR: [
           { budgetMonth: "2026-07" },
           {
@@ -91,7 +91,7 @@ describe("Salary Status Scoped to Active Budget Month", () => {
     const augDbMatch = await db.importedTransaction.findFirst({
       where: {
         userId,
-        status: { in: [ImportStatus.PROCESSED, ImportStatus.REVIEW_REQUIRED] },
+        status: ImportStatus.PROCESSED,
         OR: [
           { budgetMonth: "2026-08" },
           {

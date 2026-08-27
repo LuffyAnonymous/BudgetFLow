@@ -31,7 +31,6 @@ jobs:
       NEXTAUTH_URL: http://localhost:3000
       CRON_SECRET: ci-placeholder-cron-secret
       IMPORT_CLEANUP_SECRET: ci-placeholder-cleanup-secret
-      N8N_SMS_WEBHOOK_SECRET: ci-placeholder-webhook-secret
       RESEND_API_KEY: ci-placeholder-resend-key
       ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
       TELEGRAM_BOT_TOKEN: ci-placeholder-telegram-token

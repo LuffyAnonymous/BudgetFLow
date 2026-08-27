@@ -16,8 +16,8 @@ import { importService } from "../../../src/imports/engine/import.service";
  * unusual punctuation, a new bank's phrasing, etc. Rather than treating each
  * one as a fresh regex patch, a regex parser that extracts everything except
  * the merchant name should fall back to the AI extractor to recover just
- * that field, so an unrecognized merchant format never has to become a
- * REVIEW_REQUIRED case.
+ * that field, so an unrecognized merchant format doesn't need a fallback
+ * "Auto-imported" description when it doesn't have to.
  */
 describe("AI merchant recovery after a partially-successful regex parse", () => {
   const originalKey = process.env.ANTHROPIC_API_KEY;
@@ -90,7 +90,9 @@ describe("AI merchant recovery after a partially-successful regex parse", () => 
     }
   });
 
-  it("falls back to Unknown/manual review when both regex and AI fail to find a merchant", async () => {
+  it("still auto-posts (with a fallback description) when both regex and AI fail to find a merchant", async () => {
+    // The regex parser already succeeded on amount/balance — a missing
+    // merchant name isn't a hard parse failure, just a cosmetic gap.
     const message = "Purchase of AED 25.00 with Debit Card ending 1234 at Zoom's Cafe; Downtown. Avl Balance is AED 500.00.";
 
     mockParse.mockResolvedValue({
@@ -111,6 +113,10 @@ describe("AI merchant recovery after a partially-successful regex parse", () => 
     });
 
     expect(mockParse).toHaveBeenCalledTimes(1);
-    expect(res.outcome).toBe("review_required");
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
+      expect(tx?.description).toBe("Auto-imported");
+    }
   });
 });

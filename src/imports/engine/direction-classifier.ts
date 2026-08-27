@@ -6,6 +6,27 @@ export enum TransactionDirection {
   DECLINED = "DECLINED",
 }
 
+export const INFLOW_KEYWORDS = [
+  "credited",
+  "salary",
+  "refund",
+  "deposited",
+  "received",
+] as const;
+
+export const OUTFLOW_KEYWORDS = [
+  "purchase",
+  "debited",
+  "transfer",
+  "withdrawn",
+  "payment of",
+  "used for",
+  "transaction of",
+  "charged",
+  "spent",
+  "withdrew",
+] as const;
+
 export function classifyDirection(message: string): TransactionDirection {
   const lowerMsg = message.toLowerCase();
 
@@ -25,32 +46,29 @@ export function classifyDirection(message: string): TransactionDirection {
   }
 
   // Inflow (Check this first to catch "received a transfer" before just "transfer")
-  if (
-    lowerMsg.includes("credited") ||
-    lowerMsg.includes("salary") ||
-    lowerMsg.includes("refund") ||
-    lowerMsg.includes("deposited") ||
-    lowerMsg.includes("received")
-  ) {
+  if (INFLOW_KEYWORDS.some((kw) => lowerMsg.includes(kw))) {
     return TransactionDirection.INFLOW;
   }
 
   // Outflow
-  if (
-    lowerMsg.includes("purchase") ||
-    lowerMsg.includes("debited") ||
-    lowerMsg.includes("transfer") ||
-    lowerMsg.includes("withdrawn") ||
-    lowerMsg.includes("payment of") ||
-    lowerMsg.includes("used for") ||
-    lowerMsg.includes("transaction of") ||
-    lowerMsg.includes("charged") ||
-    lowerMsg.includes("spent") ||
-    lowerMsg.includes("withdrew")
-  ) {
+  if (OUTFLOW_KEYWORDS.some((kw) => lowerMsg.includes(kw))) {
     return TransactionDirection.OUTFLOW;
   }
 
   // Default to informational if we can't tell
   return TransactionDirection.INFORMATIONAL;
+}
+
+/**
+ * True when a message matches both inflow and outflow keyword sets — e.g.
+ * "Transfer received of AED 500" matches "received" (inflow) and "transfer"
+ * (outflow). classifyDirection() resolves these by keyword-check order alone,
+ * with no signal that it was a coin-flip. Callers use this to flag the
+ * transaction for review rather than trust the guess silently.
+ */
+export function isDirectionAmbiguous(message: string): boolean {
+  const lowerMsg = message.toLowerCase();
+  const matchesInflow = INFLOW_KEYWORDS.some((kw) => lowerMsg.includes(kw));
+  const matchesOutflow = OUTFLOW_KEYWORDS.some((kw) => lowerMsg.includes(kw));
+  return matchesInflow && matchesOutflow;
 }

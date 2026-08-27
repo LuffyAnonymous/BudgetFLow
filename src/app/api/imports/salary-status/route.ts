@@ -5,11 +5,10 @@
  * Used by the dashboard Salary Status card.
  *
  * Status values:
- *   "waiting"          — no salary processed for this budget month (within grace period)
- *   "review_required"  — a salary SMS is pending user review
- *   "received"         — salary imported and confirmed
- *   "late"             — past payday + 2 grace days with no salary for this budget month
- *   "disabled"         — import engine not enabled
+ *   "waiting"   — no salary processed for this budget month (within grace period)
+ *   "received"  — salary imported
+ *   "late"      — past payday + 2 grace days with no salary for this budget month
+ *   "disabled"  — import engine not enabled
  */
 
 import { NextResponse } from "next/server";
@@ -43,7 +42,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const [importSetting, settings] = await Promise.all([
     db.importSetting.findUnique({
       where: { userId },
-      select: { enabled: true, autoImportSalary: true },
+      select: { enabled: true },
     }),
     db.setting.findUnique({
       where: { userId },
@@ -59,7 +58,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         latestImport: null,
         expectedPayday: null,
         importEnabled: false,
-        autoImportEnabled: false,
       },
     });
   }
@@ -68,7 +66,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const latestImport = await db.importedTransaction.findFirst({
     where: {
       userId,
-      status: { in: [ImportStatus.PROCESSED, ImportStatus.REVIEW_REQUIRED] },
+      status: ImportStatus.PROCESSED,
       OR: [
         { budgetMonth: monthStr },
         {
@@ -119,11 +117,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
   }
 
-  let status: "waiting" | "review_required" | "received" | "late";
+  let status: "waiting" | "received" | "late";
   if (!latestImport) {
     status = isLate ? "late" : "waiting";
-  } else if (latestImport.status === ImportStatus.REVIEW_REQUIRED) {
-    status = "review_required";
   } else {
     status = "received";
   }
@@ -148,7 +144,6 @@ export async function GET(request: Request): Promise<NextResponse> {
         : null,
       expectedPayday,
       importEnabled: importSetting.enabled,
-      autoImportEnabled: importSetting.autoImportSalary,
     },
   });
 }

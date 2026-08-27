@@ -19,7 +19,7 @@ import {
 import Link from "next/link";
 
 interface SalaryStatusData {
-  status: "waiting" | "review_required" | "received" | "late" | "disabled";
+  status: "waiting" | "received" | "late" | "disabled";
   month?: string;
   expectedPayday: string | null;
   latestImport: {
@@ -37,7 +37,6 @@ interface SalaryStatusData {
 
 interface AutomationMetrics {
   importEnabled: boolean;
-  autoImportEnabled: boolean;
   token: {
     hasToken: boolean;
     isActive: boolean;
@@ -59,8 +58,9 @@ interface AutomationMetrics {
     importsWithDuplicateActivityToday: number;
     reviewRequired: number;
     autoImported: number;
+    needsSecondLook: number;
   };
-  queueStats: { pendingReview: number };
+  queueStats: { pendingReview: number; needsSecondLook: number };
   latestImport: {
     id: string;
     status: string;
@@ -183,7 +183,6 @@ function salaryStatusDisplay(s: SalaryStatusData["status"], amount?: string | nu
         : "Received",
       color: "green",
     },
-    review_required: { label: "Review Required", color: "amber" },
     waiting: { label: "Waiting", color: "slate" },
     late: { label: "Late", color: "red" },
     disabled: { label: "Disabled", color: "slate" },
@@ -237,8 +236,7 @@ export function AutomationStatusPanel({ activeMonth }: AutomationStatusPanelProp
   const { importHealth, token, connectedInstitution, queueStats, latestImport, salaryStatus } = data;
   const salary = salaryStatusDisplay(salaryStatus.status, salaryStatus.latestImport?.amount);
 
-  const showReviewAlert =
-    salaryStatus.status === "review_required" || queueStats.pendingReview > 0;
+  const showReviewAlert = queueStats.pendingReview > 0 || queueStats.needsSecondLook > 0;
 
   const activeMonthStr = salaryStatus.month || activeMonth || "";
   const monthShortName = getMonthNameOnly(activeMonthStr);
@@ -273,14 +271,18 @@ export function AutomationStatusPanel({ activeMonth }: AutomationStatusPanelProp
         <Link
           href="/imports"
           className="flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-300 hover:bg-amber-500/15 transition-colors"
-          aria-label={`${queueStats.pendingReview} import${queueStats.pendingReview === 1 ? "" : "s"} pending review`}
+          aria-label={[
+            queueStats.pendingReview > 0 ? `${queueStats.pendingReview} receipt${queueStats.pendingReview === 1 ? "" : "s"} pending review` : null,
+            queueStats.needsSecondLook > 0 ? `${queueStats.needsSecondLook} import${queueStats.needsSecondLook === 1 ? "" : "s"} need a second look` : null,
+          ].filter(Boolean).join(", ")}
         >
           <div className="flex items-center gap-2">
             <LucideAlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span className="font-semibold">
-              {queueStats.pendingReview > 0
-                ? `${queueStats.pendingReview} import${queueStats.pendingReview === 1 ? "" : "s"} pending review`
-                : "Salary import requires review"}
+              {[
+                queueStats.pendingReview > 0 ? `${queueStats.pendingReview} receipt${queueStats.pendingReview === 1 ? "" : "s"} pending review` : null,
+                queueStats.needsSecondLook > 0 ? `${queueStats.needsSecondLook} import${queueStats.needsSecondLook === 1 ? "" : "s"} need a second look` : null,
+              ].filter(Boolean).join(" · ")}
             </span>
           </div>
           <LucideArrowRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -386,6 +388,16 @@ export function AutomationStatusPanel({ activeMonth }: AutomationStatusPanelProp
                 }`}
               >
                 {queueStats.pendingReview}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Needs a second look</span>
+              <span
+                className={`font-semibold ${
+                  queueStats.needsSecondLook > 0 ? "text-amber-400 font-bold" : "text-slate-300"
+                }`}
+              >
+                {queueStats.needsSecondLook}
               </span>
             </div>
             <div className="flex items-center justify-between">

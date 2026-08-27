@@ -100,7 +100,7 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow (Refactored)", 
     }
   });
 
-  it("3 & 4. Low-confidence imports remain pending review, and confirmImport handles them", async () => {
+  it("3 & 4. Low-confidence imports still auto-post, flagged for a second look", async () => {
     const msg = "AED 120.00 debited from card ending 1234 at UNKNOWN STORE on 11-07-2026.";
     const res = await importService.processSms(userId, {
       sender: "ENBD",
@@ -108,21 +108,17 @@ describe("Milestone 7.2 — Personal Finance Automation Workflow (Refactored)", 
       receivedAt: new Date(),
     });
 
-    expect(res.outcome).toBe("review_required");
-    if (res.outcome === "review_required") {
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      expect(res.confidence).toBe("LOW");
+
       const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
-      expect(importedTx!.status).toBe(ImportStatus.REVIEW_REQUIRED);
+      expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
+      expect(importedTx!.confidence).toBe("LOW");
 
-      // Confirm import
-      const confirmRes = await importService.confirmImport(userId, res.importedTransactionId);
-      expect(confirmRes.transactionId).toBeDefined();
-
-      const ledgerTx = await db.transaction.findUnique({ where: { id: confirmRes.transactionId } });
+      const ledgerTx = await db.transaction.findUnique({ where: { id: res.transactionId } });
       expect(ledgerTx!.amount.toFixed(2)).toBe("120.00");
       expect(ledgerTx!.description).toBe("UNKNOWN STORE");
-
-      const updatedImported = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
-      expect(updatedImported!.status).toBe(ImportStatus.PROCESSED);
     }
   });
 

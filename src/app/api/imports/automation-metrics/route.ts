@@ -9,7 +9,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { ImportStatus } from "@prisma/client";
+import { ImportStatus, ImportSource, ImportConfidence } from "@prisma/client";
 import { getDubaiCurrentDate, getDubaiMonthRange } from "@/lib/dates";
 
 const DUBAI_OFFSET_HOURS = 4;
@@ -45,7 +45,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       where: { userId },
       select: {
         enabled: true,
-        autoImportSalary: true,
         senderAllowlist: true,
         salaryCategoryId: true,
         tokenHash: true,
@@ -99,10 +98,14 @@ export async function GET(request: Request): Promise<NextResponse> {
         financialDate: true,
         transactionId: true,
         parserKey: true,
+        confidence: true,
+        directionAmbiguous: true,
       },
     }),
+    // REVIEW_REQUIRED is only produced by the DOCUMENT (receipt) flow now —
+    // SMS always auto-posts or fails, so this is a receipts-only queue.
     db.importedTransaction.count({
-      where: { userId, status: ImportStatus.REVIEW_REQUIRED },
+      where: { userId, status: ImportStatus.REVIEW_REQUIRED, source: ImportSource.DOCUMENT },
     }),
     db.importedTransaction.count({
       where: {
@@ -121,6 +124,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   ).length;
   const autoImportedToday = todayImports.filter(
     (r) => r.status === ImportStatus.PROCESSED && !r.transactionId
+  ).length;
+  // Auto-posted today but flagged for a second look (MEDIUM/LOW confidence
+  // or an ambiguous debit/credit direction) — the at-a-glance replacement
+  // for the old blocking review queue, now that SMS never blocks on review.
+  const needsSecondLookToday = todayImports.filter(
+    (r) =>
+      r.status === ImportStatus.PROCESSED &&
+      (r.confidence === ImportConfidence.MEDIUM || r.confidence === ImportConfidence.LOW || r.directionAmbiguous)
   ).length;
 
   const importsWithDuplicateActivityToday = todayImports.filter(
@@ -164,7 +175,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const salaryImport = await db.importedTransaction.findFirst({
     where: {
       userId,
-      status: { in: [ImportStatus.PROCESSED, ImportStatus.REVIEW_REQUIRED] },
+      status: ImportStatus.PROCESSED,
       OR: [
         { budgetMonth: monthStr },
         {
@@ -189,7 +200,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   });
 
   // Compute salary status and expected payday
-  let salaryStatus: "waiting" | "review_required" | "received" | "late" | "disabled";
+  let salaryStatus: "waiting" | "received" | "late" | "disabled";
   let expectedPayday: string | null = null;
   let isLate = false;
 
@@ -220,8 +231,6 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     if (!salaryImport) {
       salaryStatus = isLate ? "late" : "waiting";
-    } else if (salaryImport.status === ImportStatus.REVIEW_REQUIRED) {
-      salaryStatus = "review_required";
     } else {
       salaryStatus = "received";
     }
@@ -246,7 +255,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     importHealth = "DISABLED";
   } else if (!hasActiveToken) {
     importHealth = "NO_TOKEN";
-  } else if (pendingReview > 0 || recentFailures > 0 || isNearExpiry) {
+  } else if (pendingReview > 0 || needsSecondLookToday > 0 || recentFailures > 0 || isNearExpiry) {
     importHealth = "NEEDS_REVIEW";
   } else {
     importHealth = "HEALTHY";
@@ -256,7 +265,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   return NextResponse.json({
     data: {
       importEnabled: importSetting?.enabled ?? false,
-      autoImportEnabled: importSetting?.autoImportSalary ?? false,
 
       token: {
         hasToken,
@@ -283,10 +291,12 @@ export async function GET(request: Request): Promise<NextResponse> {
           (r) => r.status === ImportStatus.REVIEW_REQUIRED
         ).length,
         autoImported: autoImportedToday,
+        needsSecondLook: needsSecondLookToday,
       },
 
       queueStats: {
         pendingReview,
+        needsSecondLook: needsSecondLookToday,
       },
 
       latestImport: latestImport

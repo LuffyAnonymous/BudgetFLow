@@ -7,8 +7,8 @@ import {
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
 import { resolveInstitution } from "../engine/sender-normalizer";
+import { isOtpMessage, isPromoMessage } from "./otp-promo-filter";
 
-const OTP_RE = /otp|verification|one-time|passcode|security\s*code/i;
 const AMOUNT_RE = /(?:AED|USD|Dhs)\s*([\d,]+(?:\.\d{1,2})?)/i;
 const BNPL_ACCOUNT_TYPES = new Set<AccountType>([AccountType.TABBY, AccountType.TAMARA]);
 
@@ -26,7 +26,7 @@ export class BnplParser implements ISmsParser {
   readonly institution = "BNPL";
 
   canParse(sender: string, message: string): boolean {
-    if (OTP_RE.test(message)) return false;
+    if (isOtpMessage(message) || isPromoMessage(message)) return false;
     const { accountType } = resolveInstitution(sender);
     if (!BNPL_ACCOUNT_TYPES.has(accountType)) return false;
     return AMOUNT_RE.test(message);
@@ -38,8 +38,11 @@ export class BnplParser implements ISmsParser {
     const maskedSenderValue = maskSender(sender);
     const resolvedInstitution = resolveInstitution(sender);
 
-    if (OTP_RE.test(message)) {
+    if (isOtpMessage(message)) {
       throw new ParseError(this.parserKey, "OTP message cannot be parsed as a financial transaction");
+    }
+    if (isPromoMessage(message)) {
+      throw new ParseError(this.parserKey, "Promo message cannot be parsed as a financial transaction");
     }
 
     const amountMatch = AMOUNT_RE.exec(message);

@@ -266,7 +266,7 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(body.text).toContain("Account: Emirates NBD");
   });
 
-  it("successfully parses prefix-overridden ENBD debit message as review_required and replies", async () => {
+  it("auto-posts a low-confidence prefix-overridden ENBD debit message, flagged for a second look", async () => {
     const req = makeWebhookRequest({
       update_id: 104,
       message: {
@@ -281,8 +281,8 @@ describe("Telegram Webhook Integration Endpoint", () => {
     expect(res.status).toBe(200);
 
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body.text).toContain("⚠️ Saved for review");
-    expect(body.text).toContain("Reason: Could not confidently identify the transaction type.");
+    expect(body.text).toContain("✅ Imported");
+    expect(body.text).toContain("⚠️ Needs a second look: low confidence");
   });
 
   it("prevents duplicate Telegram webhook deliveries using stable chatId/messageId idempotencyKey", async () => {

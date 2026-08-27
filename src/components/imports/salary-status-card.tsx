@@ -12,12 +12,11 @@ import {
   LucideAlertTriangle,
   LucideClock,
   LucideSettings,
-  LucideExternalLink,
 } from "lucide-react";
 import Link from "next/link";
 
 interface SalaryStatusData {
-  status: "waiting" | "review_required" | "received" | "late" | "disabled";
+  status: "waiting" | "received" | "late" | "disabled";
   month?: string;
   latestImport: {
     id: string;
@@ -31,7 +30,6 @@ interface SalaryStatusData {
   } | null;
   expectedPayday: string | null;
   importEnabled: boolean;
-  autoImportEnabled: boolean;
 }
 
 interface SalaryStatusCardProps {
@@ -142,13 +140,6 @@ export function SalaryStatusCard({ activeMonth }: SalaryStatusCardProps) {
       border: "border-amber-500/20",
       Icon: LucideClock,
     },
-    review_required: {
-      label: "Review Required",
-      color: "text-indigo-400",
-      bg: "bg-indigo-500/10",
-      border: "border-indigo-500/20",
-      Icon: LucideAlertTriangle,
-    },
     received: {
       label: data.latestImport?.amount
         ? `Received — AED ${parseFloat(data.latestImport.amount).toLocaleString("en-AE", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
@@ -245,25 +236,9 @@ export function SalaryStatusCard({ activeMonth }: SalaryStatusCardProps) {
         </div>
       )}
 
-      {data.status === "review_required" && (
-        <Link
-          href="/imports"
-          className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
-        >
-          <LucideExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          Review Import
-        </Link>
-      )}
-
       {data.status === "late" && (
         <p className="mt-3 text-xs text-rose-400">
           Salary not detected past expected payday for {monthShortName || "selected month"}.
-        </p>
-      )}
-
-      {!data.autoImportEnabled && (
-        <p className="mt-3 text-xs text-slate-600">
-          Auto-import is off — imports require manual review.
         </p>
       )}
     </div>

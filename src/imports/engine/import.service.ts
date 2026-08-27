@@ -26,13 +26,14 @@ import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
 
 import { resolveInstitution, ResolvedInstitution } from "./sender-normalizer";
 import { isCreditCardTransaction } from "./card-type-classifier";
-import { classifyDirection, TransactionDirection } from "./direction-classifier";
+import { classifyDirection, isDirectionAmbiguous, TransactionDirection } from "./direction-classifier";
 import { categorizeMerchant, KnownCategory } from "./merchant-categorizer";
 import { resolveFallbackCategory, resolveCategoryByAlias } from "./category-resolver";
 import { matchInternalTransfer } from "./transfer-matcher";
 import { evaluateConfidence } from "./confidence-evaluator";
 import { updateBalance } from "./balance-updater";
 import { extractSmsTransaction, AI_SMS_PARSER_KEY } from "./ai-sms-extractor";
+import { isOtpOrPromoMessage } from "../sms/otp-promo-filter";
 
 const DUBAI_OFFSET_HOURS = 4;
 
@@ -45,12 +46,17 @@ export interface SmsWebhookPayload {
 }
 
 export type ImportResult =
-  | { outcome: "auto_posted"; importedTransactionId: string; transactionId: string }
-  | { outcome: "review_required"; importedTransactionId: string; parsedAmount: string; currency: string }
+  | {
+      outcome: "auto_posted";
+      importedTransactionId: string;
+      transactionId: string;
+      confidence: ImportConfidence;
+      directionAmbiguous: boolean;
+    }
   | { outcome: "duplicate"; importedTransactionId: string }
   | { outcome: "ignored"; reason?: string }
   | { outcome: "pending_event"; importedTransactionId: string }
-  | { outcome: "rejected"; reason: string }
+  | { outcome: "failed"; importedTransactionId: string; reason: string }
   | { outcome: "disabled" }
   | { outcome: "idempotent"; importedTransactionId: string };
 
@@ -114,25 +120,58 @@ export class ImportService {
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : "Parsing execution failed";
           console.log("[Import Service] Parser parse threw exception", { parserKey: parser.parserKey, errMsg });
-          return { outcome: "rejected", reason: errMsg };
+          return await this.recordFailure(userId, {
+            institution: institutionForAccount.displayName,
+            message,
+            deviceId,
+            payloadHash,
+            maskedSenderValue,
+            receivedAt,
+            idempotencyKey,
+            failureCode: "PARSE_ERROR",
+            failureMessage: errMsg,
+          });
         }
       } else if (selectionResult.outcome === "ambiguous") {
         // Two regex parsers both claimed this message — a real conflict to
         // fix in code, not something to hand to the AI fallback.
-        const redacted = redactFinancialText(message);
-        const reason = "Ambiguous parsers matched";
-        console.log("[Import Service] Parser selection rejected", { outcome: selectionResult.outcome, reason });
-        await db.auditLog.create({
-          data: {
-            userId,
-            action: AuditAction.SMS_IMPORT_REJECTED,
-            entityType: AuditEntityType.IMPORTED_TRANSACTION,
-            entityId: "none",
-            source: "SMS_WEBHOOK",
-            metadata: { maskedSender: maskedSenderValue, payloadHash, redactedMessage: redacted, reason },
-          },
+        const reason = `Ambiguous parsers matched: ${selectionResult.matchedParsers.join(", ")}`;
+        console.log("[Import Service] Parser selection failed", { outcome: selectionResult.outcome, reason });
+        return await this.recordFailure(userId, {
+          institution: institutionForAccount.displayName,
+          message,
+          deviceId,
+          payloadHash,
+          maskedSenderValue,
+          receivedAt,
+          idempotencyKey,
+          failureCode: "AMBIGUOUS_PARSER_MATCH",
+          failureMessage: reason,
         });
-        return { outcome: "rejected", reason };
+      } else if (selectionResult.reason === "Sender not in configured allowlist") {
+        // An untrusted sender never gets an AI-parse attempt — the allowlist
+        // is the trust boundary, and skipping straight to FAILED here (rather
+        // than falling into the AI fallback below) keeps that boundary real.
+        console.log("[Import Service] Sender not in allowlist, skipping AI fallback", { maskedSender: maskedSenderValue });
+        return await this.recordFailure(userId, {
+          institution: institutionForAccount.displayName,
+          message,
+          deviceId,
+          payloadHash,
+          maskedSenderValue,
+          receivedAt,
+          idempotencyKey,
+          failureCode: "SENDER_NOT_ALLOWLISTED",
+          failureMessage: "Sender is not in the configured allowlist.",
+        });
+      } else if (isOtpOrPromoMessage(message)) {
+        // Every registered parser's canParse() already rejects OTP/promo
+        // content, so a trusted sender's OTP/promo text reliably lands here
+        // as "no_match". Catching it before the AI fallback means it never
+        // triggers a wasted Anthropic call — it's expected non-transaction
+        // noise, not a parse failure worth recording.
+        console.log("[Import Service] OTP/promo message detected, skipping AI fallback", { maskedSender: maskedSenderValue });
+        return { outcome: "ignored", reason: "OTP or promotional message — not a transaction" };
       } else {
         // no_match: the sender is trusted (it's in the user's own allowlist
         // — parser-registry.ts checked that already), but no regex parser
@@ -162,33 +201,17 @@ export class ImportService {
           extractionMethod = "AI_TEXT";
         } else {
           console.log("[Import Service] AI fallback also failed to extract a transaction");
-          const redacted = redactFinancialText(message);
-          const importedTx = await db.importedTransaction.create({
-            data: {
-              source: ImportSource.SMS,
-              institution: institutionForAccount.displayName,
-              status: ImportStatus.REVIEW_REQUIRED,
-              parserKey: null,
-              redactedPayload: redacted,
-              rawPayload: message,
-              deviceId: deviceId ?? null,
-              payloadHash,
-              maskedSender: maskedSenderValue,
-              fingerprint: payloadHash,
-              receivedAt,
-              financialDate: receivedAt,
-              idempotencyKey: idempotencyKey ?? null,
-              failureCode: "EXTRACTION_FAILED",
-              failureMessage: "Could not automatically extract transaction details from this message.",
-              userId,
-            },
+          return await this.recordFailure(userId, {
+            institution: institutionForAccount.displayName,
+            message,
+            deviceId,
+            payloadHash,
+            maskedSenderValue,
+            receivedAt,
+            idempotencyKey,
+            failureCode: "EXTRACTION_FAILED",
+            failureMessage: "Could not automatically extract transaction details from this message.",
           });
-          return {
-            outcome: "review_required",
-            importedTransactionId: importedTx.id,
-            parsedAmount: "0.00",
-            currency: "AED",
-          };
         }
       }
 
@@ -237,6 +260,7 @@ export class ImportService {
 
       console.log("[Import Service] Stage: Classifying direction");
       const direction = classifyDirection(message);
+      const directionAmbiguous = isDirectionAmbiguous(message);
       if (direction === TransactionDirection.DECLINED || direction === TransactionDirection.INFORMATIONAL || direction === TransactionDirection.PENDING) {
         const status = direction === TransactionDirection.DECLINED ? ImportStatus.PROCESSED : ImportStatus.REJECTED;
         const outcome = direction === TransactionDirection.PENDING ? "pending_event" : "ignored";
@@ -294,6 +318,9 @@ export class ImportService {
       const d = new Date(dubaiMs);
       const financialDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 
+      // LOW confidence still auto-posts (below) — it just skips internal-
+      // transfer matching. Merging two transactions together on a
+      // low-confidence guess would compound the risk rather than contain it.
       console.log("[Import Service] Stage: Match internal transfer", { confidence });
       let matchedTransferId: string | null = null;
       if (confidence !== ImportConfidence.LOW) {
@@ -303,40 +330,6 @@ export class ImportService {
               financialDate,
               direction === TransactionDirection.INFLOW
           );
-      }
-
-      if (confidence === ImportConfidence.LOW) {
-        console.log("[Import Service] Stage: Saving low confidence import");
-        const importedTx = await db.importedTransaction.create({
-          data: {
-            source: ImportSource.SMS,
-            institution: normalized.institution,
-            status: ImportStatus.REVIEW_REQUIRED,
-            confidence,
-            parserKey: normalized.parserKey,
-            parserVersion: normalized.parserVersion,
-            extractionMethod,
-            redactedPayload: normalized.redactedMessage,
-            rawPayload: message,
-            deviceId: deviceId ?? null,
-            payloadHash: normalized.payloadHash,
-            maskedSender: maskedSenderValue,
-            parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
-            parsedCurrency: normalized.currency,
-            parsedReference: normalized.reference,
-            parsedDescription: normalized.merchant || "Unknown",
-            fingerprint,
-            receivedAt,
-            financialDate,
-            idempotencyKey: idempotencyKey ?? null,
-            failureCode: "LOW_CONFIDENCE",
-            userId,
-          },
-        });
-
-        await this.syncBalance(userId, institutionForAccount, normalized.availableBalance, direction, null, isCreditCard);
-
-        return { outcome: "review_required", importedTransactionId: importedTx.id, parsedAmount: normalized.amount.toFixed(2), currency: normalized.currency };
       }
 
       console.log("[Import Service] Stage: Executing auto-post transaction");
@@ -421,6 +414,37 @@ export class ImportService {
                 }
             });
             ledgerTxId = ledgerTx.id;
+
+            // Process debt payment logic if category is DEBT — ported from
+            // confirmImport() so auto-posted transactions decrement debt
+            // balances too, not just manually confirmed ones.
+            const postedCategory = await tx.category.findUnique({ where: { id: dbCategory!.id } });
+            if (postedCategory && postedCategory.type === CategoryType.DEBT) {
+              const debt = await tx.debt.findFirst({
+                where: { userId, categoryId: postedCategory.id },
+              });
+              if (debt) {
+                const newBalance = new Prisma.Decimal(debt.currentBalance).minus(normalized.amount);
+                const debtStatus = newBalance.lte(0) ? "PAID" : debt.status;
+                await tx.debt.update({
+                  where: { id: debt.id },
+                  data: { currentBalance: newBalance, status: debtStatus },
+                });
+
+                if (debtStatus === "PAID" && debt.status !== "PAID") {
+                  await tx.notification.create({
+                    data: {
+                      userId,
+                      type: NotificationType.DEBT_PAID_OFF,
+                      severity: NotificationSeverity.INFO,
+                      title: "Debt Paid Off!",
+                      message: `You have successfully paid off your debt: ${debt.name}.`,
+                      eventKey: `debt-paid-${debt.id}-${ledgerTx.id}`,
+                    },
+                  });
+                }
+              }
+            }
         }
 
         const computedBudgetMonth = isSalary
@@ -433,6 +457,7 @@ export class ImportService {
               institution: normalized.institution,
               status: ImportStatus.PROCESSED,
               confidence,
+              directionAmbiguous,
               parserKey: normalized.parserKey,
               parserVersion: normalized.parserVersion,
               extractionMethod,
@@ -464,11 +489,105 @@ export class ImportService {
         return { importedTxId: importedTx.id, ledgerTxId };
       });
 
-      console.log("[Import Service] SMS auto-posted successfully", { importedTxId: result.importedTxId });
-      return { outcome: "auto_posted", importedTransactionId: result.importedTxId, transactionId: result.ledgerTxId };
+      console.log("[Import Service] SMS auto-posted successfully", { importedTxId: result.importedTxId, confidence, directionAmbiguous });
+      return {
+        outcome: "auto_posted",
+        importedTransactionId: result.importedTxId,
+        transactionId: result.ledgerTxId,
+        confidence,
+        directionAmbiguous,
+      };
     } catch (err) {
       const errorObj = err instanceof Error ? { message: err.message, stack: err.stack } : { message: String(err) };
       console.error("[Import Service] Exception during processSms:", errorObj);
+      throw err;
+    }
+  }
+
+  /**
+   * A hard parse failure — the message contained nothing postable, as
+   * opposed to a parseable-but-uncertain low-confidence guess. Always
+   * creates a FAILED ImportedTransaction row (never disappears the message
+   * with zero trace) so it stays visible and correctable.
+   */
+  private async recordFailure(
+    userId: string,
+    params: {
+      institution: string;
+      message: string;
+      deviceId?: string | null;
+      payloadHash: string;
+      maskedSenderValue: string;
+      receivedAt: Date;
+      idempotencyKey?: string | null;
+      failureCode: string;
+      failureMessage: string;
+    }
+  ): Promise<ImportResult> {
+    const {
+      institution,
+      message,
+      deviceId,
+      payloadHash,
+      maskedSenderValue,
+      receivedAt,
+      idempotencyKey,
+      failureCode,
+      failureMessage,
+    } = params;
+    const redacted = redactFinancialText(message);
+
+    try {
+      const importedTx = await db.importedTransaction.create({
+        data: {
+          source: ImportSource.SMS,
+          institution,
+          status: ImportStatus.FAILED,
+          parserKey: null,
+          redactedPayload: redacted,
+          rawPayload: message,
+          deviceId: deviceId ?? null,
+          payloadHash,
+          maskedSender: maskedSenderValue,
+          fingerprint: payloadHash,
+          receivedAt,
+          financialDate: receivedAt,
+          idempotencyKey: idempotencyKey ?? null,
+          failureCode,
+          failureMessage,
+          userId,
+        },
+      });
+
+      await db.auditLog.create({
+        data: {
+          userId,
+          action: AuditAction.SMS_IMPORT_FAILED,
+          entityType: AuditEntityType.IMPORTED_TRANSACTION,
+          entityId: importedTx.id,
+          source: "SMS_WEBHOOK",
+          metadata: { maskedSender: maskedSenderValue, payloadHash, redactedMessage: redacted, failureCode, failureMessage },
+        },
+      });
+
+      return { outcome: "failed", importedTransactionId: importedTx.id, reason: failureMessage };
+    } catch (err) {
+      // The exact same failing message was already recorded (fingerprint
+      // collision on payloadHash — e.g. a Shortcut retry with no
+      // Idempotency-Key header). Surface the existing row instead of a 500.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        const existing = await db.importedTransaction.findUnique({
+          where: { userId_fingerprint: { userId, fingerprint: payloadHash } },
+          select: { id: true },
+        });
+        if (existing) {
+          await db.importedTransaction.update({
+            where: { id: existing.id },
+            data: { duplicateCount: { increment: 1 }, lastDuplicateAt: new Date() },
+          });
+          return { outcome: "failed", importedTransactionId: existing.id, reason: failureMessage };
+        }
+      }
       throw err;
     }
   }

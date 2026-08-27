@@ -10,10 +10,19 @@
  * Request body (JSON, max 10 KB):
  *   Can have varied iOS Shortcut structures, normalized before validation.
  *
+ * Every parseable SMS is posted as a Transaction immediately — there is no
+ * manual review queue. Confidence and direction-ambiguity are post-hoc
+ * signals only: anything other than a clean HIGH-confidence auto-post
+ * triggers a Telegram notification for after-the-fact correction. A hard
+ * parse failure (unrecognized sender, ambiguous parser match, or nothing
+ * extractable) still creates a FAILED ImportedTransaction record and
+ * notifies — it just never becomes a Transaction.
+ *
  * Response:
- *   200 OK — processed | review_required | duplicate | idempotent
+ *   200 OK — auto_posted | duplicate | ignored | pending_event | idempotent
  *   400 — invalid request body
  *   401 — missing or invalid token
+ *   422 — failed (nothing postable — see `reason`)
  *   429 — rate limit exceeded
  *   503 — import engine disabled for this user
  */
@@ -22,6 +31,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { importSettingService } from "@/server/services/import-setting.service";
 import { importService } from "@/imports/engine/import.service";
+import { telegramService } from "@/server/services/telegram.service";
 import { checkRateLimit } from "@/lib/rate-limiter";
 import { createHash } from "crypto";
 
@@ -159,8 +169,6 @@ export function getSafeShape(payload: unknown, depth = 0): SafeShapeInfo | strin
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  console.log("[Auth Debug] POST /api/imports/sms invoked");
-  
   // ── 1. Extract Bearer token ─────────────────────────────────────────────────
   const authHeader = req.headers.get("authorization") ?? "";
   const rawToken = authHeader.startsWith("Bearer ")
@@ -168,14 +176,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     : null;
 
   if (!rawToken) {
-    console.log("[Auth Debug] Unauthorized: No token found");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // ── 2. Resolve user from token ───────────────────────────────────────────────
   const userId = await importSettingService.resolveUserFromToken(rawToken);
   if (!userId) {
-    console.log("[Auth Debug] Unauthorized: Invalid token");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -205,22 +211,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let body: unknown;
   try {
     body = await req.json();
-  } catch (err) {
-    console.log("[SMS Webhook Debug] 400 Bad Request: Invalid JSON", err);
+  } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // Safe logging of the incoming payload shape
   const safeShape = getSafeShape(body);
-  console.log("[SMS Webhook Debug] Safe Payload Shape:", JSON.stringify(safeShape));
 
   const receivedKeys = body && typeof body === "object" ? Object.keys(body as object) : [];
 
   // Extract SMS message text
   const extractedText = extractSmsText(body);
   if (!extractedText) {
-    console.log("[SMS Webhook Debug] 400 Bad Request: SMS text could not be extracted", { receivedKeys });
-    
     const responsePayload: Record<string, unknown> = {
       success: false,
       error: "SMS text could not be extracted",
@@ -267,7 +268,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const parsed = SmsWebhookBodySchema.safeParse(normalizedPayload);
   if (!parsed.success) {
     const fieldErrors = parsed.error.flatten().fieldErrors;
-    console.log("[SMS Webhook Debug] 400 Bad Request: Normalization validation failed", fieldErrors);
     return NextResponse.json(
       { error: "Invalid request", fieldErrors },
       { status: 400 }
@@ -354,19 +354,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   let reason: string | undefined = undefined;
   let importedTransactionId: string | undefined = undefined;
 
-  if (result.outcome === "rejected") {
+  if (result.outcome === "failed") {
     status = 422;
     success = false;
-    reason = "reason" in result ? result.reason : "No supported parser matched the SMS format";
-  } else if (result.outcome === "review_required") {
-    status = 202;
-    success = true;
-    reason = "The SMS could not be parsed automatically";
-    importedTransactionId = "importedTransactionId" in result ? result.importedTransactionId : undefined;
+    reason = result.reason;
+    importedTransactionId = result.importedTransactionId;
+    void telegramService.sendToUser(
+      userId,
+      `❌ SMS import failed\nReason: ${result.reason}\nThe message was not posted — nothing to correct, but check the sender/format.`
+    );
   } else {
     importedTransactionId = "importedTransactionId" in result ? result.importedTransactionId : undefined;
     if (result.outcome === "ignored") {
-      reason = "reason" in result ? result.reason : "Message was ignored";
+      reason = result.reason;
+    }
+    if (result.outcome === "auto_posted" && (result.confidence !== "HIGH" || result.directionAmbiguous)) {
+      const flagReason = result.directionAmbiguous
+        ? "the debit/credit direction was ambiguous"
+        : `confidence was ${result.confidence.toLowerCase()}`;
+      void telegramService.sendToUser(
+        userId,
+        `⚠️ Imported — needs a second look\nReason: ${flagReason}.\nThe transaction was posted automatically; please verify it's correct.`
+      );
     }
   }
 

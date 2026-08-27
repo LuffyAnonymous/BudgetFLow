@@ -5,6 +5,7 @@ import {
   ParseError,
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
+import { isOtpMessage, isPromoMessage } from "./otp-promo-filter";
 
 const KNOWN_SENDERS = ["ENBD", "EmiratesNBD", "Emirates-NBD", "EMIRATESNBD"];
 
@@ -42,9 +43,7 @@ export class EmiratesNBDParser implements ISmsParser {
     if (!senderMatch) return false;
 
     // Reject obvious OTPs and promotions
-    const isOtp = /otp|verification|one-time|passcode|security\s*code|activate/i.test(message);
-    const isPromo = /promo|discount|offer|win|apply\s*now|customs|cashback|credit\s*card\s*offer|rewards/i.test(message);
-    if (isOtp || isPromo) return false;
+    if (isOtpMessage(message) || isPromoMessage(message)) return false;
 
     return true;
   }
@@ -55,10 +54,10 @@ export class EmiratesNBDParser implements ISmsParser {
     const maskedSenderValue = maskSender(sender);
 
     // Reject obvious OTPs and promotions inside parse too
-    if (/otp|verification|one-time|passcode|security\s*code|activate/i.test(message)) {
+    if (isOtpMessage(message)) {
       throw new ParseError(this.parserKey, "OTP message cannot be parsed as a financial transaction");
     }
-    if (/promo|discount|offer|win|apply\s*now|customs|cashback|credit\s*card\s*offer|rewards/i.test(message)) {
+    if (isPromoMessage(message)) {
       throw new ParseError(this.parserKey, "Promo message cannot be parsed as a financial transaction");
     }
 

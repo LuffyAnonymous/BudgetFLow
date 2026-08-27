@@ -7,6 +7,7 @@ import {
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
 import { resolveInstitution } from "../engine/sender-normalizer";
+import { isOtpMessage, isPromoMessage } from "./otp-promo-filter";
 
 // Senders with their own dedicated (more accurate) parser are excluded here
 // so the two parsers never both claim the same message (parser-registry.ts
@@ -29,8 +30,6 @@ const RECEIVED_FROM_RE = /received\s+(?:from\s+)?([A-Za-z0-9\s&_*.-]+?)(?:\s+on|
 
 const AMOUNT_RE = /(?:AED|USD|Dhs)\s*([\d,]+(?:\.\d{1,2})?)/i;
 const DIRECTION_KEYWORDS_RE = /credited|debited|received|deposited|withdrawn|purchase|payment\s+of|used\s+for|transaction\s+of|charged|spent|sent/i;
-const OTP_RE = /otp|verification|one-time|passcode|security\s*code|activate/i;
-const PROMO_RE = /promo|discount|offer|win|apply\s*now|cashback|credit\s*card\s*offer|rewards/i;
 const DECLINED_RE = /declined|insufficient\s*funds|insufficient\s*limit|unsuccessful|failed/i;
 
 function extractAccountEnding(message: string): string | null {
@@ -59,7 +58,7 @@ export class GenericBankCreditDebitParser implements ISmsParser {
   readonly institution = "Bank";
 
   canParse(sender: string, message: string): boolean {
-    if (OTP_RE.test(message) || PROMO_RE.test(message)) return false;
+    if (isOtpMessage(message) || isPromoMessage(message)) return false;
     if (HANDLED_BY_DEDICATED_PARSER.has(resolveInstitution(sender).accountType)) return false;
     return AMOUNT_RE.test(message) && DIRECTION_KEYWORDS_RE.test(message);
   }
@@ -70,10 +69,10 @@ export class GenericBankCreditDebitParser implements ISmsParser {
     const maskedSenderValue = maskSender(sender);
     const resolvedInstitution = resolveInstitution(sender);
 
-    if (OTP_RE.test(message)) {
+    if (isOtpMessage(message)) {
       throw new ParseError(this.parserKey, "OTP message cannot be parsed as a financial transaction");
     }
-    if (PROMO_RE.test(message)) {
+    if (isPromoMessage(message)) {
       throw new ParseError(this.parserKey, "Promo message cannot be parsed as a financial transaction");
     }
 

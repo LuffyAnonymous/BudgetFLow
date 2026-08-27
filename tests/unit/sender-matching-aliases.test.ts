@@ -78,9 +78,9 @@ describe("Sender Matching Integration with DB", () => {
       receivedAt: new Date("2026-07-15T04:52:00.000Z"),
     });
 
-    expect(result.outcome).not.toBe("rejected");
-    if (result.outcome === "rejected") {
-      expect(result.reason).not.toBe("Sender not in configured allowlist");
+    expect(result.outcome).not.toBe("failed");
+    if (result.outcome === "failed") {
+      expect(result.reason).not.toBe("Sender is not in the configured allowlist.");
     }
   });
 });

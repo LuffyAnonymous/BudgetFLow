@@ -9,11 +9,13 @@ utilities.
 
 BudgetFlow already has a complete, tested import pipeline for SMS and Telegram
 (`importService.processSms()` in `src/imports/engine/import.service.ts`), and
-the app's own `/api/integrations/telegram/webhook` and
-`/api/integrations/sms/shortcut` already call straight into it. The
+the app's own `/api/imports/sms` and `/api/integrations/telegram/webhook`
+routes call straight into it — n8n is no longer in the SMS path at all
+(`01-intake/sms-import.json` was removed; see below). The
 `01-intake` → `02-processing` pipeline below is a **second, parallel
-implementation** of parsing/validation/dedup/categorization, built inside n8n
-at explicit request even though it duplicates that logic. The two pipelines
+implementation** of parsing/validation/dedup/categorization for the
+*manual quick-add / CSV bulk-import* flows, built inside n8n at explicit
+request even though it duplicates that logic. The two pipelines
 will not stay in sync automatically — if you improve bank-format parsing in
 the app, you'd need to mirror it in `02-processing/parse-transaction.json`
 separately. This was a deliberate choice (see project discussion), not an
@@ -24,7 +26,6 @@ oversight.
 ```
 n8n/workflows/
 ├── 01-intake/
-│   ├── sms-import.json                    # generic SMS webhook (any forwarding app) — per-user relay, see below
 │   ├── manual-import.json                 # single quick-add entry, raw text or structured fields
 │   ├── manual-csv-bulk-import.json        # batch backfill via CSV upload (pre-existing)
 │   └── email-import-gmail.json            # scaffold, inactive (pre-existing)
@@ -62,9 +63,18 @@ n8n/workflows/
     └── import-retention-cleanup.json
 ```
 
-Naming follows the pattern `"01 - Intake / SMS Import"` (not n8n's native
+Naming follows the pattern `"01 - Intake / Manual Import"` (not n8n's native
 Folders feature, which needs Enterprise/Cloud) so workflows sort and group
 correctly in the UI regardless of your n8n edition.
+
+**`01-intake/sms-import.json` has been removed.** It was a thin relay (secret
+check, an OTP/promo pre-filter, a retrying HTTP forward, and an ops Telegram
+alert on failure) sitting in front of `/api/imports/sms` — all real parsing
+happened in the app either way. Bank SMS now posts directly to
+`/api/imports/sms` (via the app's Telegram bot, or any client forwarding with
+a `bf_import_...` token) with no n8n hop. The ops-alert-on-failure behavior
+it provided is covered by the app's own Telegram notification on a `FAILED`
+import (see `src/server/services/telegram.service.ts`).
 
 ## Pipeline
 
@@ -149,21 +159,17 @@ least-privilege: only grant what a given key actually needs. To rotate:
 
 **The categorize/create-transaction pipeline (02-processing,
 03-budgetflow-api-client) and the scheduling workflows operate as a single
-BudgetFlow user** — whoever generated the service key. `01-intake/sms-import`
-is the exception: it's multi-tenant. It doesn't hold any per-user credential
-itself — whatever forwards a user's bank SMS to it (an iPhone Shortcut, a
-forwarding app, etc.) includes that user's own `bf_import_...` token in the
-`Authorization` header of the webhook call, and `sms-import.json` forwards
-that header unchanged to `POST /api/imports/sms`, which resolves it to the
-right account. One shared workflow, no per-user n8n configuration needed —
-each user just needs their own token from Settings → Generate Token.
+BudgetFlow user** — whoever generated the service key. `01-intake/email-import-gmail`
+is the exception: like the now-removed SMS relay, it doesn't hold any per-user
+credential itself — it forwards the caller's own `bf_import_...` token
+straight to `POST /api/imports/sms`, which resolves it to the right account.
 
 ### Two different credentials — don't mix them up
 
 | Credential | Used by | Grants |
 |---|---|---|
 | `BUDGETFLOW_SERVICE_API_KEY` (`bf_svc_...`) | 02-processing, 03-budgetflow-api-client, 06-scheduling-orchestration | Scoped read/write access to one user's transactions/debts/savings/remittances/categories/accounts + automation triggers |
-| `bf_import_...` (per-user, forwarded per-request — not an n8n env var) | 01-intake/sms-import (forwarded through), 01-intake/email-import-gmail | Only `POST /api/imports/sms` — full parse/dedup/categorize pipeline (the app's own, not the 02-processing one) |
+| `bf_import_...` (per-user, forwarded per-request — not an n8n env var) | 01-intake/email-import-gmail | Only `POST /api/imports/sms` — full parse/dedup/categorize pipeline (the app's own, not the 02-processing one) |
 | `CRON_SECRET` | 06-scheduling-orchestration/system-health-check | Only `GET /api/cron/health` (all-user sweep) |
 | `IMPORT_CLEANUP_SECRET` | 06-scheduling-orchestration/import-retention-cleanup | Only `POST /api/system/import-cleanup` |
 
@@ -178,7 +184,7 @@ you set yourself.
 |---|---|---|
 | `BUDGETFLOW_BASE_URL` | `https://budgetflow.yourdomain.com` | No trailing slash |
 | `BUDGETFLOW_SERVICE_API_KEY` | `bf_svc_...` | From the settings endpoint above; needs the full scope list |
-| `BUDGETFLOW_IMPORT_TOKEN` | `bf_import_...` | Only needed if you enable email-import-gmail (a single-user path). `sms-import.json` does NOT use this env var — it forwards whatever `bf_import_...` token the caller sent, per-request, per-user. |
+| `BUDGETFLOW_IMPORT_TOKEN` | `bf_import_...` | Only needed if you enable email-import-gmail (a single-user path) |
 | `CRON_SECRET` | matches app's env | For System Health Check |
 | `IMPORT_CLEANUP_SECRET` | matches app's env | For Import Retention Cleanup |
 | `TELEGRAM_BOT_TOKEN` | matches app's env | Used only for outbound `sendMessage` calls from 04-notifications — safe to reuse the app's token for this, since it only calls the Telegram API, it doesn't register a webhook |
@@ -201,9 +207,9 @@ you set yourself.
    OAuth credentials and a sender filter to its trigger node.
 6. Activate the schedule-triggered workflows in `06-scheduling-orchestration/`
    once you've confirmed a manual test run works end-to-end.
-7. Test the pipeline manually before activating intake: `POST` a test SMS to
-   `.../webhook/budgetflow/sms-import` with `{"body":"AED 45.50 at Carrefour
-   today"}` and confirm a transaction appears in BudgetFlow.
+7. Test the manual-import pipeline before relying on it: trigger
+   `01-intake/manual-import.json`'s webhook with a sample entry and confirm
+   a transaction appears in BudgetFlow.
 8. Wire up the crash safety net: open every workflow **except** those in
    `04-notifications` and `05-utilities` (so 01-intake, 02-processing,
    03-budgetflow-api-client, 06-scheduling-orchestration) → **Settings**

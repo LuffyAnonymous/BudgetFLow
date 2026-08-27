@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * /imports — SMS Import Review page
+ * /imports — Import Activity page
  *
- * Lists REVIEW_REQUIRED imports so the user can:
- *   - View redacted SMS details
- *   - Verify amount and date
- *   - Choose a category (optional override)
- *   - Confirm or Reject
+ * SMS imports post automatically (no review step) — this page shows recent
+ * activity, badged by confidence, so anything auto-posted at MEDIUM/LOW
+ * confidence or flagged with an ambiguous direction can be corrected after
+ * the fact. Uploaded receipts still go through manual review here (there's
+ * no bank balance to trust their amount against), with the same
+ * confirm/reject flow as before.
  */
 
 import { useRef, useState } from "react";
@@ -83,7 +84,7 @@ export function normalizeImportsList<T = Record<string, unknown>>(json: unknown)
 
 export default function ImportsPage() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<string>("REVIEW_REQUIRED");
+  const [activeTab, setActiveTab] = useState<string>("PROCESSED");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [confirmCategoryId, setConfirmCategoryId] = useState<string>("");
   const [confirmDate, setConfirmDate] = useState<string>("");
@@ -195,8 +196,8 @@ export default function ImportsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <PageHeader
-          title="Import Review"
-          description="Review and confirm salary imports before they become transactions."
+          title="Import Activity"
+          description="SMS imports post automatically. Review anything flagged with MEDIUM/LOW confidence, or confirm an uploaded receipt."
         />
         <div>
           <input
@@ -254,9 +255,9 @@ export default function ImportsPage() {
       {/* Tabs */}
       <div className="flex gap-2 mb-6 border-b border-slate-800 pb-2 overflow-x-auto">
         {[
-          { id: "REVIEW_REQUIRED", label: "Review Required" },
-          { id: "PROCESSED", label: "Processed" },
-          { id: "REJECTED,FAILED", label: "Rejected" },
+          { id: "PROCESSED", label: "Recent Imports" },
+          { id: "REVIEW_REQUIRED", label: "Pending Receipts" },
+          { id: "REJECTED,FAILED", label: "Failed" },
         ].map((tab) => (
           <button
             key={tab.id}

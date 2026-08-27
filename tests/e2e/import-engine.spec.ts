@@ -9,19 +9,18 @@
  *   - App runs on PLAYWRIGHT_BASE_URL (port 3001 by default)
  *   - E2E_ENABLED=1 enables the /api/e2e/login helper
  *
- * Test flow (Check #2 requirements):
+ * Test flow:
  *   1. Generate import token — plaintext returned exactly once
- *   2. Send salary SMS → REVIEW_REQUIRED
- *   3. Confirm import → one transaction created
- *   4. Transaction exists in transactions API (verifies ledger entry)
- *   5. Dashboard automation-metrics shows salary as received
- *   6. Submit same SMS again → no duplicate transaction
- *   7. Duplicate activity is recorded (duplicateCount > 0)
- *   8. Rotate token → old token rejected, new token accepted
- *   9. Revoke token → 401 on next request
- *   10. Import history list does not expose raw SMS payload
- *   11. Import history shows duplicate activity correctly
- *   12. Cleanup endpoint rejects browser sessions
+ *   2. Send salary SMS → auto-posts immediately (no review step)
+ *   3. Transaction exists in transactions API (verifies ledger entry)
+ *   4. Dashboard automation-metrics shows salary as received
+ *   5. Submit same SMS again → no duplicate transaction
+ *   6. Duplicate activity is recorded (duplicateCount > 0)
+ *   7. Rotate token → old token rejected, new token accepted
+ *   8. Revoke token → 401 on next request
+ *   9. Import history list does not expose raw SMS payload
+ *   10. Cleanup endpoint rejects browser sessions
+ *   11. No-token request returns 401 with non-disclosing error
  */
 
 import { test, expect } from "@playwright/test";
@@ -79,12 +78,11 @@ test.describe("Import Engine — webhook flow", () => {
     const salaryCat = catJson.data.find((c: { name: string }) => c.name === "Salary");
     expect(salaryCat).toBeTruthy();
 
-    // Ensure import setting is ready: enabled, ENBD sender, auto-import OFF, and set salary category ID
+    // Ensure import setting is ready: enabled, ENBD sender, salary category ID
     await request.post(`${BASE_URL}/api/settings/import`, {
       headers: { Cookie: authCookie, "Content-Type": "application/json" },
       data: {
         enabled: true,
-        autoImportSalary: false,
         senderAllowlist: [TEST_SENDER],
         salaryCategoryId: salaryCat.id,
       },
@@ -115,9 +113,9 @@ test.describe("Import Engine — webhook flow", () => {
     expect(statusJson.data.isActive).toBe(true);
   });
 
-  // ── 2. Import salary SMS → REVIEW_REQUIRED ────────────────────────────────
+  // ── 2. Import salary SMS → auto-posts immediately ─────────────────────────
 
-  test("2. First SMS import creates REVIEW_REQUIRED", async ({ request }) => {
+  test("2. First SMS import auto-posts immediately, no review step", async ({ request }) => {
     test.skip(!generatedToken, "Token not generated in step 1");
 
     const res = await request.post(`${BASE_URL}/api/imports/sms`, {
@@ -136,32 +134,19 @@ test.describe("Import Engine — webhook flow", () => {
     expect(res.ok(), `Import failed: ${res.status()} ${await res.text()}`).toBe(true);
     const json = await res.json();
 
-    // autoImportSalary is false → should be REVIEW_REQUIRED
-    expect(["review_required", "processed"]).toContain(json.data.outcome);
+    // A clean, referenced, balance-carrying salary credit is HIGH confidence
+    // — it auto-posts straight to a Transaction, no review queue involved.
+    expect(json.data.outcome).toBe("auto_posted");
     importId = json.data.importedTransactionId;
-    expect(importId, "importId missing from response").toBeTruthy();
-  });
-
-  // ── 3. Confirm → transaction created ─────────────────────────────────────
-
-  test("3. Confirming the import creates a ledger transaction", async ({ request }) => {
-    test.skip(!importId, "No importId from step 2");
-
-    const res = await request.post(`${BASE_URL}/api/imports/sms/${importId}/confirm`, {
-      headers: { Cookie: authCookie, "Content-Type": "application/json" },
-      data: {},
-    });
-
-    expect(res.ok(), `Confirm failed: ${res.status()} ${await res.text()}`).toBe(true);
-    const json = await res.json();
-    expect(json.data.transactionId, "No transactionId after confirm").toBeTruthy();
     transactionId = json.data.transactionId;
+    expect(importId, "importedTransactionId missing from response").toBeTruthy();
+    expect(transactionId, "transactionId missing from response").toBeTruthy();
   });
 
-  // ── 4. Transaction exists in ledger ───────────────────────────────────────
+  // ── 3. Transaction exists in ledger ───────────────────────────────────────
 
-  test("4. Confirmed transaction appears in the transactions API", async ({ request }) => {
-    test.skip(!transactionId, "No transactionId from step 3");
+  test("3. Auto-posted transaction appears in the transactions API", async ({ request }) => {
+    test.skip(!transactionId, "No transactionId from step 2");
 
     const res = await request.get(`${BASE_URL}/api/transactions?page=1&pageSize=20`, {
       headers: { Cookie: authCookie },
@@ -175,8 +160,8 @@ test.describe("Import Engine — webhook flow", () => {
 
   // ── 5. Dashboard automation-metrics shows salary received ─────────────────
 
-  test("5. Dashboard automation-metrics shows salary received after confirmation", async ({ request }) => {
-    test.skip(!transactionId, "No transactionId — salary not confirmed");
+  test("4. Dashboard automation-metrics shows salary received", async ({ request }) => {
+    test.skip(!transactionId, "No transactionId — salary not posted");
 
     const res = await request.get(`${BASE_URL}/api/imports/automation-metrics`, {
       headers: { Cookie: authCookie },
@@ -184,13 +169,9 @@ test.describe("Import Engine — webhook flow", () => {
     expect(res.ok()).toBe(true);
     const json = await res.json();
 
-    // Salary status should now be 'received' (transactionId set) or 'review_required'
-    // (if the import hasn't fully processed). 'waiting' or 'late' are failures.
-    const salaryStatus = json.data.salaryStatus?.status;
-    expect(
-      ["received", "review_required"],
-      `Unexpected salary status: ${salaryStatus}`
-    ).toContain(salaryStatus);
+    // The import auto-posted in step 2, so salary status must already be
+    // 'received'. 'waiting' or 'late' are failures.
+    expect(json.data.salaryStatus?.status).toBe("received");
 
     // Token status: still active
     expect(json.data.token.isActive).toBe(true);
@@ -198,9 +179,9 @@ test.describe("Import Engine — webhook flow", () => {
     expect(json.data.importHealth).not.toBe("NO_TOKEN");
   });
 
-  // ── 6. Same SMS again → no duplicate transaction ─────────────────────────
+  // ── 5. Same SMS again → no duplicate transaction ─────────────────────────
 
-  test("6. Submitting the same SMS again does not create a second transaction", async ({ request }) => {
+  test("5. Submitting the same SMS again does not create a second transaction", async ({ request }) => {
     test.skip(!generatedToken, "Token not available");
 
     const res = await request.post(`${BASE_URL}/api/imports/sms`, {
@@ -233,9 +214,9 @@ test.describe("Import Engine — webhook flow", () => {
     expect(salaryTxCount, "Duplicate transaction was created").toBeLessThanOrEqual(1);
   });
 
-  // ── 7. Duplicate activity recorded ────────────────────────────────────────
+  // ── 6. Duplicate activity recorded ────────────────────────────────────────
 
-  test("7. Import history reflects duplicate activity correctly", async ({ request }) => {
+  test("6. Import history reflects duplicate activity correctly", async ({ request }) => {
     test.skip(!importId, "No importId");
 
     const res = await request.get(
@@ -258,9 +239,9 @@ test.describe("Import Engine — webhook flow", () => {
     // If not found by id, duplicate tracking still passes (different status filter)
   });
 
-  // ── 8. Rotate token: old rejected, new accepted ───────────────────────────
+  // ── 7. Rotate token: old rejected, new accepted ───────────────────────────
 
-  test("8a. Old token is rejected after rotation", async ({ request }) => {
+  test("7a. Old token is rejected after rotation", async ({ request }) => {
     test.skip(!generatedToken, "Token not available");
     const oldToken = generatedToken;
 
@@ -289,7 +270,7 @@ test.describe("Import Engine — webhook flow", () => {
     ).toBe(401);
   });
 
-  test("8b. New token accepts a message with a new reference", async ({ request }) => {
+  test("7b. New token accepts a message with a new reference", async ({ request }) => {
     test.skip(!rotatedToken, "Rotated token not available");
 
     const res = await request.post(`${BASE_URL}/api/imports/sms`, {
@@ -303,12 +284,12 @@ test.describe("Import Engine — webhook flow", () => {
 
     expect(res.ok(), `New token rejected: ${res.status()} ${await res.text()}`).toBe(true);
     const json = await res.json();
-    expect(["review_required", "processed", "duplicate"]).toContain(json.data.outcome);
+    expect(["auto_posted", "duplicate"]).toContain(json.data.outcome);
   });
 
-  // ── 9. Revoke token → 401 ─────────────────────────────────────────────────
+  // ── 8. Revoke token → 401 ─────────────────────────────────────────────────
 
-  test("9. Revoked token returns 401", async ({ request }) => {
+  test("8. Revoked token returns 401", async ({ request }) => {
     test.skip(!generatedToken, "Token not available");
     const tokenToRevoke = generatedToken;
 
@@ -336,9 +317,9 @@ test.describe("Import Engine — webhook flow", () => {
     expect(statusJson.data.revokedAt).toBeTruthy();
   });
 
-  // ── 10. Audit API contains no SMS payload ────────────────────────────────
+  // ── 9. Audit API contains no SMS payload ─────────────────────────────────
 
-  test("10. Import list does not expose raw SMS payload", async ({ request }) => {
+  test("9. Import list does not expose raw SMS payload", async ({ request }) => {
     const res = await request.get(
       `${BASE_URL}/api/imports/sms/list?pageSize=10`,
       { headers: { Cookie: authCookie } }
@@ -358,9 +339,9 @@ test.describe("Import Engine — webhook flow", () => {
     }
   });
 
-  // ── 11. Cleanup endpoint rejects browser sessions ────────────────────────
+  // ── 10. Cleanup endpoint rejects browser sessions ────────────────────────
 
-  test("11. Cleanup endpoint rejects browser session as authorization", async ({ request }) => {
+  test("10. Cleanup endpoint rejects browser session as authorization", async ({ request }) => {
     // A valid browser session must NOT be accepted — requires IMPORT_CLEANUP_SECRET
     const res = await request.post(`${BASE_URL}/api/system/import-cleanup`, {
       headers: { Cookie: authCookie, "Content-Type": "application/json" },
@@ -372,9 +353,9 @@ test.describe("Import Engine — webhook flow", () => {
     expect(noAuthRes.status()).toBe(401);
   });
 
-  // ── 12. Rate limit response has correct headers ───────────────────────────
+  // ── 11. No-token request returns 401 with non-disclosing error ────────────
 
-  test("12. No-token request returns 401 with non-disclosing error", async ({ request }) => {
+  test("11. No-token request returns 401 with non-disclosing error", async ({ request }) => {
     const res = await request.post(`${BASE_URL}/api/imports/sms`, {
       headers: { "Content-Type": "application/json" },
       data: { sender: TEST_SENDER, message: TEST_SMS, receivedAt: TEST_RECEIVED_AT },

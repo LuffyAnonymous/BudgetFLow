@@ -78,13 +78,11 @@ export async function POST(request: Request) {
         create: {
           userId,
           enabled: true,
-          autoImportSalary: true,
           senderAllowlist: senderAllowlist ? senderAllowlist.split(",").map((s: string) => s.trim()) : ["ENBD"],
           salaryCategoryId: finalSalaryCategoryId || null,
         },
         update: {
           enabled: true,
-          autoImportSalary: true,
           senderAllowlist: senderAllowlist ? senderAllowlist.split(",").map((s: string) => s.trim()) : ["ENBD"],
           salaryCategoryId: finalSalaryCategoryId || null,
         },
