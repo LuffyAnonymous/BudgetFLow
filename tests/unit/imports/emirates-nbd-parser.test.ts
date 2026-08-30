@@ -24,3 +24,25 @@ describe("EmiratesNBDParser — merchant extraction", () => {
     expect(result.merchant).toBe("RTA NOL");
   });
 });
+
+describe("EmiratesNBDParser — canParse sender matching", () => {
+  const message = "Purchase of AED 198.61 with Debit Card ending 8014 at talabat.com PostPaid, Dubai. Avl Balance is AED 2.32.";
+
+  it("matches senders with the exact registered forms", () => {
+    expect(emiratesNBDParser.canParse("ENBD", message)).toBe(true);
+    expect(emiratesNBDParser.canParse("EmiratesNBD", message)).toBe(true);
+  });
+
+  // Regression: a sender typed with a space ("Emirates NBD" — the bank's own
+  // display name, and a natural literal to hardcode in an iOS Shortcut) used
+  // to fail this parser's own ad-hoc substring check even though
+  // resolveInstitution() already recognized it correctly everywhere else in
+  // the pipeline, silently dropping every real transaction to EXTRACTION_FAILED.
+  it("matches a sender with a space, same as resolveInstitution() does", () => {
+    expect(emiratesNBDParser.canParse("Emirates NBD", message)).toBe(true);
+  });
+
+  it("does not match an unrelated bank", () => {
+    expect(emiratesNBDParser.canParse("MASHREQ", message)).toBe(false);
+  });
+});

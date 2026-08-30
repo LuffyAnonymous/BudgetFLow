@@ -1,13 +1,13 @@
 import { Decimal } from "decimal.js";
+import { AccountType } from "@prisma/client";
 import {
   ISmsParser,
   NormalizedSmsTransaction,
   ParseError,
 } from "./sms-parser.interface";
 import { redactFinancialText, maskSender, sha256 } from "../engine/redaction";
+import { resolveInstitution } from "../engine/sender-normalizer";
 import { isOtpMessage, isPromoMessage } from "./otp-promo-filter";
-
-const KNOWN_SENDERS = ["ENBD", "EmiratesNBD", "Emirates-NBD", "EMIRATESNBD"];
 
 // Regular Expressions
 const AVAILABLE_BALANCE_RE = /(?:available\s+balance|bal|balance)\s+(?:is\s+)?(?:AED\s*)?([\d,]+(?:\.\d{1,2})?)/i;
@@ -37,10 +37,13 @@ export class EmiratesNBDParser implements ISmsParser {
   readonly institution = "Emirates NBD";
 
   canParse(sender: string, message: string): boolean {
-    const senderMatch = KNOWN_SENDERS.some((s) =>
-      sender.toUpperCase().includes(s.toUpperCase())
-    );
-    if (!senderMatch) return false;
+    // Reuse the same sender→institution resolution the rest of the
+    // pipeline uses (account creation, generic-parser exclusion, etc.)
+    // instead of a separate ad-hoc substring check — a sender the user
+    // typed as "Emirates NBD" (with a space, e.g. hardcoded in an iOS
+    // Shortcut) previously failed this parser's own naive check even
+    // though resolveInstitution() already recognized it correctly.
+    if (resolveInstitution(sender).accountType !== AccountType.EMIRATES_NBD) return false;
 
     // Reject obvious OTPs and promotions
     if (isOtpMessage(message) || isPromoMessage(message)) return false;
