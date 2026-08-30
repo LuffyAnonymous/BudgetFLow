@@ -16,14 +16,17 @@ import {
   DebtStatus,
 } from "@prisma/client";
 import { Decimal } from "decimal.js";
-import { sha256, maskSender, redactFinancialText } from "./redaction";
+import { sha256, maskSender, redactFinancialText, maskEmailSender, redactFinancialEmailText } from "./redaction";
 import { smsParserRegistry } from "../sms/parser-registry";
 import { buildFingerprint } from "./duplicate-detector";
 import { accountService } from "../../server/services/account.service";
 import { determineBudgetMonth } from "@/lib/salary-month";
 import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
+import type { NormalizedEmailTransaction } from "../email/email-parser.interface";
 
 import { resolveInstitution, ResolvedInstitution } from "./sender-normalizer";
+import { resolveEmailInstitution } from "../email/email-sender-normalizer";
+import { emailParserRegistry } from "../email/parser-registry";
 import { isCreditCardTransaction } from "./card-type-classifier";
 import { classifyDirection, isDirectionAmbiguous, TransactionDirection } from "./direction-classifier";
 import { categorizeMerchant, KnownCategory } from "./merchant-categorizer";
@@ -44,6 +47,32 @@ export interface SmsWebhookPayload {
   receivedAt: Date;
   deviceId?: string | null;
   idempotencyKey?: string | null;
+}
+
+export interface EmailImportPayload {
+  fromAddress: string;
+  subject: string;
+  body: string;
+  receivedAt: Date;
+  externalMessageId: string;
+}
+
+/**
+ * The subset of fields autoPostTransaction() actually reads — shared
+ * structurally by NormalizedSmsTransaction and NormalizedEmailTransaction
+ * so the one auto-post path serves both channels without forking it.
+ */
+interface AutoPostableTransaction {
+  institution: string;
+  amount: Decimal;
+  currency: string;
+  merchant: string | null;
+  reference: string | null;
+  availableBalance: Decimal | null;
+  parserKey: string;
+  parserVersion: string;
+  redactedMessage: string;
+  payloadHash: string;
 }
 
 export type ImportResult =
@@ -342,146 +371,29 @@ export class ImportService {
       }
 
       console.log("[Import Service] Stage: Executing auto-post transaction");
-      const result = await db.$transaction(async (tx) => {
-        const account = await accountService.ensureAccountForInstitution(
-          userId,
-          { type: institutionForAccount.accountType, name: institutionForAccount.displayName, isCreditCard },
-          tx
-        );
-        const primaryAccId = account.id;
-
-        await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx);
-
-        let ledgerTxId: string;
-
-        const isSalary = category.toLowerCase() === "salary" || (normalized.parserKey ?? "").toLowerCase().includes("salary");
-        const { getActiveFinancialCycle } = await import("@/lib/salary-month");
-
-        if (matchedTransferId) {
-            ledgerTxId = matchedTransferId;
-        } else {
-            let txType: TransactionType = TransactionType.EXPENSE;
-            let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
-
-            if (direction === TransactionDirection.INFLOW) {
-                txType = TransactionType.INCOME;
-                cashFlowDir = CashFlowDirection.INFLOW;
-            }
-
-            if (category === KnownCategory.TRANSFERS) {
-                txType = TransactionType.TRANSFER;
-            }
-
-            let dbCategory: { id: string } | null = await tx.category.findFirst({
-              where: { userId, name: { equals: category, mode: "insensitive" } }
-            });
-
-            // The generic label ("Buy Now Pay Later") may not match a user's
-            // own category name verbatim (e.g. "Tabby Payment") — try known
-            // aliases before falling through further.
-            if (!dbCategory) {
-              dbCategory = await resolveCategoryByAlias(tx, userId, category);
-            }
-
-            // Merchant-keyword matching came up empty — try the salary-ratio /
-            // single-type-match rules before falling back to "Uncategorized".
-            if (!dbCategory && category === KnownCategory.UNCATEGORIZED) {
-              dbCategory = await resolveFallbackCategory(tx, userId, txType, normalized.amount);
-            }
-
-            dbCategory = dbCategory || await tx.category.findFirst({
-              where: { userId, name: { equals: KnownCategory.UNCATEGORIZED, mode: "insensitive" } }
-            });
-
-            if (!dbCategory) {
-              dbCategory = await tx.category.create({
-                data: {
-                  userId,
-                  name: KnownCategory.UNCATEGORIZED,
-                  type: direction === TransactionDirection.INFLOW ? CategoryType.INCOME : CategoryType.VARIABLE_EXPENSE,
-                },
-              });
-            }
-
-            const computedBudgetMonth = isSalary
-              ? determineBudgetMonth(financialDate, true)
-              : await getActiveFinancialCycle(userId, financialDate, tx);
-
-            const ledgerTx = await tx.transaction.create({
-                data: {
-                    date: financialDate,
-                    budgetMonth: computedBudgetMonth,
-                    categoryId: dbCategory!.id,
-                    description: normalized.merchant || "Auto-imported",
-                    amount: normalized.amount,
-                    paymentMethod: "SMS Import",
-                    type: txType,
-                    cashFlowDirection: cashFlowDir,
-                    origin: TransactionOrigin.SMS_IMPORT,
-                    accountId: primaryAccId,
-                    userId,
-                }
-            });
-            ledgerTxId = ledgerTx.id;
-
-            // Auto-applies as a DebtPayment if this transaction's category
-            // is debt-linked, or its description matches a registered
-            // payee alias — covers both the pre-existing category-based
-            // path and the new payee-name-match path from one place.
-            await tryApplyDebtLinkage(
-              tx,
-              userId,
-              {
-                id: ledgerTx.id,
-                amount: normalized.amount,
-                date: financialDate,
-                categoryId: dbCategory!.id,
-                description: normalized.merchant || "Auto-imported",
-              },
-              cashFlowDir
-            );
-        }
-
-        const computedBudgetMonth = isSalary
-          ? determineBudgetMonth(financialDate, true)
-          : await getActiveFinancialCycle(userId, financialDate, tx);
-
-        const importedTx = await tx.importedTransaction.create({
-            data: {
-              source: ImportSource.SMS,
-              institution: normalized.institution,
-              status: ImportStatus.PROCESSED,
-              confidence,
-              directionAmbiguous,
-              parserKey: normalized.parserKey,
-              parserVersion: normalized.parserVersion,
-              extractionMethod,
-              redactedPayload: normalized.redactedMessage,
-              rawPayload: message,
-              deviceId: deviceId ?? null,
-              payloadHash: normalized.payloadHash,
-              maskedSender: maskedSenderValue,
-              parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
-              parsedCurrency: normalized.currency,
-              parsedReference: normalized.reference,
-              parsedDescription: normalized.merchant || "Auto-imported",
-              budgetMonth: computedBudgetMonth,
-              fingerprint,
-              receivedAt,
-              financialDate,
-              idempotencyKey: idempotencyKey ?? null,
-              userId,
-              transactionId: ledgerTxId,
-              processedAt: new Date()
-            },
-        });
-
-        await tx.importSetting.update({
-          where: { userId },
-          data: { lastSuccessfulImportAt: new Date() },
-        });
-
-        return { importedTxId: importedTx.id, ledgerTxId };
+      const result = await this.autoPostTransaction({
+        userId,
+        source: ImportSource.SMS,
+        origin: TransactionOrigin.SMS_IMPORT,
+        paymentMethodLabel: "SMS Import",
+        normalized,
+        institutionForAccount,
+        institutionCode: null,
+        isCreditCard,
+        direction,
+        category,
+        matchedTransferId,
+        financialDate,
+        confidence,
+        directionAmbiguous,
+        fingerprint,
+        rawPayload: message,
+        extractionMethod,
+        deviceId: deviceId ?? null,
+        maskedSenderValue,
+        receivedAt,
+        idempotencyKey: idempotencyKey ?? null,
+        externalMessageId: null,
       });
 
       console.log("[Import Service] SMS auto-posted successfully", { importedTxId: result.importedTxId, confidence, directionAmbiguous });
@@ -497,6 +409,189 @@ export class ImportService {
       console.error("[Import Service] Exception during processSms:", errorObj);
       throw err;
     }
+  }
+
+  /**
+   * Shared auto-post transaction, extracted so SMS and email converge on
+   * one posting path instead of forking it. Everything here is already
+   * source-agnostic (account resolution, category resolution, debt
+   * linkage) — `source`/`origin`/`paymentMethodLabel` are the only knobs
+   * that differ between channels.
+   */
+  private async autoPostTransaction(params: {
+    userId: string;
+    source: ImportSource;
+    origin: TransactionOrigin;
+    paymentMethodLabel: string;
+    normalized: AutoPostableTransaction;
+    institutionForAccount: ResolvedInstitution;
+    institutionCode: string | null;
+    isCreditCard: boolean;
+    direction: TransactionDirection;
+    category: KnownCategory;
+    matchedTransferId: string | null;
+    financialDate: Date;
+    confidence: ImportConfidence;
+    directionAmbiguous: boolean;
+    fingerprint: string;
+    rawPayload: string;
+    extractionMethod: string | null;
+    deviceId: string | null;
+    maskedSenderValue: string;
+    receivedAt: Date;
+    idempotencyKey: string | null;
+    externalMessageId: string | null;
+  }): Promise<{ importedTxId: string; ledgerTxId: string }> {
+    const {
+      userId, source, origin, paymentMethodLabel, normalized, institutionForAccount, institutionCode,
+      isCreditCard, direction, category, matchedTransferId, financialDate, confidence, directionAmbiguous,
+      fingerprint, rawPayload, extractionMethod, deviceId, maskedSenderValue, receivedAt, idempotencyKey,
+      externalMessageId,
+    } = params;
+
+    return db.$transaction(async (tx) => {
+      const account = await accountService.ensureAccountForInstitution(
+        userId,
+        { type: institutionForAccount.accountType, name: institutionForAccount.displayName, isCreditCard },
+        tx
+      );
+      const primaryAccId = account.id;
+
+      await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx);
+
+      let ledgerTxId: string;
+
+      const isSalary = category.toLowerCase() === "salary" || normalized.parserKey.toLowerCase().includes("salary");
+      const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+
+      if (matchedTransferId) {
+          ledgerTxId = matchedTransferId;
+      } else {
+          let txType: TransactionType = TransactionType.EXPENSE;
+          let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
+
+          if (direction === TransactionDirection.INFLOW) {
+              txType = TransactionType.INCOME;
+              cashFlowDir = CashFlowDirection.INFLOW;
+          }
+
+          if (category === KnownCategory.TRANSFERS) {
+              txType = TransactionType.TRANSFER;
+          }
+
+          let dbCategory: { id: string } | null = await tx.category.findFirst({
+            where: { userId, name: { equals: category, mode: "insensitive" } }
+          });
+
+          // The generic label ("Buy Now Pay Later") may not match a user's
+          // own category name verbatim (e.g. "Tabby Payment") — try known
+          // aliases before falling through further.
+          if (!dbCategory) {
+            dbCategory = await resolveCategoryByAlias(tx, userId, category);
+          }
+
+          // Merchant-keyword matching came up empty — try the salary-ratio /
+          // single-type-match rules before falling back to "Uncategorized".
+          if (!dbCategory && category === KnownCategory.UNCATEGORIZED) {
+            dbCategory = await resolveFallbackCategory(tx, userId, txType, normalized.amount);
+          }
+
+          dbCategory = dbCategory || await tx.category.findFirst({
+            where: { userId, name: { equals: KnownCategory.UNCATEGORIZED, mode: "insensitive" } }
+          });
+
+          if (!dbCategory) {
+            dbCategory = await tx.category.create({
+              data: {
+                userId,
+                name: KnownCategory.UNCATEGORIZED,
+                type: direction === TransactionDirection.INFLOW ? CategoryType.INCOME : CategoryType.VARIABLE_EXPENSE,
+              },
+            });
+          }
+
+          const computedBudgetMonth = isSalary
+            ? determineBudgetMonth(financialDate, true)
+            : await getActiveFinancialCycle(userId, financialDate, tx);
+
+          const ledgerTx = await tx.transaction.create({
+              data: {
+                  date: financialDate,
+                  budgetMonth: computedBudgetMonth,
+                  categoryId: dbCategory!.id,
+                  description: normalized.merchant || "Auto-imported",
+                  amount: normalized.amount,
+                  paymentMethod: paymentMethodLabel,
+                  type: txType,
+                  cashFlowDirection: cashFlowDir,
+                  origin,
+                  accountId: primaryAccId,
+                  userId,
+              }
+          });
+          ledgerTxId = ledgerTx.id;
+
+          // Auto-applies as a DebtPayment if this transaction's category
+          // is debt-linked, or its description matches a registered
+          // payee alias — covers both the pre-existing category-based
+          // path and the new payee-name-match path from one place.
+          await tryApplyDebtLinkage(
+            tx,
+            userId,
+            {
+              id: ledgerTx.id,
+              amount: normalized.amount,
+              date: financialDate,
+              categoryId: dbCategory!.id,
+              description: normalized.merchant || "Auto-imported",
+            },
+            cashFlowDir
+          );
+      }
+
+      const computedBudgetMonth = isSalary
+        ? determineBudgetMonth(financialDate, true)
+        : await getActiveFinancialCycle(userId, financialDate, tx);
+
+      const importedTx = await tx.importedTransaction.create({
+          data: {
+            source,
+            institution: normalized.institution,
+            institutionCode,
+            status: ImportStatus.PROCESSED,
+            confidence,
+            directionAmbiguous,
+            parserKey: normalized.parserKey,
+            parserVersion: normalized.parserVersion,
+            extractionMethod,
+            redactedPayload: normalized.redactedMessage,
+            rawPayload,
+            deviceId: deviceId ?? null,
+            payloadHash: normalized.payloadHash,
+            maskedSender: maskedSenderValue,
+            parsedAmount: new Prisma.Decimal(normalized.amount.toFixed(2)),
+            parsedCurrency: normalized.currency,
+            parsedReference: normalized.reference,
+            parsedDescription: normalized.merchant || "Auto-imported",
+            budgetMonth: computedBudgetMonth,
+            fingerprint,
+            receivedAt,
+            financialDate,
+            idempotencyKey: idempotencyKey ?? null,
+            externalMessageId,
+            userId,
+            transactionId: ledgerTxId,
+            processedAt: new Date()
+          },
+      });
+
+      await tx.importSetting.update({
+        where: { userId },
+        data: { lastSuccessfulImportAt: new Date() },
+      });
+
+      return { importedTxId: importedTx.id, ledgerTxId };
+    });
   }
 
   /**
@@ -573,6 +668,283 @@ export class ImportService {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
         const existing = await db.importedTransaction.findUnique({
           where: { userId_fingerprint: { userId, fingerprint: payloadHash } },
+          select: { id: true },
+        });
+        if (existing) {
+          await db.importedTransaction.update({
+            where: { id: existing.id },
+            data: { duplicateCount: { increment: 1 }, lastDuplicateAt: new Date() },
+          });
+          return { outcome: "failed", importedTransactionId: existing.id, reason: failureMessage };
+        }
+      }
+      throw err;
+    }
+  }
+
+  async processEmail(userId: string, payload: EmailImportPayload): Promise<ImportResult> {
+    const { fromAddress, subject, body, receivedAt, externalMessageId } = payload;
+    const payloadHash = sha256(body);
+
+    console.log("[Import Service] Starting email processing", {
+      fromAddress: maskEmailSender(fromAddress),
+      bodyLength: body.length,
+      externalMessageId,
+    });
+
+    try {
+      const importSetting = await db.importSetting.findUnique({ where: { userId } });
+      if (!importSetting || !importSetting.enabled) {
+        console.log("[Import Service] Import disabled for user", { userId });
+        return { outcome: "disabled" };
+      }
+
+      const existingByMessageId = await db.importedTransaction.findUnique({
+        where: { externalMessageId },
+        select: { id: true, userId: true },
+      });
+      if (existingByMessageId && existingByMessageId.userId === userId) {
+        console.log("[Import Service] Already-processed Gmail message, skipping", { externalMessageId });
+        return { outcome: "idempotent", importedTransactionId: existingByMessageId.id };
+      }
+
+      // Every sender resolves to *some* institution — unrecognized domains
+      // fall back to OTHER_BANK with a derived display name, never null.
+      const institution = resolveEmailInstitution(fromAddress);
+      const maskedSenderValue = maskEmailSender(fromAddress);
+
+      console.log("[Import Service] Stage: Selecting email parser", { institution: institution.displayName });
+      const selectionResult = emailParserRegistry.select(fromAddress, subject, body);
+
+      if (selectionResult.outcome === "ambiguous") {
+        const reason = `Ambiguous parsers matched: ${selectionResult.matchedParsers.join(", ")}`;
+        console.log("[Import Service] Email parser selection failed", { outcome: selectionResult.outcome, reason });
+        return await this.recordEmailFailure(userId, {
+          institution: institution.displayName,
+          institutionCode: institution.institutionCode,
+          fromAddress,
+          body,
+          payloadHash,
+          maskedSenderValue,
+          receivedAt,
+          externalMessageId,
+          failureCode: "AMBIGUOUS_PARSER_MATCH",
+          failureMessage: reason,
+        });
+      }
+
+      if (selectionResult.outcome === "no_match") {
+        // Distinguish "we know this bank but not this email format" from
+        // "we don't recognize this sender at all" — both fail, but the
+        // reason is meaningfully different for the user to act on.
+        const isRecognizedDomain = institution.accountType !== AccountType.OTHER_BANK;
+        console.log("[Import Service] No email parser matched", { isRecognizedDomain });
+        return await this.recordEmailFailure(userId, {
+          institution: institution.displayName,
+          institutionCode: institution.institutionCode,
+          fromAddress,
+          body,
+          payloadHash,
+          maskedSenderValue,
+          receivedAt,
+          externalMessageId,
+          failureCode: isRecognizedDomain ? "RECOGNIZED_SENDER_NO_PARSER" : "UNRECOGNIZED_SENDER_DOMAIN",
+          failureMessage: isRecognizedDomain
+            ? "This bank is recognized but this email format isn't supported yet."
+            : "Sender domain is not recognized.",
+        });
+      }
+
+      console.log("[Import Service] Stage: Parsing email", { parserKey: selectionResult.parser.parserKey });
+      const normalized: NormalizedEmailTransaction | null = selectionResult.parser.parse(fromAddress, subject, body, receivedAt, externalMessageId);
+      if (!normalized) {
+        console.log("[Import Service] Email parser matched but could not extract required fields");
+        return await this.recordEmailFailure(userId, {
+          institution: institution.displayName,
+          institutionCode: institution.institutionCode,
+          fromAddress,
+          body,
+          payloadHash,
+          maskedSenderValue,
+          receivedAt,
+          externalMessageId,
+          failureCode: "EXTRACTION_FAILED",
+          failureMessage: "Could not automatically extract transaction details from this email.",
+        });
+      }
+
+      const fingerprint = buildFingerprint(normalized, maskedSenderValue);
+      const existingByFingerprint = await db.importedTransaction.findUnique({
+        where: { userId_fingerprint: { userId, fingerprint } },
+        select: { id: true },
+      });
+      if (existingByFingerprint) {
+        console.log("[Import Service] Duplicate transaction detected by fingerprint", { fingerprintPrefix: fingerprint.slice(0, 10) });
+        await db.importedTransaction.update({
+          where: { id: existingByFingerprint.id },
+          data: { duplicateCount: { increment: 1 }, lastDuplicateAt: new Date() },
+        });
+        return { outcome: "duplicate", importedTransactionId: existingByFingerprint.id };
+      }
+
+      console.log("[Import Service] Stage: Categorizing merchant");
+      const category = categorizeMerchant(normalized.merchant);
+
+      const debtPayeeCandidates = await db.debt.findMany({
+        where: { userId, status: DebtStatus.ACTIVE, payeeAliases: { isEmpty: false } },
+        select: { id: true, name: true, payeeAliases: true },
+      });
+      const isKnownDebtPayee = !!matchDebtByDescription(debtPayeeCandidates, normalized.merchant);
+
+      const confidenceScore = evaluateConfidence(
+        normalized.amount.greaterThan(0),
+        normalized.direction,
+        category,
+        !!normalized.reference,
+        !!normalized.availableBalance,
+        isKnownDebtPayee
+      );
+
+      const confidence = confidenceScore >= 90 ? ImportConfidence.HIGH
+                       : confidenceScore >= 70 ? ImportConfidence.MEDIUM
+                       : ImportConfidence.LOW;
+
+      // Email parsers declare direction from structured fields, not
+      // keyword-guessed from body text like SMS — there's no ambiguity
+      // signal to compute here (unlike isDirectionAmbiguous()'s raw-text
+      // heuristic, which exists specifically because SMS has no structure).
+      const directionAmbiguous = false;
+
+      const dubaiMs = normalized.transactionDate.getTime() + DUBAI_OFFSET_HOURS * 60 * 60 * 1000;
+      const d = new Date(dubaiMs);
+      const financialDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+
+      console.log("[Import Service] Stage: Match internal transfer", { confidence });
+      let matchedTransferId: string | null = null;
+      if (confidence !== ImportConfidence.LOW) {
+        matchedTransferId = await matchInternalTransfer(
+          userId,
+          normalized.amount,
+          financialDate,
+          normalized.direction === TransactionDirection.INFLOW
+        );
+      }
+
+      const institutionForAccount: ResolvedInstitution = {
+        accountType: institution.accountType,
+        displayName: normalized.isCreditCard ? `${institution.displayName} Credit Card` : institution.displayName,
+      };
+
+      console.log("[Import Service] Stage: Executing auto-post transaction");
+      const result = await this.autoPostTransaction({
+        userId,
+        source: ImportSource.EMAIL,
+        origin: TransactionOrigin.EMAIL_IMPORT,
+        paymentMethodLabel: "Email Import",
+        normalized,
+        institutionForAccount,
+        institutionCode: normalized.institutionCode,
+        isCreditCard: normalized.isCreditCard,
+        direction: normalized.direction,
+        category,
+        matchedTransferId,
+        financialDate,
+        confidence,
+        directionAmbiguous,
+        fingerprint,
+        rawPayload: body,
+        extractionMethod: "STRUCTURED",
+        deviceId: null,
+        maskedSenderValue,
+        receivedAt,
+        idempotencyKey: null,
+        externalMessageId,
+      });
+
+      console.log("[Import Service] Email auto-posted successfully", { importedTxId: result.importedTxId, confidence });
+      return {
+        outcome: "auto_posted",
+        importedTransactionId: result.importedTxId,
+        transactionId: result.ledgerTxId,
+        confidence,
+        directionAmbiguous,
+      };
+    } catch (err) {
+      const errorObj = err instanceof Error ? { message: err.message, stack: err.stack } : { message: String(err) };
+      console.error("[Import Service] Exception during processEmail:", errorObj);
+      throw err;
+    }
+  }
+
+  /**
+   * Email counterpart to recordFailure() — a hard parse failure (sender not
+   * recognized, ambiguous parser match, or a recognized format that
+   * couldn't actually be extracted). Always creates a FAILED
+   * ImportedTransaction row so it stays visible and correctable.
+   */
+  private async recordEmailFailure(
+    userId: string,
+    params: {
+      institution: string;
+      institutionCode: string | null;
+      fromAddress: string;
+      body: string;
+      payloadHash: string;
+      maskedSenderValue: string;
+      receivedAt: Date;
+      externalMessageId: string;
+      failureCode: string;
+      failureMessage: string;
+    }
+  ): Promise<ImportResult> {
+    const {
+      institution, institutionCode, body, payloadHash, maskedSenderValue,
+      receivedAt, externalMessageId, failureCode, failureMessage,
+    } = params;
+    const redacted = redactFinancialEmailText(body);
+
+    try {
+      const importedTx = await db.importedTransaction.create({
+        data: {
+          source: ImportSource.EMAIL,
+          institution,
+          institutionCode,
+          status: ImportStatus.FAILED,
+          parserKey: null,
+          redactedPayload: redacted,
+          rawPayload: body,
+          payloadHash,
+          maskedSender: maskedSenderValue,
+          fingerprint: payloadHash,
+          receivedAt,
+          financialDate: receivedAt,
+          externalMessageId,
+          failureCode,
+          failureMessage,
+          userId,
+        },
+      });
+
+      await db.auditLog.create({
+        data: {
+          userId,
+          action: AuditAction.EMAIL_IMPORT_FAILED,
+          entityType: AuditEntityType.IMPORTED_TRANSACTION,
+          entityId: importedTx.id,
+          source: "GMAIL_POLL",
+          metadata: { maskedSender: maskedSenderValue, fromAddress: maskedSenderValue, payloadHash, redactedMessage: redacted, failureCode, failureMessage },
+        },
+      });
+
+      return { outcome: "failed", importedTransactionId: importedTx.id, reason: failureMessage };
+    } catch (err) {
+      // Duplicate on externalMessageId (already processed this Gmail
+      // message in a prior poll cycle) or on fingerprint (the exact same
+      // failing content seen before). Surface the existing row instead of
+      // a 500 either way.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        const existing = await db.importedTransaction.findFirst({
+          where: { userId, OR: [{ externalMessageId }, { fingerprint: payloadHash }] },
           select: { id: true },
         });
         if (existing) {

@@ -70,6 +70,20 @@ if (process.env.NODE_ENV !== "production") {
       throw new Error("PRODUCTION_STARTUP_FAILED: AUTH_SECRET must be at least 32 characters long in production.");
     }
 
+    // Gmail Import Gating — only required once the feature is actually
+    // configured (GOOGLE_CLIENT_ID set), same conditional-gate pattern as
+    // the Redis/S3 checks above rather than an always-required var, since
+    // this is an opt-in per-user feature.
+    if (process.env.GOOGLE_CLIENT_ID) {
+      if (!process.env.GOOGLE_CLIENT_SECRET) {
+        throw new Error("PRODUCTION_STARTUP_FAILED: GOOGLE_CLIENT_ID is set but GOOGLE_CLIENT_SECRET is missing.");
+      }
+      const encryptionKey = process.env.GMAIL_TOKEN_ENCRYPTION_KEY || "";
+      if (!/^[0-9a-fA-F]{64}$/.test(encryptionKey)) {
+        throw new Error("PRODUCTION_STARTUP_FAILED: GMAIL_TOKEN_ENCRYPTION_KEY must be a 32-byte hex string (64 chars) when Gmail import is configured. Generate with: openssl rand -hex 32");
+      }
+    }
+
     // Database URL check
     const dbUrl = process.env.DATABASE_URL || "";
     if (

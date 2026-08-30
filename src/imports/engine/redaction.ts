@@ -58,6 +58,20 @@ export function redactCardNumbers(text: string): string {
 }
 
 /**
+ * Redact account/IBAN-style identifiers after the broader label set banking
+ * confirmation emails use — SMS is terse ("account no."), but email
+ * confirmations spell these out verbosely (e.g. "Beneficiary Account /
+ * IBAN:", "From Account:", "CIF:") and IBAN values are alphanumeric, not
+ * pure digits, so this widens the value pattern beyond redactAccountNumbers.
+ */
+export function redactEmailAccountFields(text: string): string {
+  return text.replace(
+    /\b(account\s+no\.?|beneficiary\s+account(?:\s*\/\s*iban)?|from\s+account|to\s+account|iban|cif)(\s*:?\s+)([A-Za-z\dXx][-A-Za-z\dXx]*[A-Za-z\dXx])/gi,
+    (_m, label: string, sep: string, acct: string) => `${label}${sep}${maskAccountNumber(acct)}`
+  );
+}
+
+/**
  * Redact a sender string. Retains only the first word or recognizable institution name.
  * Full phone numbers or internal routing codes are stripped.
  */
@@ -70,12 +84,43 @@ export function maskSender(sender: string): string {
 }
 
 /**
+ * Redact an email "From" address. Unlike an SMS sender code, the domain
+ * itself identifies the institution (not a secret) — only the local part
+ * (before the @) is masked, so "OnlineBanking@emiratesnbd.com" becomes
+ * "OnXXX@emiratesnbd.com" rather than disappearing into a generic label.
+ */
+export function maskEmailSender(fromAddress: string): string {
+  const trimmed = fromAddress.trim();
+  const atIndex = trimmed.lastIndexOf("@");
+  if (atIndex <= 0 || atIndex === trimmed.length - 1) {
+    return "EMAIL_SENDER";
+  }
+  const localPart = trimmed.slice(0, atIndex);
+  const domain = trimmed.slice(atIndex + 1);
+  const maskedLocal = localPart.length <= 2 ? localPart : `${localPart.slice(0, 2)}XXX`;
+  return `${maskedLocal}@${domain}`;
+}
+
+/**
  * Primary entry point: apply all financial-text redaction rules to an SMS body.
  * Returns the redacted text safe to store as redactedPayload.
  */
 export function redactFinancialText(text: string): string {
   let result = text;
   result = redactAccountNumbers(result);
+  result = redactCardNumbers(result);
+  return result;
+}
+
+/**
+ * Entry point for email bodies — same card-number redaction as SMS, plus
+ * the broader account/IBAN label set (see redactEmailAccountFields) that
+ * email confirmations use but terse SMS text doesn't.
+ */
+export function redactFinancialEmailText(text: string): string {
+  let result = text;
+  result = redactAccountNumbers(result);
+  result = redactEmailAccountFields(result);
   result = redactCardNumbers(result);
   return result;
 }

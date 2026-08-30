@@ -1,0 +1,71 @@
+import "server-only";
+
+import { db } from "@/lib/db";
+import type { GmailIntegration } from "@prisma/client";
+import { gmailIntegrationService } from "@/server/services/gmail-integration.service";
+import { GmailClient } from "./gmail-client";
+import { importService } from "@/imports/engine/import.service";
+
+const INITIAL_SCAN_WINDOW_DAYS = 2;
+
+/**
+ * Syncs one Gmail integration: fetches new messages since the last known
+ * History API cursor (falling back to a bounded recent-messages scan on
+ * first sync or an expired cursor), and runs each through
+ * importService.processEmail(). Shared by the push-notification webhook
+ * (the normal trigger) and the OAuth callback's initial sync right after
+ * connecting, so a user sees results immediately rather than waiting for
+ * the first push.
+ */
+export async function syncGmailIntegration(
+  integration: GmailIntegration
+): Promise<{ transactionsProcessed: number }> {
+  const refreshToken = await gmailIntegrationService.getDecryptedRefreshToken(integration);
+  const client = new GmailClient(refreshToken);
+
+  let messageIds: string[];
+  let newHistoryId: string;
+
+  if (integration.lastHistoryId) {
+    const result = await client.listNewMessageIdsSince(integration.lastHistoryId);
+    if (result.expired) {
+      messageIds = await client.listRecentMessageIds(INITIAL_SCAN_WINDOW_DAYS);
+      newHistoryId = await client.getCurrentHistoryId();
+    } else {
+      messageIds = result.messageIds;
+      newHistoryId = result.newHistoryId;
+    }
+  } else {
+    messageIds = await client.listRecentMessageIds(INITIAL_SCAN_WINDOW_DAYS);
+    newHistoryId = await client.getCurrentHistoryId();
+  }
+
+  let transactionsProcessed = 0;
+
+  for (const messageId of messageIds) {
+    // Cheap pre-check before fetching the full message body over the
+    // network — a re-delivered push notification or an overlapping
+    // history window will often have already-seen IDs.
+    const alreadyImported = await db.importedTransaction.findUnique({
+      where: { externalMessageId: messageId },
+      select: { id: true },
+    });
+    if (alreadyImported) continue;
+
+    const message = await client.fetchMessage(messageId);
+    if (!message) continue;
+
+    await importService.processEmail(integration.userId, {
+      fromAddress: message.fromAddress,
+      subject: message.subject,
+      body: message.body,
+      receivedAt: message.internalDate,
+      externalMessageId: message.id,
+    });
+    transactionsProcessed++;
+  }
+
+  await gmailIntegrationService.markSynced(integration.userId, newHistoryId);
+
+  return { transactionsProcessed };
+}

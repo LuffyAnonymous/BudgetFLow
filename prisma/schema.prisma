@@ -129,6 +129,7 @@ model User {
   remittances             Remittance[]
   settings                Setting?
   importSetting           ImportSetting?
+  gmailIntegration        GmailIntegration?
   importedTransactions    ImportedTransaction[]
   recurringTemplates      RecurringTemplate[]
   recurringOccurrences    RecurringOccurrence[]
@@ -473,6 +474,7 @@ enum NotificationType {
   DEBT_PAYMENT_AUTO_APPLIED
   RECURRING_ENTRY_CREATED
   ROLLOVER_AVAILABLE
+  GMAIL_CONNECTION_ERROR
 }
 
 enum NotificationSeverity {
@@ -605,10 +607,14 @@ enum AuditAction {
   SMS_IMPORT_PROCESSED
   SMS_IMPORT_REJECTED
   SMS_IMPORT_FAILED
+  EMAIL_IMPORT_FAILED
   IMPORT_TOKEN_GENERATED
   IMPORT_TOKEN_REVOKED
   IMPORT_CONFIRMED
   IMPORT_REJECTED_MANUAL
+  // Gmail Import
+  GMAIL_CONNECTED
+  GMAIL_DISCONNECTED
   // Service API Keys (automation / n8n)
   SERVICE_KEY_GENERATED
   SERVICE_KEY_REVOKED
@@ -634,6 +640,7 @@ enum AuditEntityType {
   // Import Engine
   IMPORTED_TRANSACTION
   IMPORT_SETTING
+  GMAIL_CONNECTION
   // Automation
   SERVICE_API_KEY
   // Multi-tenant onboarding
@@ -729,6 +736,43 @@ model ImportSetting {
   updatedAt                 DateTime  @updatedAt
 }
 
+/// One row per user's connected Gmail account, for bank-email auto-import.
+/// Separate from ImportSetting (unlike Telegram's chat-linking, which lives
+/// as scalar fields there) because this holds an actual reversibly-encrypted
+/// secret with its own revoke/error lifecycle, not just a linking code.
+model GmailIntegration {
+  id                    String    @id @default(uuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Which Gmail account is connected — shown in Settings so a reconnect
+  /// with a different account is visible, not a silent mailbox switch.
+  googleAccountEmail    String?
+  /// AES-256-GCM ciphertext — reversible, distinct from ImportSetting.tokenHash
+  /// (one-way). Google's refresh token must be recoverable to call their API.
+  encryptedRefreshToken String
+  encryptionIv          String
+  encryptionAuthTag     String
+  scope                 String    @default("https://www.googleapis.com/auth/gmail.readonly")
+  /// ACTIVE | REVOKED | ERROR
+  status                String    @default("ACTIVE")
+  /// Gmail History API cursor for incremental sync. Null means the next
+  /// sync needs a bounded initial scan instead (first connect, or history
+  /// expired — Gmail only retains ~30 days of history).
+  lastHistoryId         String?
+  /// When the current Gmail watch() subscription expires — Google caps
+  /// this at 7 days no matter what, renewal is mandatory, not optional.
+  /// Null means no active watch (never connected, or watch() failed).
+  watchExpiration        DateTime?
+  lastSyncedAt          DateTime?
+  lastErrorAt           DateTime?
+  lastErrorMessage      String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([status])
+  @@index([watchExpiration])
+}
+
 /// One canonical record per unique (userId, fingerprint).
 /// Duplicate webhook deliveries increment duplicateCount rather than inserting new rows.
 model ImportedTransaction {
@@ -743,6 +787,14 @@ model ImportedTransaction {
   /// confidence score, since confidence and direction ambiguity are
   /// independent signals.
   directionAmbiguous Boolean      @default(false)
+  /// Stable parser-registry key for the resolved institution, e.g. "ENBD" —
+  /// distinct from the free-text `institution` display name.
+  institutionCode String?
+  /// Gmail message ID for email-sourced imports. Guards against re-processing
+  /// the same message across overlapping poll cycles — a different concern
+  /// from `fingerprint`, which guards against double-posting the same
+  /// real-world transaction (including across channels, e.g. SMS + email).
+  externalMessageId String? @unique
   parserKey     String?
   parserVersion String?
   /// How the transaction fields were derived: "REGEX" | "AI_TEXT" | "AI_VISION".

@@ -1,0 +1,34 @@
+name: Gmail Watch Renewal
+
+# Renews every connected Gmail integration's push-notification subscription
+# before it lapses. Google caps a Gmail watch() at 7 days no matter what —
+# this is the only thing keeping push-based email import working past that
+# window. Actual email import runs on push notifications (see
+# src/app/api/webhooks/gmail-push/route.ts), not on this schedule — this
+# workflow is housekeeping only, deliberately more frequent than the
+# 7-day hard limit for safety margin against a delayed run.
+#
+# Requires two repository secrets (Settings → Secrets and variables →
+# Actions): BUDGETFLOW_BASE_URL and CRON_SECRET (the same CRON_SECRET
+# already configured on the deployment — see .env.example).
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Every Monday at 06:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call gmail-watch-renew
+        run: |
+          status=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.BUDGETFLOW_BASE_URL }}/api/cron/gmail-watch-renew")
+          echo "HTTP status: $status"
+          cat /tmp/response.json
+          if [ "$status" -ge 400 ]; then
+            echo "::error::gmail-watch-renew returned $status"
+            exit 1
+          fi

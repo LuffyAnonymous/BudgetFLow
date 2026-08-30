@@ -63,6 +63,11 @@ n8n/workflows/
     └── import-retention-cleanup.json
 ```
 
+Gmail bank-email import (a separate feature, see `docs/gmail-bank-email-import.md`) is
+scheduled via a GitHub Actions workflow instead of n8n — a weekly watch-renewal call, not a
+polling loop, since Gmail import itself runs on push notifications. Nothing about it lives in
+this `n8n/` folder.
+
 Naming follows the pattern `"01 - Intake / Manual Import"` (not n8n's native
 Folders feature, which needs Enterprise/Cloud) so workflows sort and group
 correctly in the UI regardless of your n8n edition.
@@ -170,7 +175,7 @@ straight to `POST /api/imports/sms`, which resolves it to the right account.
 |---|---|---|
 | `BUDGETFLOW_SERVICE_API_KEY` (`bf_svc_...`) | 02-processing, 03-budgetflow-api-client, 06-scheduling-orchestration | Scoped read/write access to one user's transactions/debts/savings/remittances/categories/accounts + automation triggers |
 | `bf_import_...` (per-user, forwarded per-request — not an n8n env var) | 01-intake/email-import-gmail | Only `POST /api/imports/sms` — full parse/dedup/categorize pipeline (the app's own, not the 02-processing one) |
-| `CRON_SECRET` | 06-scheduling-orchestration/system-health-check | Only `GET /api/cron/health` (all-user sweep) |
+| `CRON_SECRET` | 06-scheduling-orchestration/system-health-check | Only `GET /api/cron/health` (all-user sweep). Also reused (outside n8n) by the GitHub Actions Gmail-watch-renewal workflow. |
 | `IMPORT_CLEANUP_SECRET` | 06-scheduling-orchestration/import-retention-cleanup | Only `POST /api/system/import-cleanup` |
 
 Each `bf_import_...` token is generated the same way as today, via

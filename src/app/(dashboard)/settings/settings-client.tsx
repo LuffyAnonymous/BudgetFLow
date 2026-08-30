@@ -18,6 +18,7 @@ import {
   LucideSend,
   LucideUnlink,
   LucideSmartphone,
+  LucideMail,
 } from "lucide-react";
 
 const IMPORT_ENDPOINT = "https://budgetflow-drab-nine.vercel.app/api/imports/sms";
@@ -207,6 +208,28 @@ export function SettingsClient() {
     onSuccess: () => {
       setLinkCode(null);
       queryClient.invalidateQueries({ queryKey: ["telegram-link-status"] });
+    },
+  });
+
+  // Gmail Link Status Query
+  const { data: gmailStatus, isLoading: isLoadingGmail } = useQuery({
+    queryKey: ["gmail-link-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings/gmail-link");
+      const json = await res.json();
+      return json.data; // { isConnected, googleAccountEmail, status, lastSyncedAt, watchExpiration, lastErrorAt, lastErrorMessage }
+    },
+  });
+
+  const disconnectGmailMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/gmail-link", { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to disconnect Gmail");
+      return json.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gmail-link-status"] });
     },
   });
 
@@ -1104,6 +1127,84 @@ export function SettingsClient() {
                 <LucideSend className="h-4 w-4" />
                 {generateLinkCodeMutation.isPending ? "Generating..." : "Connect Telegram"}
               </button>
+            </div>
+          )}
+        </div>
+
+        {/* Gmail Bank-Email Import Section */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6">
+          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+            <LucideMail className="h-5 w-5 text-indigo-400" />
+            <div>
+              <h2 className="text-lg font-semibold text-white">Gmail</h2>
+              <p className="text-xs text-slate-400">Auto-import bank transaction emails from a connected Gmail account.</p>
+            </div>
+          </div>
+
+          {isLoadingGmail ? (
+            <div className="h-16 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-800" />
+          ) : gmailStatus?.status === "ERROR" ? (
+            <div className="space-y-4">
+              <div className="flex items-start gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 p-4 text-amber-400 text-xs">
+                <LucideAlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Connection needs attention</p>
+                  <p className="mt-1 text-amber-300/80">
+                    {gmailStatus.lastErrorMessage || "The connection to Gmail stopped working. Reconnect to resume importing."}
+                  </p>
+                  {gmailStatus.googleAccountEmail && (
+                    <p className="mt-1 text-slate-500">Was connected as {gmailStatus.googleAccountEmail}</p>
+                  )}
+                </div>
+              </div>
+              <a
+                href="/api/settings/gmail-link/authorize"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-500 shadow-md shadow-indigo-600/20"
+              >
+                <LucideMail className="h-4 w-4" />
+                Reconnect Gmail
+              </a>
+            </div>
+          ) : gmailStatus?.isConnected ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-emerald-400 font-semibold text-xs">
+                <LucideShieldCheck className="h-4 w-4 shrink-0" />
+                <span>
+                  Connected{gmailStatus.googleAccountEmail ? ` as ${gmailStatus.googleAccountEmail}` : ""}
+                </span>
+              </div>
+              {gmailStatus.lastSyncedAt && (
+                <p className="text-[11px] text-slate-500">
+                  Last synced {new Date(gmailStatus.lastSyncedAt).toLocaleString("en-AE", { timeZone: "Asia/Dubai", dateStyle: "medium", timeStyle: "short" })}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm("Disconnect Gmail? Bank email import will stop until you reconnect.")) {
+                    disconnectGmailMutation.mutate();
+                  }
+                }}
+                disabled={disconnectGmailMutation.isPending}
+                className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
+              >
+                <LucideUnlink className="h-3.5 w-3.5" />
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-slate-400 leading-normal">
+                Not connected. Connecting grants read-only access to your inbox — only used to detect and
+                import bank transaction emails.
+              </p>
+              <a
+                href="/api/settings/gmail-link/authorize"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-500 shadow-md shadow-indigo-600/20"
+              >
+                <LucideMail className="h-4 w-4" />
+                Connect Gmail
+              </a>
             </div>
           )}
         </div>

@@ -23,9 +23,25 @@
  */
 
 import { sha256 } from "./redaction";
-import type { NormalizedSmsTransaction } from "../sms/sms-parser.interface";
+import type { Decimal } from "decimal.js";
 
 const DUBAI_OFFSET_HOURS = 4;
+
+/**
+ * The subset of fields the fingerprint algorithm actually reads — shared
+ * structurally by NormalizedSmsTransaction and NormalizedEmailTransaction
+ * rather than typed against one or the other, so the same transaction
+ * arriving via a different channel (e.g. SMS and email for the same bank)
+ * naturally dedupes against the same fingerprint.
+ */
+export interface FingerprintableTransaction {
+  institution: string;
+  amount: Decimal;
+  currency: string;
+  reference: string | null;
+  transactionDate: Date;
+  merchant: string | null;
+}
 
 /**
  * Convert a Date to a Dubai-local YYYY-MM-DD string without external dependencies.
@@ -44,7 +60,7 @@ function toDubaiDateString(date: Date): string {
  * Uses reference when available (stronger), falls back to date-based identity.
  */
 export function buildFingerprint(
-  normalized: NormalizedSmsTransaction,
+  normalized: FingerprintableTransaction,
   maskedSender: string
 ): string {
   const institution = normalized.institution.trim().toLowerCase();
