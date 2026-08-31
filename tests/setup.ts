@@ -27,11 +27,16 @@ import { execSync } from "child_process";
 beforeAll(() => {
   console.log("Preparing isolated test database...");
   try {
-    // Synchronously deploy migrations to the test database
+    // Synchronously deploy migrations to the test database. Prisma's
+    // migrate commands always connect via `directUrl` (schema.prisma's
+    // DIRECT_URL binding) when it's present, bypassing `DATABASE_URL`
+    // entirely — without this, migrate deploy silently targets whatever
+    // DIRECT_URL resolves to instead of the test database.
     execSync("npx prisma migrate deploy", {
       env: {
         ...process.env,
         DATABASE_URL: testDbUrl,
+        DIRECT_URL: testDbUrl,
       },
       stdio: "pipe", // Suppress noisy output but throw on error
     });

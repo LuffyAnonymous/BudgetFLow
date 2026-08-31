@@ -27,6 +27,10 @@ jobs:
 
     env:
       DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/budgetflow_test?schema=public
+      # `prisma migrate deploy` connects via directUrl (DIRECT_URL) when the
+      # schema declares one, ignoring DATABASE_URL entirely — without this,
+      # migrations silently never reach this container's database.
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/budgetflow_test?schema=public
       AUTH_SECRET: ci-placeholder-secret-not-used-in-production
       NEXTAUTH_URL: http://localhost:3000
       CRON_SECRET: ci-placeholder-cron-secret
