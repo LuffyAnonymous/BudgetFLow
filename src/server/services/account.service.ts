@@ -84,58 +84,46 @@ export class AccountService {
   }
 
   /**
-   * Recalculates the balance of a specific account using the ledger as the source of truth,
-   * then caches/updates the currentBalance column on the Account record.
+   * Sums transaction activity for one account: INCOME + TRANSFER-in as
+   * inflows, EXPENSE/SAVINGS/DEBT_PAYMENT/REMITTANCE/TRANSFER-out as
+   * outflows, added to `baseBalance`. The single source of truth both
+   * updateAccountBalance() and reconcileAccountBalance() build on —
+   * previously each had its own near-identical copy that had quietly
+   * drifted apart, so they disagreed by design and "Recalculating" never
+   * cleared.
+   *
+   * `since`, when given, restricts the sum to transactions created after
+   * that moment — used to anchor onto a bank-reported latestImportedBalance
+   * checkpoint instead of assuming the ledger holds every transaction back
+   * to account opening (it usually doesn't: pre-app history is real but
+   * untracked). Filters on `createdAt`, not `date` — `date` is the
+   * midnight-truncated financialDate, so filtering on it against a precise
+   * checkpoint timestamp silently dropped every transaction that landed on
+   * the same calendar day as the checkpoint, which is the common case, not
+   * an edge case. Omit `since` (and leave `baseBalance` at 0) to sum the
+   * complete history from scratch instead.
    */
-  async updateAccountBalance(
+  private async computeLedgerBalance(
     userId: string,
     accountId: string,
-    tx?: Prisma.TransactionClient
+    client: Prisma.TransactionClient | typeof db,
+    baseBalance: Decimal = new Decimal(0),
+    since: Date | null = null
   ): Promise<Decimal> {
-    const client = this.getClient(tx);
+    const sinceFilter = since ? { createdAt: { gt: since } } : {};
 
-    const account = await client.account.findUnique({
-      where: { id: accountId },
-      select: { latestImportedBalance: true, lastSMSImportedAt: true }
-    });
-
-    let baseBalance = new Decimal(0);
-    let filterDate: Date | null = null;
-
-    if (
-      account?.latestImportedBalance !== null &&
-      account?.latestImportedBalance !== undefined &&
-      account?.lastSMSImportedAt !== null &&
-      account?.lastSMSImportedAt !== undefined
-    ) {
-      baseBalance = new Decimal(account.latestImportedBalance.toString());
-      filterDate = account.lastSMSImportedAt;
-    }
-
-    // 1. Calculate Inflows: INCOME (primary) + TRANSFER (destination)
     const incomeAgg = await client.transaction.aggregate({
-      where: {
-        userId,
-        accountId,
-        type: TransactionType.INCOME,
-        ...(filterDate ? { date: { gt: filterDate } } : {}),
-      },
+      where: { userId, accountId, type: TransactionType.INCOME, ...sinceFilter },
       _sum: { amount: true },
     });
     const transferInAgg = await client.transaction.aggregate({
-      where: {
-        userId,
-        toAccountId: accountId,
-        type: TransactionType.TRANSFER,
-        ...(filterDate ? { date: { gt: filterDate } } : {}),
-      },
+      where: { userId, toAccountId: accountId, type: TransactionType.TRANSFER, ...sinceFilter },
       _sum: { amount: true },
     });
 
     const inflows = new Decimal(incomeAgg._sum.amount?.toString() || "0")
       .add(new Decimal(transferInAgg._sum.amount?.toString() || "0"));
 
-    // 2. Calculate Outflows: EXPENSE, SAVINGS, DEBT_PAYMENT, REMITTANCE, TRANSFER (source)
     const outflowAgg = await client.transaction.aggregate({
       where: {
         userId,
@@ -149,16 +137,38 @@ export class AccountService {
             TransactionType.TRANSFER,
           ],
         },
-        ...(filterDate ? { date: { gt: filterDate } } : {}),
+        ...sinceFilter,
       },
       _sum: { amount: true },
     });
 
     const outflows = new Decimal(outflowAgg._sum.amount?.toString() || "0");
 
-    const derivedBalance = baseBalance.add(inflows).minus(outflows);
+    return baseBalance.add(inflows).minus(outflows);
+  }
 
-    // 3. Update the cached balance on the Account model
+  /**
+   * Recalculates the balance of a specific account using the ledger as the source of truth,
+   * then caches/updates the currentBalance column on the Account record.
+   */
+  async updateAccountBalance(
+    userId: string,
+    accountId: string,
+    tx?: Prisma.TransactionClient
+  ): Promise<Decimal> {
+    const client = this.getClient(tx);
+
+    const account = await client.account.findUnique({
+      where: { id: accountId },
+      select: { latestImportedBalance: true, lastSMSImportedAt: true },
+    });
+    const baseBalance = account?.latestImportedBalance
+      ? new Decimal(account.latestImportedBalance.toString())
+      : new Decimal(0);
+    const since = account?.latestImportedBalance ? account.lastSMSImportedAt : null;
+
+    const derivedBalance = await this.computeLedgerBalance(userId, accountId, client, baseBalance, since);
+
     await client.account.update({
       where: { id: accountId, userId },
       data: {
@@ -205,46 +215,33 @@ export class AccountService {
       throw new Error("ACCOUNT_NOT_FOUND");
     }
 
-    const incomeAgg = await client.transaction.aggregate({
-      where: { userId, accountId, type: TransactionType.INCOME },
-      _sum: { amount: true },
-    });
-    const transferInAgg = await client.transaction.aggregate({
-      where: { userId, toAccountId: accountId, type: TransactionType.TRANSFER },
-      _sum: { amount: true },
-    });
-
-    const inflows = new Decimal(incomeAgg._sum.amount?.toString() || "0")
-      .add(new Decimal(transferInAgg._sum.amount?.toString() || "0"));
-
-    const outflowAgg = await client.transaction.aggregate({
-      where: {
-        userId,
-        accountId,
-        type: {
-          in: [
-            TransactionType.EXPENSE,
-            TransactionType.SAVINGS,
-            TransactionType.DEBT_PAYMENT,
-            TransactionType.REMITTANCE,
-            TransactionType.TRANSFER,
-          ],
-        },
-      },
-      _sum: { amount: true },
-    });
-
-    const outflows = new Decimal(outflowAgg._sum.amount?.toString() || "0");
-    const ledgerBalance = inflows.minus(outflows);
-
-    const cachedBalance = new Decimal(account.currentBalance.toString());
     const latestImportedBalance = account.latestImportedBalance
       ? new Decimal(account.latestImportedBalance.toString())
       : null;
 
+    // Anchored the same way updateAccountBalance() derives currentBalance —
+    // cacheDifference is "would a fresh recompute, by the same method,
+    // land on what's cached right now," so it must use the same method.
+    const ledgerBalance = await this.computeLedgerBalance(
+      userId,
+      accountId,
+      client,
+      latestImportedBalance ?? new Decimal(0),
+      latestImportedBalance ? account.lastSMSImportedAt : null
+    );
+
+    // Full history from zero, deliberately NOT anchored — bankDifference
+    // asks a different question: "if every transaction we've ever recorded
+    // is correct and complete, does replaying all of it from scratch land
+    // on what the bank itself last reported," a data-completeness check
+    // that an anchored sum can't answer (it would trivially match its own
+    // anchor).
+    const fullHistoryBalance = await this.computeLedgerBalance(userId, accountId, client);
+
+    const cachedBalance = new Decimal(account.currentBalance.toString());
     const cacheDifference = cachedBalance.minus(ledgerBalance);
     const bankDifference = latestImportedBalance
-      ? ledgerBalance.minus(latestImportedBalance)
+      ? fullHistoryBalance.minus(latestImportedBalance)
       : null;
 
     let reconciliationStatus: "MATCHED" | "CACHE_MISMATCH" | "BANK_BALANCE_DIFFERENCE" | "REVIEW_REQUIRED" = "MATCHED";

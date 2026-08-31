@@ -16,6 +16,7 @@ import {
   LucideStar,
   LucideWrench,
   LucideArrowRight,
+  LucideRotateCw,
   type LucideIcon,
 } from "lucide-react";
 
@@ -195,6 +196,18 @@ export default function AccountsClient() {
     });
   };
 
+  const recalculateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/accounts/recalculate", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Recalculate failed");
+      return json.data as AccountItem[];
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["accounts"], data);
+    },
+  });
+
   const spendable = accounts.filter((a) => !isOwedAccount(a));
   const owed = accounts.filter(isOwedAccount);
 
@@ -210,7 +223,26 @@ export default function AccountsClient() {
       <PageHeader
         title="Accounts"
         description="Live balances across every bank, wallet, credit card, and BNPL app your SMS imports keep in sync — no manual entry, no laptop dependency."
+        action={
+          <button
+            type="button"
+            onClick={() => recalculateMutation.mutate()}
+            disabled={recalculateMutation.isPending}
+            title="Recomputes every balance from your full transaction history — fixes a stale number without waiting for a new transaction to trigger it"
+            className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-2 text-xs font-bold text-slate-300 transition-all hover:bg-slate-800 disabled:opacity-50"
+          >
+            <LucideRotateCw className={`h-3.5 w-3.5 ${recalculateMutation.isPending ? "animate-spin" : ""}`} aria-hidden="true" />
+            {recalculateMutation.isPending ? "Recalculating..." : "Recalculate Balances"}
+          </button>
+        }
       />
+
+      {recalculateMutation.error && (
+        <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-semibold text-red-400 border border-red-500/20">
+          <LucideCircleAlert className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+          {(recalculateMutation.error as Error).message}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-center py-12 text-slate-500">Loading accounts...</div>
