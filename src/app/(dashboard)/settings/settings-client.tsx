@@ -276,12 +276,18 @@ export function SettingsClient() {
     },
   });
 
+  const [resyncDaysInput, setResyncDaysInput] = useState("7");
+
   const resyncGmailMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/settings/gmail-link/resync", { method: "POST" });
+    mutationFn: async (days: number) => {
+      const res = await fetch("/api/settings/gmail-link/resync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Resync failed");
-      return json.data as { transactionsProcessed: number };
+      return json.data as { transactionsProcessed: number; days: number };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["gmail-link-status"] });
@@ -1256,22 +1262,41 @@ export function SettingsClient() {
               )}
               {resyncGmailMutation.isSuccess && (
                 <p className="text-[11px] text-emerald-400">
-                  Resync complete — checked {resyncGmailMutation.data.transactionsProcessed} email{resyncGmailMutation.data.transactionsProcessed === 1 ? "" : "s"} from ENBD and Mashreq (last 7 days).
+                  Resync complete — checked {resyncGmailMutation.data.transactionsProcessed} email{resyncGmailMutation.data.transactionsProcessed === 1 ? "" : "s"} from ENBD and Mashreq (last {resyncGmailMutation.data.days} {resyncGmailMutation.data.days === 1 ? "day" : "days"}).
                 </p>
               )}
               {resyncGmailMutation.error && (
                 <p className="text-[11px] text-rose-400">{(resyncGmailMutation.error as Error).message}</p>
               )}
+              <div className="flex items-center gap-2">
+                <label htmlFor="gmail-resync-days" className="text-[11px] text-slate-400 shrink-0">
+                  Re-check last
+                </label>
+                <input
+                  id="gmail-resync-days"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={30}
+                  value={resyncDaysInput}
+                  onChange={(e) => setResyncDaysInput(e.target.value)}
+                  className="w-16 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-center text-xs text-white outline-none focus:border-indigo-500"
+                />
+                <span className="text-[11px] text-slate-400">days (1–30)</span>
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => resyncGmailMutation.mutate()}
+                  onClick={() => {
+                    const days = Math.min(30, Math.max(1, Math.round(Number(resyncDaysInput)) || 7));
+                    resyncGmailMutation.mutate(days);
+                  }}
                   disabled={resyncGmailMutation.isPending}
-                  title="Re-checks the last 7 days of mail from ENBD and Mashreq — useful after a new bank email format gets added, to pick up a transaction that failed before support for it existed."
+                  title="Re-checks mail from ENBD and Mashreq over the chosen window — useful after a new bank email format gets added, to pick up a transaction that failed before support for it existed."
                   className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
                 >
                   <LucideRotateCw className={`h-3.5 w-3.5 ${resyncGmailMutation.isPending ? "animate-spin" : ""}`} />
-                  {resyncGmailMutation.isPending ? "Resyncing..." : "Resync Last 7 Days"}
+                  {resyncGmailMutation.isPending ? "Resyncing..." : "Resync"}
                 </button>
                 <button
                   type="button"
