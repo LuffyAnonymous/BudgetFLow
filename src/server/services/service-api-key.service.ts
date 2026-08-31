@@ -41,6 +41,7 @@ export const SERVICE_API_SCOPES = [
   "remittances:write",
   "categories:read",
   "accounts:read",
+  "accounts:write",
   "automation:trigger", // recurring evaluate, monthly rollover, notifications evaluate
 ] as const;
 

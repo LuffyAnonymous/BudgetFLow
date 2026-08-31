@@ -167,6 +167,9 @@ model Account {
   // (like a BNPL account) instead of spendable money, and excluded from
   // "Total Available Money" on the Accounts page.
   isCreditCard          Boolean     @default(false)
+  /// At most one per user — enforced by a partial unique index in the
+  /// migration (Prisma has no native "unique among true values" constraint).
+  isPrimary             Boolean     @default(false)
   currentBalance        Decimal     @default(0) @db.Decimal(12, 2)
   latestImportedBalance Decimal?    @db.Decimal(12, 2)
   lastSMSImportedAt     DateTime?

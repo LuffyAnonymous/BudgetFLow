@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import {
@@ -11,6 +12,7 @@ import {
   LucideCircleCheck,
   LucideCircleAlert,
   LucideClock,
+  LucideStar,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,6 +21,7 @@ interface AccountItem {
   type: string;
   name: string;
   isCreditCard: boolean;
+  isPrimary: boolean;
   currentBalance: string;
   latestImportedBalance: string | null;
   lastSMSImported: string | null;
@@ -80,6 +83,9 @@ function formatAED(value: string): string {
 }
 
 export default function AccountsClient() {
+  const queryClient = useQueryClient();
+  const [primaryError, setPrimaryError] = useState("");
+
   const { data: accounts = [], isLoading } = useQuery<AccountItem[]>({
     queryKey: ["accounts"],
     queryFn: async () => {
@@ -88,6 +94,39 @@ export default function AccountsClient() {
       return json.data || [];
     },
     refetchInterval: 2 * 60 * 1000,
+  });
+
+  const setPrimaryMutation = useMutation({
+    mutationFn: async (accountId: string) => {
+      const res = await fetch(`/api/accounts/${accountId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPrimary: true }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) {
+        throw new Error(json.error?.message || "Failed to set primary account");
+      }
+      return json.data as AccountItem[];
+    },
+    onMutate: async (accountId) => {
+      setPrimaryError("");
+      await queryClient.cancelQueries({ queryKey: ["accounts"] });
+      const previous = queryClient.getQueryData<AccountItem[]>(["accounts"]);
+      queryClient.setQueryData<AccountItem[]>(["accounts"], (old) =>
+        (old ?? []).map((a) => ({ ...a, isPrimary: a.id === accountId }))
+      );
+      return { previous };
+    },
+    onError: (err: Error, _accountId, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["accounts"], context.previous);
+      }
+      setPrimaryError(err.message);
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["accounts"], data);
+    },
   });
 
   const spendable = accounts.filter((a) => !isOwedAccount(a));
@@ -139,6 +178,13 @@ export default function AccountsClient() {
             </div>
           </div>
 
+          {primaryError && (
+            <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-semibold text-red-400 border border-red-500/20">
+              <LucideCircleAlert className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              {primaryError}
+            </div>
+          )}
+
           {/* Per-institution cards */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {accounts.map((acc) => {
@@ -159,6 +205,21 @@ export default function AccountsClient() {
                         <span className="text-[10px] uppercase tracking-wide text-slate-500">{labelFor(acc)}</span>
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => !acc.isPrimary && setPrimaryMutation.mutate(acc.id)}
+                      disabled={acc.isPrimary || setPrimaryMutation.isPending}
+                      title={acc.isPrimary ? "Your main account" : "Set as main account"}
+                      aria-label={acc.isPrimary ? "Main account" : "Set as main account"}
+                      aria-pressed={acc.isPrimary}
+                      className="shrink-0 rounded-lg p-1.5 text-slate-600 transition-colors hover:text-indigo-400 disabled:cursor-default disabled:hover:text-slate-600"
+                    >
+                      <LucideStar
+                        className={acc.isPrimary ? "h-4 w-4 text-indigo-400" : "h-4 w-4"}
+                        fill={acc.isPrimary ? "currentColor" : "none"}
+                        aria-hidden="true"
+                      />
+                    </button>
                   </div>
 
                   <p className="text-2xl font-bold text-white tabular-nums tracking-tight">

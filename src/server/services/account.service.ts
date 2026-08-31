@@ -8,7 +8,7 @@ export class AccountService {
   }
 
   /**
-   * Auto-provisions the 3 default accounts for a user if they do not exist.
+   * Auto-provisions the default accounts for a user if they do not exist.
    */
   async ensureDefaultAccounts(userId: string, tx?: Prisma.TransactionClient): Promise<void> {
     const client = this.getClient(tx);
@@ -264,6 +264,35 @@ export class AccountService {
       reconciliationStatus,
       reconciledAt: new Date(),
     };
+  }
+
+  /**
+   * Designates one account as the user's primary — unsets any other primary
+   * first so the partial unique index (Account_userId_isPrimary_unique)
+   * never has more than one true value per user to enforce against.
+   */
+  async setPrimaryAccount(userId: string, accountId: string): Promise<Account> {
+    return db.$transaction(async (tx) => {
+      const account = await tx.account.findFirst({ where: { id: accountId, userId } });
+      if (!account) {
+        throw new Error("ACCOUNT_NOT_FOUND: Account not found or unauthorized.");
+      }
+
+      await tx.account.updateMany({
+        where: { userId, isPrimary: true },
+        data: { isPrimary: false },
+      });
+
+      return tx.account.update({
+        where: { id: accountId },
+        data: { isPrimary: true },
+      });
+    });
+  }
+
+  /** Returns the user's primary account, or null if none has been set yet. */
+  async getPrimaryAccount(userId: string, tx?: Prisma.TransactionClient): Promise<Account | null> {
+    return this.getClient(tx).account.findFirst({ where: { userId, isPrimary: true } });
   }
 }
 
