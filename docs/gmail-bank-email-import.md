@@ -136,11 +136,14 @@ sample email — BudgetFlow's import parsers are never built from a guessed form
 A push notification only fires once, the moment an email arrives. If that email failed because
 its format wasn't supported yet, and support gets added *afterward*, that message doesn't
 automatically get a second try — its original push notification already fired and won't fire
-again. **Settings → Gmail → Resync All Bank Emails** re-scans every email ever received from
-ENBD and Mashreq (not a recent window — the full history, filtered server-side by Gmail's own
-search so nothing else in the inbox is ever touched) through the same pipeline, so a newly
-supported format picks up any past transaction that failed on it. Already-imported transactions
-are skipped (same message-ID dedup as normal sync), so it's safe to run repeatedly.
+again. **Settings → Gmail → Resync Last 7 Days** re-scans the last 7 days of email from ENBD and
+Mashreq (filtered server-side by Gmail's own search — by both sender and date — so nothing else
+in the inbox is ever touched) through the same pipeline, so a newly supported format picks up
+any recent transaction that failed on it. Already-imported transactions are skipped (same
+message-ID dedup as normal sync), so it's safe to run repeatedly. A transaction older than 7
+days that failed before its format was supported won't be picked up by this — clear it from the
+Failed tab and re-enter it manually, or ask for the resync window to be widened if this becomes
+a recurring need.
 
 ## 8. Disconnecting
 

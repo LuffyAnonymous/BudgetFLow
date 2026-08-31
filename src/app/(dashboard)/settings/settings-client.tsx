@@ -1194,7 +1194,7 @@ export function SettingsClient() {
               )}
               {resyncGmailMutation.isSuccess && (
                 <p className="text-[11px] text-emerald-400">
-                  Resync complete — checked {resyncGmailMutation.data.transactionsProcessed} email{resyncGmailMutation.data.transactionsProcessed === 1 ? "" : "s"} from ENBD and Mashreq.
+                  Resync complete — checked {resyncGmailMutation.data.transactionsProcessed} email{resyncGmailMutation.data.transactionsProcessed === 1 ? "" : "s"} from ENBD and Mashreq (last 7 days).
                 </p>
               )}
               {resyncGmailMutation.error && (
@@ -1205,11 +1205,11 @@ export function SettingsClient() {
                   type="button"
                   onClick={() => resyncGmailMutation.mutate()}
                   disabled={resyncGmailMutation.isPending}
-                  title="Re-checks every email ever received from ENBD and Mashreq — useful after a new bank email format gets added, to pick up a transaction that failed before support for it existed."
+                  title="Re-checks the last 7 days of mail from ENBD and Mashreq — useful after a new bank email format gets added, to pick up a transaction that failed before support for it existed."
                   className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
                 >
                   <LucideRotateCw className={`h-3.5 w-3.5 ${resyncGmailMutation.isPending ? "animate-spin" : ""}`} />
-                  {resyncGmailMutation.isPending ? "Resyncing..." : "Resync All Bank Emails"}
+                  {resyncGmailMutation.isPending ? "Resyncing..." : "Resync Last 7 Days"}
                 </button>
                 <button
                   type="button"

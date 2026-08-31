@@ -1,15 +1,15 @@
 /**
  * POST /api/settings/gmail-link/resync
  *
- * Manual re-scan of every message ever received from a recognized bank
- * domain (ENBD, Mashreq), bypassing the Gmail History API cursor. Needed
- * when a parser is added *after* an email already arrived and failed with
+ * Manual re-scan of the last 7 days of mail from a recognized bank domain
+ * (ENBD, Mashreq), bypassing the Gmail History API cursor. Needed when a
+ * parser is added *after* an email already arrived and failed with
  * "recognized bank, unsupported format" — a normal push notification only
  * fires once, at arrival, so that message never gets a second pass through
  * the pipeline on its own once support for its format ships. Gmail's own
- * search filters by sender server-side, and each match still runs through
- * the exact same domain-allowlist + processEmail() pipeline as the normal
- * sync/push path.
+ * search filters by both sender and date server-side, and each match still
+ * runs through the exact same domain-allowlist + processEmail() pipeline
+ * as the normal sync/push path.
  */
 
 import { NextResponse } from "next/server";

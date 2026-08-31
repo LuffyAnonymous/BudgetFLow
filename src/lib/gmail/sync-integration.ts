@@ -88,19 +88,21 @@ export async function syncGmailIntegration(
   return { transactionsProcessed };
 }
 
+const RESYNC_WINDOW_DAYS = 7;
+
 /**
- * Manually re-scans every message ever received from a recognized bank
- * domain (not a recent window — the entire mail history), bypassing the
- * History API cursor entirely. A normal push notification only fires once,
- * the moment an email first arrives — if that email failed because no
- * parser understood its format yet, adding a parser later doesn't get a
- * second chance at that same message through the normal sync path (its
- * historyId has already been passed). This is that second chance: Gmail's
- * own search does the sender filtering server-side, and every matched
- * message still goes through the same domain-allowlist gate and
- * processEmail() pipeline as the normal sync, so a message already
- * successfully imported is skipped (externalMessageId dedup) and nothing
- * from an unrecognized domain is ever touched.
+ * Manually re-scans the last RESYNC_WINDOW_DAYS of mail from a recognized
+ * bank domain, bypassing the History API cursor entirely. A normal push
+ * notification only fires once, the moment an email first arrives — if
+ * that email failed because no parser understood its format yet, adding a
+ * parser later doesn't get a second chance at that same message through
+ * the normal sync path (its historyId has already been passed). This is
+ * that second chance: Gmail's own search does both the sender and the
+ * date filtering server-side, and every matched message still goes through
+ * the same domain-allowlist gate and processEmail() pipeline as the normal
+ * sync, so a message already successfully imported is skipped
+ * (externalMessageId dedup) and nothing from an unrecognized domain or
+ * outside the window is ever touched.
  */
 export async function resyncGmailIntegration(
   integration: GmailIntegration
@@ -108,7 +110,7 @@ export async function resyncGmailIntegration(
   const refreshToken = await gmailIntegrationService.getDecryptedRefreshToken(integration);
   const client = new GmailClient(refreshToken);
 
-  const messageIds = await client.listAllMessageIdsFromDomains(getRecognizedBankDomains());
+  const messageIds = await client.listMessageIdsFromDomains(getRecognizedBankDomains(), RESYNC_WINDOW_DAYS);
   const transactionsProcessed = await processMessageIds(integration, client, messageIds);
 
   const newHistoryId = await client.getCurrentHistoryId();

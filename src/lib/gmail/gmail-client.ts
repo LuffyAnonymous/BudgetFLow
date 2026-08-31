@@ -114,15 +114,17 @@ export class GmailClient {
   }
 
   /**
-   * Every message ever sent from any of the given domains, regardless of
-   * age — for a manual resync that needs to check a bank's *entire* mail
-   * history, not just a recent window. Gmail's own search does the sender
-   * filtering server-side (so this never touches anything from a domain
-   * that isn't listed), paginated with a generous but finite cap so a
-   * pathological mailbox can't loop forever.
+   * Every message from any of the given domains within the last
+   * `withinDays` days — for a manual resync that needs to re-check a
+   * bank's recent mail, not just what's arrived since the last sync
+   * cursor. Gmail's own search does both the sender filtering and the
+   * date filtering server-side (so this never touches anything from a
+   * domain that isn't listed, or anything older than the window),
+   * paginated with a generous but finite cap so a pathological mailbox
+   * can't loop forever.
    */
-  async listAllMessageIdsFromDomains(domains: string[]): Promise<string[]> {
-    const q = `from:(${domains.join(" OR ")})`;
+  async listMessageIdsFromDomains(domains: string[], withinDays: number): Promise<string[]> {
+    const q = `from:(${domains.join(" OR ")}) newer_than:${withinDays}d`;
     const messageIds: string[] = [];
     let pageToken: string | undefined;
     let pagesFetched = 0;
