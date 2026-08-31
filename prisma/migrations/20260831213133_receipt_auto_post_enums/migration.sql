@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "TransactionOrigin" ADD VALUE 'DOCUMENT_IMPORT';
+ALTER TYPE "NotificationType" ADD VALUE 'IMPORT_AUTO_POSTED';

@@ -126,42 +126,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const accounts = await tx.account.findMany({ where: { userId } });
       const enbdAcc = accounts.find((a) => a.type === AccountType.EMIRATES_NBD)!;
 
-      let primaryAccId: string | null = null;
+      let primaryAccId: string;
       if (cardLower.includes("emirates nbd") || cardLower.includes("enbd")) {
         primaryAccId = enbdAcc.id;
       } else {
-        const walletAcc = accounts.find((a) => a.name.toLowerCase() === "wallet import");
-        if (walletAcc) {
-          primaryAccId = walletAcc.id;
-        }
-      }
-
-      if (!primaryAccId) {
-        // Unknown card: Save as REVIEW_REQUIRED
-        console.log("[Apple Wallet Import] Card is unmapped/unknown. Saving as review required.", { card });
-        
-        const importedTx = await tx.importedTransaction.create({
-          data: {
-            userId,
-            source: ImportSource.APPLE_WALLET,
-            institution: card || "Unknown Wallet",
-            status: ImportStatus.REVIEW_REQUIRED,
-            confidence: ImportConfidence.LOW,
-            rawPayload: JSON.stringify(parsed.data),
-            payloadHash,
-            fingerprint,
-            idempotencyKey: idempotencyKey || null,
-            receivedAt: dateObj,
-            financialDate: dateObj,
-            parsedAmount: amount,
-            parsedCurrency: currency.toUpperCase(),
-            parsedDescription: normalizedMerchant,
-            failureCode: "UNKNOWN_CARD",
-            failureMessage: "The card associated with the wallet transaction is unknown.",
-          },
-        });
-
-        return { outcome: "review_required" as const, importedTransactionId: importedTx.id };
+        // A card wallet doesn't recognize gets its own generic fallback
+        // account instead of blocking on review — the same "unrecognized
+        // sender still gets tracked, never dropped" pattern SMS import
+        // already uses (OTHER_BANK). Find-or-create keyed by name, so every
+        // unmapped card converges on the same "Wallet Import" account
+        // rather than one per card.
+        const walletAcc = await accountService.ensureAccountForInstitution(
+          userId,
+          { type: AccountType.OTHER_BANK, name: "Wallet Import" },
+          tx
+        );
+        primaryAccId = walletAcc.id;
       }
 
       // Auto-Post Expense
@@ -226,22 +206,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
 
       return {
-        outcome: "processed" as const,
         transactionId: ledgerTx.id,
         importedTransactionId: importedTx.id,
       };
     });
-
-    if (result.outcome === "review_required") {
-      return NextResponse.json({
-        success: true,
-        outcome: "review_required",
-        importedTransactionId: result.importedTransactionId,
-        merchant: normalizedMerchant,
-        amount,
-        currency: currency.toUpperCase(),
-      }, { status: 202 });
-    }
 
     return NextResponse.json({
       success: true,

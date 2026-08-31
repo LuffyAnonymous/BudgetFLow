@@ -96,7 +96,7 @@ describe("Apple Wallet Import Endpoint", () => {
     expect(Number(account?.currentBalance)).toBe(900);
   });
 
-  it("saves as review_required (HTTP 202) for unknown card when no Wallet Import account exists", async () => {
+  it("auto-creates a Wallet Import fallback account and posts to it for an unmapped card", async () => {
     const req = makeRequest({
       merchant: "Zoom",
       amount: 20,
@@ -105,18 +105,21 @@ describe("Apple Wallet Import Endpoint", () => {
     });
 
     const res = await POST(req);
-    expect(res.status).toBe(202);
+    expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.success).toBe(true);
-    expect(json.outcome).toBe("review_required");
-    expect(json.importedTransactionId).toBeDefined();
+    expect(json.outcome).toBe("processed");
+    expect(json.transactionId).toBeDefined();
 
-    // Verify no ledger transaction was created
+    const account = await db.account.findFirst({ where: { userId, name: "Wallet Import" } });
+    expect(account).not.toBeNull();
+    expect(Number(account?.currentBalance)).toBe(-20);
+
     const txCount = await db.transaction.count({ where: { userId } });
-    expect(txCount).toBe(0);
+    expect(txCount).toBe(1);
   });
 
-  it("auto-posts to Wallet Import account if it exists for unknown card", async () => {
+  it("reuses an existing Wallet Import account for a second unmapped card instead of creating another", async () => {
     // Create "Wallet Import" account
     const oneHourAgo = new Date(Date.now() - 3600 * 1000);
     await db.account.create({

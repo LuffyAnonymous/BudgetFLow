@@ -2,17 +2,38 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { ImportSource, ImportStatus, Prisma } from "@prisma/client";
+import {
+  ImportSource,
+  ImportStatus,
+  NotificationType,
+  NotificationSeverity,
+  Prisma,
+  TransactionOrigin,
+  TransactionType,
+  CashFlowDirection,
+  AccountType,
+  CategoryType,
+} from "@prisma/client";
 import { validateFileMagicBytes } from "@/server/utils/file-magic";
 import { MAX_FILE_SIZE_BYTES, AttachmentService } from "@/server/services/attachment.service";
 import { extractReceiptTransaction } from "@/imports/engine/ai-receipt-extractor";
+import { accountService } from "@/server/services/account.service";
 
 /**
  * POST /api/imports/receipt
  * Upload a photographed/scanned receipt or PDF invoice. The transaction is
- * extracted via AI vision and always lands as a REVIEW_REQUIRED import —
- * unlike a bank SMS, there's no available-balance to cross-check a receipt
- * against, so this never auto-posts.
+ * extracted via AI vision.
+ *
+ * A successful extraction auto-posts straight to the ledger — attributed to
+ * your primary account if you've set one (Accounts page), else a shared
+ * "Receipts" fallback account — and raises an IMPORT_AUTO_POSTED
+ * notification so a misread amount is still catchable after the fact,
+ * rather than blocking on manual review before anything lands.
+ *
+ * Only a genuine extraction failure (nothing readable on the receipt at
+ * all) still lands as REVIEW_REQUIRED — there's no amount/vendor to auto-
+ * post in that case, unlike a bank SMS this never has a balance line to
+ * fall back on.
  *
  * Body: multipart/form-data — file: File
  */
@@ -52,7 +73,7 @@ export async function POST(req: NextRequest) {
 
   const payloadHash = createHash("sha256").update(buffer).digest("hex");
 
-  // Same content re-uploaded — treat as a duplicate of the existing review item.
+  // Same content re-uploaded — treat as a duplicate of the existing item.
   const existingByFingerprint = await db.importedTransaction.findUnique({
     where: { userId_fingerprint: { userId, fingerprint: payloadHash } },
     select: { id: true },
@@ -67,41 +88,127 @@ export async function POST(req: NextRequest) {
   const extraction = await extractReceiptTransaction(buffer, mimeType);
   const now = new Date();
 
-  const importedTx = await db.importedTransaction.create({
-    data: {
+  if (!extraction) {
+    // Nothing readable at all — there's no amount/vendor to auto-post, so
+    // this is the one case that still genuinely needs manual entry.
+    const importedTx = await db.importedTransaction.create({
+      data: {
+        userId,
+        source: ImportSource.DOCUMENT,
+        institution: "Receipt Upload",
+        status: ImportStatus.REVIEW_REQUIRED,
+        extractionMethod: "AI_VISION",
+        payloadHash,
+        fingerprint: payloadHash,
+        receivedAt: now,
+        financialDate: now,
+        failureCode: "EXTRACTION_FAILED",
+        failureMessage: "Could not automatically read this receipt/invoice. Fill in the details manually below.",
+      },
+    });
+
+    try {
+      await AttachmentService.upload(userId, { type: "importedTransaction", id: importedTx.id }, file.name, buffer);
+    } catch (err) {
+      console.error("[imports/receipt] Failed to attach uploaded file to import", err);
+    }
+
+    return NextResponse.json({
+      outcome: "extraction_failed",
+      importedTransactionId: importedTx.id,
+      parsedAmount: null,
+      currency: null,
+      vendor: null,
+    }, { status: 202 });
+  }
+
+  const result = await db.$transaction(async (tx) => {
+    const primaryAccount = await accountService.getPrimaryAccount(userId, tx);
+    const account = primaryAccount ?? (await accountService.ensureAccountForInstitution(
       userId,
-      source: ImportSource.DOCUMENT,
-      institution: extraction?.vendor || "Receipt Upload",
-      status: ImportStatus.REVIEW_REQUIRED,
-      extractionMethod: "AI_VISION",
-      payloadHash,
-      fingerprint: payloadHash,
-      receivedAt: now,
-      financialDate: extraction?.transactionDate ?? now,
-      parsedAmount: extraction ? new Prisma.Decimal(extraction.amount.toFixed(2)) : null,
-      parsedCurrency: extraction?.currency ?? null,
-      parsedDescription: extraction?.description ?? extraction?.vendor ?? null,
-      failureCode: extraction ? null : "EXTRACTION_FAILED",
-      failureMessage: extraction
-        ? null
-        : "Could not automatically read this receipt/invoice. Fill in the details manually below.",
-    },
+      { type: AccountType.OTHER_BANK, name: "Receipts" },
+      tx
+    ));
+
+    let category = await tx.category.findFirst({
+      where: { userId, name: { equals: "Uncategorized", mode: "insensitive" } },
+    });
+    if (!category) {
+      category = await tx.category.create({
+        data: { userId, name: "Uncategorized", type: CategoryType.VARIABLE_EXPENSE },
+      });
+    }
+
+    const financialDate = extraction.transactionDate ?? now;
+
+    const ledgerTx = await tx.transaction.create({
+      data: {
+        userId,
+        date: financialDate,
+        categoryId: category.id,
+        description: extraction.description || extraction.vendor || "Receipt Upload",
+        amount: new Prisma.Decimal(extraction.amount.toFixed(2)),
+        paymentMethod: "Receipt Upload",
+        type: TransactionType.EXPENSE,
+        cashFlowDirection: CashFlowDirection.OUTFLOW,
+        origin: TransactionOrigin.DOCUMENT_IMPORT,
+        accountId: account.id,
+      },
+    });
+
+    await accountService.updateAccountBalance(userId, account.id, tx);
+
+    const importedTx = await tx.importedTransaction.create({
+      data: {
+        userId,
+        source: ImportSource.DOCUMENT,
+        institution: extraction.vendor || "Receipt Upload",
+        status: ImportStatus.PROCESSED,
+        extractionMethod: "AI_VISION",
+        payloadHash,
+        fingerprint: payloadHash,
+        receivedAt: now,
+        financialDate,
+        parsedAmount: new Prisma.Decimal(extraction.amount.toFixed(2)),
+        parsedCurrency: extraction.currency,
+        parsedDescription: extraction.description ?? extraction.vendor ?? null,
+        transactionId: ledgerTx.id,
+        processedAt: now,
+      },
+    });
+
+    await tx.notification.create({
+      data: {
+        userId,
+        type: NotificationType.IMPORT_AUTO_POSTED,
+        severity: NotificationSeverity.INFO,
+        title: "Receipt imported",
+        message: `${extraction.currency} ${extraction.amount.toFixed(2)} at ${extraction.vendor || "unknown vendor"} was read from your receipt and posted to ${account.name}. Check the amount if it looks off.`,
+        eventKey: `receipt-auto-posted-${importedTx.id}`,
+        relatedEntityType: "Transaction",
+        relatedEntityId: ledgerTx.id,
+        destinationPath: "/transactions",
+      },
+    });
+
+    return { transactionId: ledgerTx.id, importedTransactionId: importedTx.id };
   });
 
   try {
-    await AttachmentService.upload(userId, { type: "importedTransaction", id: importedTx.id }, file.name, buffer);
+    await AttachmentService.upload(userId, { type: "importedTransaction", id: result.importedTransactionId }, file.name, buffer);
   } catch (err) {
-    // The extraction (or extraction-failed placeholder) is still useful on
-    // its own — degrade gracefully rather than losing the review item over
-    // a storage-quota/limit error on the attachment itself.
+    // The transaction already posted successfully — degrade gracefully
+    // rather than losing that over a storage-quota/limit error on the
+    // attachment itself.
     console.error("[imports/receipt] Failed to attach uploaded file to import", err);
   }
 
   return NextResponse.json({
-    outcome: extraction ? "review_required" : "extraction_failed",
-    importedTransactionId: importedTx.id,
-    parsedAmount: extraction?.amount.toFixed(2) ?? null,
-    currency: extraction?.currency ?? null,
-    vendor: extraction?.vendor ?? null,
-  }, { status: 202 });
+    outcome: "processed",
+    transactionId: result.transactionId,
+    importedTransactionId: result.importedTransactionId,
+    parsedAmount: extraction.amount.toFixed(2),
+    currency: extraction.currency,
+    vendor: extraction.vendor ?? null,
+  }, { status: 200 });
 }

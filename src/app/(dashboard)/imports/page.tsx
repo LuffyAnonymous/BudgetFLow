@@ -3,12 +3,14 @@
 /**
  * /imports — Import Activity page
  *
- * SMS imports post automatically (no review step) — this page shows recent
- * activity, badged by confidence, so anything auto-posted at MEDIUM/LOW
- * confidence or flagged with an ambiguous direction can be corrected after
- * the fact. Uploaded receipts still go through manual review here (there's
- * no bank balance to trust their amount against), with the same
- * confirm/reject flow as before.
+ * SMS, email, and receipt imports all post automatically now (no review
+ * step) — this page shows recent activity, badged by confidence, so
+ * anything auto-posted at MEDIUM/LOW confidence, flagged with an ambiguous
+ * direction, or read from a receipt can be corrected after the fact. The
+ * one exception: a receipt upload that AI vision genuinely couldn't read
+ * (no amount found at all) still lands here for manual entry, since
+ * there's nothing to auto-post — unlike a bank SMS, a receipt has no
+ * balance line to fall back on.
  */
 
 import { useRef, useState } from "react";
@@ -213,7 +215,7 @@ export default function ImportsPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <PageHeader
           title="Import Activity"
-          description="SMS imports post automatically. Review anything flagged with MEDIUM/LOW confidence, or confirm an uploaded receipt."
+          description="Everything posts automatically — SMS, email, and receipts. Double-check anything flagged with MEDIUM/LOW confidence, or fill in a receipt AI vision couldn't read."
         />
         <div>
           <input
@@ -273,7 +275,7 @@ export default function ImportsPage() {
         <div className="flex gap-2 overflow-x-auto">
           {[
             { id: "PROCESSED", label: "Recent Imports" },
-            { id: "REVIEW_REQUIRED", label: "Pending Receipts" },
+            { id: "REVIEW_REQUIRED", label: "Needs Manual Entry" },
             { id: "REJECTED,FAILED", label: "Failed" },
           ].map((tab) => (
             <button

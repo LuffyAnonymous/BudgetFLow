@@ -105,6 +105,7 @@ enum TransactionOrigin {
   CSV_IMPORT
   SYSTEM
   APPLE_WALLET
+  DOCUMENT_IMPORT
 }
 
 model User {
@@ -478,6 +479,7 @@ enum NotificationType {
   RECURRING_ENTRY_CREATED
   ROLLOVER_AVAILABLE
   GMAIL_CONNECTION_ERROR
+  IMPORT_AUTO_POSTED
 }
 
 enum NotificationSeverity {
