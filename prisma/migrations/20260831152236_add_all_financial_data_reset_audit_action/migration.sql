@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "AuditAction" ADD VALUE 'ALL_FINANCIAL_DATA_RESET';
+

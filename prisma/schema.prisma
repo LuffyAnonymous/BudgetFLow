@@ -624,6 +624,8 @@ enum AuditAction {
   TELEGRAM_LINKED
   EMAIL_VERIFIED
   EMAIL_VERIFICATION_SENT
+  // Destructive account-wide actions
+  ALL_FINANCIAL_DATA_RESET
 }
 
 enum AuditEntityType {

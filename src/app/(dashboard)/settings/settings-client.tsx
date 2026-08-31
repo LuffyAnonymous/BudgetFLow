@@ -21,6 +21,8 @@ import {
   LucideMail,
 } from "lucide-react";
 
+const RESET_CONFIRMATION_PHRASE = "DELETE EVERYTHING";
+
 const IMPORT_ENDPOINT = "https://budgetflow-drab-nine.vercel.app/api/imports/sms";
 
 function buildDeviceSnippet(device: "iphone" | "android", token: string) {
@@ -101,6 +103,9 @@ export function SettingsClient() {
   const [showCurrentPass, setShowCurrentPass] = useState(false);
   const [showNewPass, setShowNewPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
+
+  // Danger Zone — full financial data reset
+  const [resetConfirmInput, setResetConfirmInput] = useState("");
 
   // Token state
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
@@ -230,6 +235,43 @@ export function SettingsClient() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["gmail-link-status"] });
+    },
+  });
+
+  const resetAllDataMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/reset-all-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: resetConfirmInput }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Reset failed");
+      return json.data as {
+        transactionsDeleted: number;
+        debtPaymentsDeleted: number;
+        savingTransactionsDeleted: number;
+        remittancesDeleted: number;
+        importedTransactionsDeleted: number;
+        attachmentsDeleted: number;
+        accountsReset: number;
+        debtsReset: number;
+        savingGoalsReset: number;
+      };
+    },
+    onSuccess: () => {
+      setResetConfirmInput("");
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["debts"] });
+      queryClient.invalidateQueries({ queryKey: ["debtPayments"] });
+      queryClient.invalidateQueries({ queryKey: ["debtDetail"] });
+      queryClient.invalidateQueries({ queryKey: ["savings"] });
+      queryClient.invalidateQueries({ queryKey: ["remittances"] });
+      queryClient.invalidateQueries({ queryKey: ["imports"] });
+      queryClient.invalidateQueries({ queryKey: ["budgets"] });
+      queryClient.invalidateQueries({ queryKey: ["salary-status"] });
     },
   });
 
@@ -1241,6 +1283,82 @@ export function SettingsClient() {
               </a>
             </div>
           )}
+        </div>
+
+        {/* Danger Zone */}
+        <div className="rounded-2xl border border-red-900/50 bg-red-950/10 p-6 backdrop-blur-sm space-y-4">
+          <div className="flex items-center gap-3 border-b border-red-900/40 pb-4">
+            <LucideAlertCircle className="h-5 w-5 text-red-500" />
+            <div>
+              <h2 className="text-lg font-semibold text-white">Danger Zone</h2>
+              <p className="text-xs text-slate-400">Irreversible actions. There is no undo.</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-red-900/40 bg-slate-950/40 p-4 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-red-400">Delete all financial data</p>
+              <p className="mt-1 text-xs text-slate-400 leading-relaxed">
+                Permanently deletes every transaction, debt payment, saving contribution, remittance, and
+                imported-transaction record, and resets every account, debt, and savings-goal balance back to
+                its starting state. Your accounts, categories, debts, and goals themselves are kept — only
+                their history and balances are wiped.
+              </p>
+            </div>
+
+            {resetAllDataMutation.isSuccess && (
+              <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs text-emerald-400">
+                Reset complete — deleted {resetAllDataMutation.data.transactionsDeleted} transaction
+                {resetAllDataMutation.data.transactionsDeleted === 1 ? "" : "s"}, {resetAllDataMutation.data.debtPaymentsDeleted} debt payment
+                {resetAllDataMutation.data.debtPaymentsDeleted === 1 ? "" : "s"}, {resetAllDataMutation.data.savingTransactionsDeleted} saving
+                contribution{resetAllDataMutation.data.savingTransactionsDeleted === 1 ? "" : "s"}, {resetAllDataMutation.data.remittancesDeleted} remittance
+                {resetAllDataMutation.data.remittancesDeleted === 1 ? "" : "s"}, and {resetAllDataMutation.data.importedTransactionsDeleted} import record
+                {resetAllDataMutation.data.importedTransactionsDeleted === 1 ? "" : "s"}. Reset {resetAllDataMutation.data.accountsReset} account
+                {resetAllDataMutation.data.accountsReset === 1 ? "" : "s"}, {resetAllDataMutation.data.debtsReset} debt
+                {resetAllDataMutation.data.debtsReset === 1 ? "" : "s"}, and {resetAllDataMutation.data.savingGoalsReset} savings goal
+                {resetAllDataMutation.data.savingGoalsReset === 1 ? "" : "s"} to zero.
+              </div>
+            )}
+            {resetAllDataMutation.error && (
+              <div className="flex items-center gap-2 rounded-lg bg-rose-500/10 border border-rose-500/20 p-3 text-xs text-rose-400">
+                <LucideAlertCircle className="h-4 w-4 shrink-0" />
+                {(resetAllDataMutation.error as Error).message}
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="reset-confirm-input" className="block text-xs font-semibold text-slate-400 mb-1">
+                Type <span className="font-mono text-red-400">{RESET_CONFIRMATION_PHRASE}</span> to confirm
+              </label>
+              <input
+                id="reset-confirm-input"
+                type="text"
+                value={resetConfirmInput}
+                onChange={(e) => setResetConfirmInput(e.target.value)}
+                placeholder={RESET_CONFIRMATION_PHRASE}
+                autoComplete="off"
+                className="w-full rounded-lg border border-red-900/40 bg-slate-900 px-3 py-2 text-sm text-white font-mono focus:border-red-500 focus:outline-none"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm("This permanently deletes ALL your transactions and resets every balance to zero. There is no undo. Continue?")) {
+                  resetAllDataMutation.mutate();
+                }
+              }}
+              disabled={resetConfirmInput !== RESET_CONFIRMATION_PHRASE || resetAllDataMutation.isPending}
+              className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 text-red-400 py-2.5 text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {resetAllDataMutation.isPending ? (
+                <LucideRotateCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <LucideTrash2 className="h-3.5 w-3.5" />
+              )}
+              {resetAllDataMutation.isPending ? "Deleting..." : "Delete All Financial Data"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
