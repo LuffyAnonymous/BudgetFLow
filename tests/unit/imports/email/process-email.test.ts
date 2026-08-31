@@ -269,4 +269,25 @@ describe("ImportService.processEmail", () => {
       expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
     }
   });
+
+  it("auto-posts a recognized, well-formed Emirates NBD account-deduction email", async () => {
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Be alert, stay safe.",
+      body: "AED 150.00 has been deducted from your account 014XXX70XXX01 for issuance of Telegraphic Transfer. The available balance is AED 1,350.48.",
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-enbd-deduction-1",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
+      expect(tx!.amount.toFixed(2)).toBe("150.00");
+      expect(tx!.origin).toBe("EMAIL_IMPORT");
+
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.institutionCode).toBe("ENBD");
+      expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
+    }
+  });
 });

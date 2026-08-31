@@ -21,6 +21,7 @@ import { mashreqEmailParser } from "./parsers/mashreq.parser";
 import { mashreqCardPurchaseEmailParser } from "./parsers/mashreq-card-purchase.parser";
 import { emiratesNbdAtmWithdrawalEmailParser } from "./parsers/emirates-nbd-atm-withdrawal.parser";
 import { emiratesNbdSalaryCreditEmailParser } from "./parsers/emirates-nbd-salary-credit.parser";
+import { emiratesNbdAccountDeductionEmailParser } from "./parsers/emirates-nbd-account-deduction.parser";
 
 const REGISTERED_PARSERS: IEmailParser[] = [
   emiratesNbdEmailParser,
@@ -28,6 +29,7 @@ const REGISTERED_PARSERS: IEmailParser[] = [
   mashreqCardPurchaseEmailParser,
   emiratesNbdAtmWithdrawalEmailParser,
   emiratesNbdSalaryCreditEmailParser,
+  emiratesNbdAccountDeductionEmailParser,
 ];
 
 export type EmailParserSelectionResult =

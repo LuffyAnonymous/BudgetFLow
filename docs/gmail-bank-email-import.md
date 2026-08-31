@@ -5,17 +5,19 @@ the same auto-post/flag-for-a-second-look/fail model as SMS import, applied to e
 Import runs on **Gmail push notifications** (real-time, as emails arrive), not on a polling
 schedule — no n8n, no third-party automation platform.
 
-Five email formats are fully supported today. From Emirates NBD (`OnlineBanking@emiratesnbd.com`
-or similar): **"Local Bank Transfer"** confirmations, **ATM withdrawal** confirmations, and
-**salary-credit** alerts (the first supported inflow format — everything else so far is an
-outflow). From Mashreq (`MashreqAlerts@mashreq.com`): the **"Transaction Notification"
+Six email formats are fully supported today. From Emirates NBD (`OnlineBanking@emiratesnbd.com`
+or similar): **"Local Bank Transfer"** confirmations, **ATM withdrawal** confirmations,
+**salary-credit** alerts (the first supported inflow format — everything else is an outflow),
+and generic **account-deduction** alerts ("AED X has been deducted from your account...for
+[reason]" — covers fees/charges/transfer costs, whatever reason text the bank fills in, since
+that reason is a captured variable within the verified template, not a separate guessed
+format). From Mashreq (`MashreqAlerts@mashreq.com`): the **"Transaction Notification"
 bank-transfer debit alert** ("...is debited with AED...for Aani Instant Payments...") and the
 **Mashreq Card purchase alert** ("...Card ending with...was used for a purchase of AED...").
 Mashreq's other, richer "Local AED Transfer request via Mobile Banking" confirmation from
-`MashreqDigital@mashreq.com` is not yet supported, nor is any ENBD credit alert that isn't
-specifically salary (a "Transfer...has been credited" or similar wording has no real sample
-yet). Any other bank, and any other email format from either of these two banks, is recognized
-as "not supported yet" rather than guessed at — see "How This Differs From SMS" below.
+`MashreqDigital@mashreq.com` is not yet supported. Any other bank, and any other email format
+from either of these two banks, is recognized as "not supported yet" rather than guessed at —
+see "How This Differs From SMS" below.
 
 ---
 
