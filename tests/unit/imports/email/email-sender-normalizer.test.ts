@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveEmailInstitution } from "../../../../src/imports/email/email-sender-normalizer";
+import { resolveEmailInstitution, isRecognizedBankDomain } from "../../../../src/imports/email/email-sender-normalizer";
 import { AccountType } from "@prisma/client";
 
 describe("resolveEmailInstitution", () => {
@@ -33,5 +33,26 @@ describe("resolveEmailInstitution", () => {
     // is not a subdomain of it — must not match.
     const result = resolveEmailInstitution("phish@notemiratesnbd.com");
     expect(result.accountType).toBe(AccountType.OTHER_BANK);
+  });
+});
+
+describe("isRecognizedBankDomain", () => {
+  it("returns true for a registered bank domain", () => {
+    expect(isRecognizedBankDomain("OnlineBanking@emiratesnbd.com")).toBe(true);
+    expect(isRecognizedBankDomain("MashreqAlerts@mashreq.com")).toBe(true);
+  });
+
+  it("returns true for a subdomain of a registered bank domain", () => {
+    expect(isRecognizedBankDomain("alerts@notifications.emiratesnbd.com")).toBe(true);
+  });
+
+  it("returns false for any unrecognized domain — this is the gate that keeps non-bank email content from ever being fetched or stored", () => {
+    expect(isRecognizedBankDomain("friend@gmail.com")).toBe(false);
+    expect(isRecognizedBankDomain("noreply@amazon.ae")).toBe(false);
+    expect(isRecognizedBankDomain("statements@somerandombank.com")).toBe(false);
+  });
+
+  it("does not false-match a domain that merely contains a registered domain as a substring", () => {
+    expect(isRecognizedBankDomain("phish@notemiratesnbd.com")).toBe(false);
   });
 });

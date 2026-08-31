@@ -5,6 +5,7 @@ import type { GmailIntegration } from "@prisma/client";
 import { gmailIntegrationService } from "@/server/services/gmail-integration.service";
 import { GmailClient } from "./gmail-client";
 import { importService } from "@/imports/engine/import.service";
+import { isRecognizedBankDomain } from "@/imports/email/email-sender-normalizer";
 
 const INITIAL_SCAN_WINDOW_DAYS = 2;
 
@@ -51,6 +52,14 @@ export async function syncGmailIntegration(
       select: { id: true },
     });
     if (alreadyImported) continue;
+
+    // Cheap header-only check before ever fetching a full body — an email
+    // that isn't from a recognized UAE bank domain is skipped entirely
+    // here: never fetched in full, never parsed, never written to the
+    // database (not even as a "failed" record). Only known bank senders
+    // ever have their content touched.
+    const fromHeader = await client.fetchFromHeader(messageId);
+    if (!fromHeader || !isRecognizedBankDomain(fromHeader)) continue;
 
     const message = await client.fetchMessage(messageId);
     if (!message) continue;

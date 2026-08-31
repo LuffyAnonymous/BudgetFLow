@@ -44,6 +44,21 @@ function deriveDisplayName(domain: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
 }
 
+/**
+ * Strict allowlist check — true only for a domain explicitly registered in
+ * EMAIL_INSTITUTIONS (unlike resolveEmailInstitution, which always resolves
+ * with an OTHER_BANK fallback). Used to gate which emails ever get their
+ * full body fetched/processed at all — an email from a domain that isn't a
+ * known UAE bank must never be pulled or stored, not even as a "failed"
+ * import record.
+ */
+export function isRecognizedBankDomain(fromAddress: string): boolean {
+  const domain = extractDomain(fromAddress);
+  return EMAIL_INSTITUTIONS.some((entry) =>
+    entry.domains.some((candidate) => domain === candidate || domain.endsWith(`.${candidate}`))
+  );
+}
+
 export function resolveEmailInstitution(fromAddress: string): ResolvedEmailInstitution {
   const domain = extractDomain(fromAddress);
 

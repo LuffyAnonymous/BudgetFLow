@@ -113,6 +113,23 @@ export class GmailClient {
       .filter((id): id is string => !!id);
   }
 
+  /**
+   * Cheap header-only fetch (format: "metadata", no body) — used to check
+   * the sender's domain before ever pulling a message's full content. An
+   * email from a domain that isn't a recognized UAE bank must never have
+   * its body fetched or stored, so this is checked first for every message.
+   */
+  async fetchFromHeader(messageId: string): Promise<string | null> {
+    const res = await this.gmail.users.messages.get({
+      userId: "me",
+      id: messageId,
+      format: "metadata",
+      metadataHeaders: ["From"],
+    });
+    const headers = res.data.payload?.headers ?? [];
+    return headers.find((h) => h.name?.toLowerCase() === "from")?.value ?? null;
+  }
+
   async fetchMessage(messageId: string): Promise<FetchedGmailMessage | null> {
     const res = await this.gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
     const payload = res.data.payload;

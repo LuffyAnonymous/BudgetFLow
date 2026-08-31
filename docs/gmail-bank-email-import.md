@@ -137,6 +137,12 @@ are untouched.
 
 - Gmail access is **read-only** (`gmail.readonly`) — BudgetFlow can never send, delete, or
   modify anything in your inbox.
+- **Only registered UAE bank domains are ever touched.** Every new inbox message is checked
+  by sender domain first (a cheap header-only fetch, no body) — anything that isn't from a
+  recognized bank domain (currently `emiratesnbd.com` and `mashreq.com`/`mashreqbank.com`) is
+  skipped immediately: its body is never fetched, never parsed, and never written to the
+  database, not even as a failed/unrecognized record. Personal mail, newsletters, work email,
+  and anything else in your inbox is never touched beyond that one header check.
 - The refresh token is encrypted at rest (AES-256-GCM) — a database compromise alone doesn't
   expose it without `GMAIL_TOKEN_ENCRYPTION_KEY`.
 - The push webhook (`/api/webhooks/gmail-push`) only accepts requests carrying the correct
