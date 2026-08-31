@@ -9,7 +9,18 @@ export async function updateBalance(
   amount: Decimal | null,
   direction: TransactionDirection,
   authoritativeAvailableBalance: Decimal | null,
-  tx?: Prisma.TransactionClient
+  tx?: Prisma.TransactionClient,
+  // A full ledger recompute (accountService.updateAccountBalance) anchors on
+  // latestImportedBalance and re-sums only Transaction rows with
+  // createdAt > lastSMSImportedAt. If this call runs (as it does in
+  // autoPostTransaction) *before* that same message's own Transaction row
+  // is inserted, that row's DB-assigned createdAt lands a few milliseconds
+  // after lastSMSImportedAt's JS-side timestamp — passing every future
+  // recompute's "since" filter and double-counting a transaction the
+  // anchor balance already includes. Callers that also create a Transaction
+  // row for this same message must pass the exact same Date used for that
+  // row's createdAt, so the two line up and the row is correctly excluded.
+  timestamp: Date = new Date()
 ): Promise<void> {
   const client = tx || db;
   const account = await client.account.findUnique({ where: { id: accountId } });
@@ -32,7 +43,7 @@ export async function updateBalance(
     data: {
       currentBalance: newBalance,
       latestImportedBalance: authoritativeAvailableBalance !== null ? authoritativeAvailableBalance : account.latestImportedBalance,
-      lastSMSImportedAt: new Date(),
+      lastSMSImportedAt: timestamp,
     }
   });
 }

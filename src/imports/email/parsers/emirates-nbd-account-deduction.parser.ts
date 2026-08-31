@@ -17,6 +17,19 @@ const DEDUCTION_RE =
   /AED\s*([\d,]+\.\d{2})\s+has\s+been\s+deducted\s+from\s+your\s+account\s+([\dXx]+)\s+for\s+(.+?)\.\s*The\s+available\s+balance\s+is\s+AED\s*([\d,]+\.\d{2})/i;
 
 /**
+ * Referenced by import.service.ts's soft-duplicate check — for wire/SWIFT
+ * transfers, Emirates NBD sends both this generic deduction alert (no
+ * reference number) and a specific "Local Bank Transfer" confirmation
+ * (with a SWIFT reference) seconds apart, for the same real debit. Neither
+ * message alone can be dropped safely (the specific confirmation format
+ * isn't guaranteed for every deduction reason), so both are still parsed
+ * and posted — but when they land within the same short window for the
+ * same account/amount/direction, they're merged into one ledger row
+ * instead of double-debiting the account.
+ */
+export const EMIRATES_NBD_ACCOUNT_DEDUCTION_PARSER_KEY = "emirates-nbd-account-deduction-email-v1";
+
+/**
  * Emirates NBD generic account-deduction alert email — distinct from
  * emirates-nbd-salary-credit.parser.ts (INFLOW, "credited into") and
  * emirates-nbd.parser.ts's "Local Bank Transfer" confirmation (has its
@@ -26,7 +39,7 @@ const DEDUCTION_RE =
  * directly as transactionDate, same as the salary-credit parser.
  */
 export class EmiratesNbdAccountDeductionEmailParser implements IEmailParser {
-  readonly parserKey = "emirates-nbd-account-deduction-email-v1";
+  readonly parserKey = EMIRATES_NBD_ACCOUNT_DEDUCTION_PARSER_KEY;
   readonly parserVersion = "1.0.0";
   readonly institution = "Emirates NBD";
   private readonly institutionCode = "ENBD";

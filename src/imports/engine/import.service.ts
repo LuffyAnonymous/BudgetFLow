@@ -39,6 +39,7 @@ import { isOtpOrPromoMessage } from "../sms/otp-promo-filter";
 import { tryApplyDebtLinkage } from "./debt-linkage";
 import { matchDebtByDescription } from "./debt-matcher";
 import { matchAccountByDescription } from "./account-name-matcher";
+import { EMIRATES_NBD_ACCOUNT_DEDUCTION_PARSER_KEY } from "../email/parsers/emirates-nbd-account-deduction.parser";
 
 const DUBAI_OFFSET_HOURS = 4;
 
@@ -458,12 +459,109 @@ export class ImportService {
       );
       const primaryAccId = account.id;
 
-      await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx);
+      // Shared by updateBalance() below and this message's own Transaction
+      // row's createdAt — see updateBalance()'s timestamp param doc comment
+      // for why these must match exactly.
+      const now = new Date();
+
+      let txType: TransactionType = TransactionType.EXPENSE;
+      let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
+      if (direction === TransactionDirection.INFLOW) {
+        txType = TransactionType.INCOME;
+        cashFlowDir = CashFlowDirection.INFLOW;
+      }
+      if (category === KnownCategory.TRANSFERS) {
+        txType = TransactionType.TRANSFER;
+      }
+
+      // Emirates NBD sends both a generic "AED X deducted...for <reason>"
+      // alert (no reference) and, for wire/SWIFT transfers, a specific
+      // "Local Bank Transfer" confirmation (with a SWIFT reference) seconds
+      // apart for the same real debit — see EMIRATES_NBD_ACCOUNT_DEDUCTION_
+      // PARSER_KEY's doc comment. Only checked when at least one side of a
+      // same-account/amount/direction match is that generic parser, so this
+      // never merges two genuinely unrelated same-amount transactions from
+      // any other source.
+      let softDuplicate: { id: string; type: TransactionType; toAccountId: string | null } | null = null;
+      let softDuplicateScore = 0;
+      if (!matchedTransferId) {
+        const windowMs = 5 * 60 * 1000;
+        const candidate = await tx.transaction.findFirst({
+          where: {
+            userId,
+            accountId: primaryAccId,
+            amount: normalized.amount,
+            cashFlowDirection: cashFlowDir,
+            importedTransactions: {
+              some: {
+                receivedAt: {
+                  gte: new Date(receivedAt.getTime() - windowMs),
+                  lte: new Date(receivedAt.getTime() + windowMs),
+                },
+              },
+            },
+          },
+          include: { importedTransactions: { orderBy: { receivedAt: "desc" }, take: 1 } },
+          orderBy: { createdAt: "desc" },
+        });
+
+        const candidateLeg = candidate?.importedTransactions[0];
+        const involvesDeductionParser =
+          normalized.parserKey === EMIRATES_NBD_ACCOUNT_DEDUCTION_PARSER_KEY ||
+          candidateLeg?.parserKey === EMIRATES_NBD_ACCOUNT_DEDUCTION_PARSER_KEY;
+
+        if (candidate && involvesDeductionParser) {
+          softDuplicate = { id: candidate.id, type: candidate.type, toAccountId: candidate.toAccountId };
+          softDuplicateScore = (candidateLeg?.parsedReference ? 2 : 0) + (candidate.type === TransactionType.TRANSFER ? 1 : 0);
+        }
+      }
+
+      // An authoritative available-balance overwrite is idempotent and safe
+      // to re-apply even for a soft duplicate. The increment path isn't —
+      // applying it twice for the same real debit would double-count it.
+      if (!softDuplicate || normalized.availableBalance !== null) {
+        await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx, now);
+      }
 
       let ledgerTxId: string;
 
       const isSalary = category.toLowerCase() === "salary" || normalized.parserKey.toLowerCase().includes("salary");
       const { getActiveFinancialCycle } = await import("@/lib/salary-month");
+
+      const resolveDbCategory = async (): Promise<{ id: string }> => {
+        let dbCategory: { id: string } | null = await tx.category.findFirst({
+          where: { userId, name: { equals: category, mode: "insensitive" } },
+        });
+        if (!dbCategory) {
+          dbCategory = await resolveCategoryByAlias(tx, userId, category);
+        }
+        if (!dbCategory && category === KnownCategory.UNCATEGORIZED) {
+          dbCategory = await resolveFallbackCategory(tx, userId, txType, normalized.amount);
+        }
+        dbCategory = dbCategory || await tx.category.findFirst({
+          where: { userId, name: { equals: KnownCategory.UNCATEGORIZED, mode: "insensitive" } },
+        });
+        if (!dbCategory) {
+          dbCategory = await tx.category.create({
+            data: {
+              userId,
+              name: KnownCategory.UNCATEGORIZED,
+              type: direction === TransactionDirection.INFLOW ? CategoryType.INCOME : CategoryType.VARIABLE_EXPENSE,
+            },
+          });
+        }
+        return dbCategory;
+      };
+
+      const resolveToAccId = async (): Promise<string | undefined> => {
+        if (category !== KnownCategory.TRANSFERS) return undefined;
+        const otherAccounts = await tx.account.findMany({
+          where: { userId, id: { not: primaryAccId } },
+          select: { id: true, name: true },
+        });
+        const matchedAccount = matchAccountByDescription(otherAccounts, normalized.merchant);
+        return matchedAccount?.id;
+      };
 
       if (matchedTransferId) {
           ledgerTxId = matchedTransferId;
@@ -491,49 +589,37 @@ export class ImportService {
               { matchedTransferId, existingToAccountId: matchedRow.toAccountId, thisLegAccountId: primaryAccId }
             );
           }
-      } else {
-          let txType: TransactionType = TransactionType.EXPENSE;
-          let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
+      } else if (softDuplicate) {
+          ledgerTxId = softDuplicate.id;
 
-          if (direction === TransactionDirection.INFLOW) {
-              txType = TransactionType.INCOME;
-              cashFlowDir = CashFlowDirection.INFLOW;
-          }
+          const newScore = (normalized.reference ? 2 : 0) + (category === KnownCategory.TRANSFERS ? 1 : 0);
 
-          if (category === KnownCategory.TRANSFERS) {
-              txType = TransactionType.TRANSFER;
-          }
+          // Only overwrite the existing row's fields when this message is
+          // strictly more informative (has a reference, or resolves to a
+          // transfer where the existing row didn't) — otherwise the
+          // already-posted leg is left exactly as it was, and this message
+          // just gets attached to it below as a second corroborating leg.
+          if (newScore > softDuplicateScore) {
+            const dbCategory = await resolveDbCategory();
+            const toAccId = await resolveToAccId();
 
-          let dbCategory: { id: string } | null = await tx.category.findFirst({
-            where: { userId, name: { equals: category, mode: "insensitive" } }
-          });
-
-          // The generic label ("Buy Now Pay Later") may not match a user's
-          // own category name verbatim (e.g. "Tabby Payment") — try known
-          // aliases before falling through further.
-          if (!dbCategory) {
-            dbCategory = await resolveCategoryByAlias(tx, userId, category);
-          }
-
-          // Merchant-keyword matching came up empty — try the salary-ratio /
-          // single-type-match rules before falling back to "Uncategorized".
-          if (!dbCategory && category === KnownCategory.UNCATEGORIZED) {
-            dbCategory = await resolveFallbackCategory(tx, userId, txType, normalized.amount);
-          }
-
-          dbCategory = dbCategory || await tx.category.findFirst({
-            where: { userId, name: { equals: KnownCategory.UNCATEGORIZED, mode: "insensitive" } }
-          });
-
-          if (!dbCategory) {
-            dbCategory = await tx.category.create({
+            await tx.transaction.update({
+              where: { id: softDuplicate.id },
               data: {
-                userId,
-                name: KnownCategory.UNCATEGORIZED,
-                type: direction === TransactionDirection.INFLOW ? CategoryType.INCOME : CategoryType.VARIABLE_EXPENSE,
+                type: txType,
+                cashFlowDirection: cashFlowDir,
+                description: normalized.merchant || "Auto-imported",
+                categoryId: dbCategory.id,
+                toAccountId: toAccId ?? softDuplicate.toAccountId,
               },
             });
+
+            if (toAccId && toAccId !== softDuplicate.toAccountId) {
+              await accountService.updateAccountBalance(userId, toAccId, tx);
+            }
           }
+      } else {
+          const dbCategory = await resolveDbCategory();
 
           const computedBudgetMonth = isSalary
             ? determineBudgetMonth(financialDate, true)
@@ -547,21 +633,13 @@ export class ImportService {
           // other tracked accounts, so an external payment to someone
           // else's account never gets misattributed as an internal
           // transfer just because a bank name happens to appear in it.
-          let toAccId: string | undefined;
-          if (category === KnownCategory.TRANSFERS) {
-            const otherAccounts = await tx.account.findMany({
-              where: { userId, id: { not: primaryAccId } },
-              select: { id: true, name: true },
-            });
-            const matchedAccount = matchAccountByDescription(otherAccounts, normalized.merchant);
-            if (matchedAccount) toAccId = matchedAccount.id;
-          }
+          const toAccId = await resolveToAccId();
 
           const ledgerTx = await tx.transaction.create({
               data: {
                   date: financialDate,
                   budgetMonth: computedBudgetMonth,
-                  categoryId: dbCategory!.id,
+                  categoryId: dbCategory.id,
                   description: normalized.merchant || "Auto-imported",
                   amount: normalized.amount,
                   paymentMethod: paymentMethodLabel,
@@ -571,6 +649,9 @@ export class ImportService {
                   accountId: primaryAccId,
                   toAccountId: toAccId,
                   userId,
+                  // Must match the `now` passed to updateBalance() above
+                  // exactly — see updateBalance()'s timestamp param doc.
+                  createdAt: now,
               }
           });
           ledgerTxId = ledgerTx.id;

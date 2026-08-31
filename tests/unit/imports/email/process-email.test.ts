@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { db } from "@/lib/db";
 import { importService } from "@/imports/engine/import.service";
+import { accountService } from "@/server/services/account.service";
 import { AccountType, ImportStatus } from "@prisma/client";
 
 const enbdTransferBody = (overrides: Partial<Record<string, string>> = {}) => {
@@ -358,5 +359,158 @@ describe("ImportService.processEmail", () => {
       expect(importedTx!.institutionCode).toBe("ENBD");
       expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
     }
+  });
+
+  describe("merging the two Emirates NBD emails a single wire transfer generates", () => {
+    it("merges the generic deduction alert and the specific transfer confirmation into one TRANSFER, not two debits (deduction arrives first)", async () => {
+      const mashreq = await db.account.create({
+        data: { userId, name: "Mashreq", type: AccountType.MASHREQ },
+      });
+
+      const base = new Date("2026-03-15T10:00:00Z");
+
+      const deductionRes = await importService.processEmail(userId, {
+        fromAddress: "OnlineBanking@emiratesnbd.com",
+        subject: "Be alert, stay safe.",
+        body: "AED 150.00 has been deducted from your account 014XXX70XXX01 for issuance of Telegraphic Transfer. The available balance is AED 1,350.48.",
+        receivedAt: base,
+        externalMessageId: "gmail-msg-merge-deduction-1",
+      });
+      expect(deductionRes.outcome).toBe("auto_posted");
+
+      const transferRes = await importService.processEmail(userId, {
+        fromAddress: "OnlineBanking@emiratesnbd.com",
+        subject: "Local Bank Transfer",
+        body: enbdTransferBody({
+          "Debit Amount": "AED 150.00",
+          "Channel Reference No": "MERGETEST1",
+        }),
+        receivedAt: new Date(base.getTime() + 8000),
+        externalMessageId: "gmail-msg-merge-transfer-1",
+      });
+      expect(transferRes.outcome).toBe("auto_posted");
+
+      // Both messages resolved to the SAME ledger transaction.
+      if (deductionRes.outcome === "auto_posted" && transferRes.outcome === "auto_posted") {
+        expect(transferRes.transactionId).toBe(deductionRes.transactionId);
+      }
+
+      // The deduction email's authoritative "available balance is AED
+      // 1,350.48" is applied exactly once — not decremented a second time
+      // by the transfer confirmation, which is what the merge is for.
+      const enbd = await db.account.findFirstOrThrow({ where: { userId, type: AccountType.EMIRATES_NBD } });
+      expect(enbd.currentBalance.toFixed(2)).toBe("1350.48");
+
+      const allTx = await db.transaction.findMany({ where: { userId } });
+      expect(allTx).toHaveLength(1);
+      expect(allTx[0].type).toBe("TRANSFER");
+      expect(allTx[0].toAccountId).toBe(mashreq.id);
+
+      const updatedMashreq = await db.account.findUniqueOrThrow({ where: { id: mashreq.id } });
+      expect(updatedMashreq.currentBalance.toFixed(2)).toBe("150.00");
+    });
+
+    it("merges the two emails in the opposite order too (specific transfer confirmation arrives first)", async () => {
+      const mashreq = await db.account.create({
+        data: { userId, name: "Mashreq", type: AccountType.MASHREQ },
+      });
+
+      const base = new Date("2026-03-15T10:00:00Z");
+
+      const transferRes = await importService.processEmail(userId, {
+        fromAddress: "OnlineBanking@emiratesnbd.com",
+        subject: "Local Bank Transfer",
+        body: enbdTransferBody({
+          "Debit Amount": "AED 150.00",
+          "Channel Reference No": "MERGETEST2",
+        }),
+        receivedAt: base,
+        externalMessageId: "gmail-msg-merge-transfer-2",
+      });
+      expect(transferRes.outcome).toBe("auto_posted");
+
+      const deductionRes = await importService.processEmail(userId, {
+        fromAddress: "OnlineBanking@emiratesnbd.com",
+        subject: "Be alert, stay safe.",
+        body: "AED 150.00 has been deducted from your account 014XXX70XXX01 for issuance of Telegraphic Transfer. The available balance is AED 1,350.48.",
+        receivedAt: new Date(base.getTime() + 8000),
+        externalMessageId: "gmail-msg-merge-deduction-2",
+      });
+      expect(deductionRes.outcome).toBe("auto_posted");
+
+      if (deductionRes.outcome === "auto_posted" && transferRes.outcome === "auto_posted") {
+        expect(deductionRes.transactionId).toBe(transferRes.transactionId);
+      }
+
+      // The transfer confirmation applies its plain increment first
+      // (-150.00), then the deduction email's authoritative balance
+      // overwrites it — the correct end state either way, and proof the
+      // increment wasn't re-applied a second time on top of it.
+      const enbd = await db.account.findFirstOrThrow({ where: { userId, type: AccountType.EMIRATES_NBD } });
+      expect(enbd.currentBalance.toFixed(2)).toBe("1350.48");
+
+      const allTx = await db.transaction.findMany({ where: { userId } });
+      expect(allTx).toHaveLength(1);
+      expect(allTx[0].type).toBe("TRANSFER");
+      expect(allTx[0].toAccountId).toBe(mashreq.id);
+    });
+
+    it("does not merge two genuinely unrelated transactions that just happen to share an amount, when neither is the generic deduction alert", async () => {
+      const base = new Date("2026-03-15T10:00:00Z");
+
+      const first = await importService.processEmail(userId, {
+        fromAddress: "OnlineBanking@emiratesnbd.com",
+        subject: "Local Bank Transfer",
+        body: enbdTransferBody({ "Debit Amount": "AED 150.00", "Channel Reference No": "UNRELATED1" }),
+        receivedAt: base,
+        externalMessageId: "gmail-msg-unrelated-1",
+      });
+      expect(first.outcome).toBe("auto_posted");
+
+      const second = await importService.processEmail(userId, {
+        fromAddress: "OnlineBanking@emiratesnbd.com",
+        subject: "Local Bank Transfer",
+        body: enbdTransferBody({ "Debit Amount": "AED 150.00", "Channel Reference No": "UNRELATED2" }),
+        receivedAt: new Date(base.getTime() + 8000),
+        externalMessageId: "gmail-msg-unrelated-2",
+      });
+      expect(second.outcome).toBe("auto_posted");
+
+      if (first.outcome === "auto_posted" && second.outcome === "auto_posted") {
+        expect(second.transactionId).not.toBe(first.transactionId);
+      }
+
+      const allTx = await db.transaction.findMany({ where: { userId } });
+      expect(allTx).toHaveLength(2);
+    });
+  });
+
+  it("a later full balance recompute doesn't double-count the most recent authoritative message's own transaction", async () => {
+    // Reproduces a real production bug: an account-deduction alert (has an
+    // authoritative "available balance") posts a transaction, then a
+    // standalone recompute (the "Recalculate Balances" button, or
+    // accountService.updateAllBalances) re-derives currentBalance from
+    // latestImportedBalance + everything with createdAt after
+    // lastSMSImportedAt. If that message's own Transaction row's createdAt
+    // lands even a millisecond after lastSMSImportedAt, the recompute adds
+    // its amount a second time on top of a balance that already includes
+    // it.
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Be alert, stay safe.",
+      body: "AED 5750.00 has been deducted from your account 014XXX70XXX01 for POS Purchase. The available balance is AED 5750.48.",
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-recompute-race-1",
+    });
+    expect(res.outcome).toBe("auto_posted");
+
+    const enbdBefore = await db.account.findFirstOrThrow({ where: { userId, type: AccountType.EMIRATES_NBD } });
+    expect(enbdBefore.currentBalance.toFixed(2)).toBe("5750.48");
+
+    const recomputed = await accountService.updateAccountBalance(userId, enbdBefore.id);
+    expect(recomputed.toFixed(2)).toBe("5750.48");
+
+    const enbdAfter = await db.account.findUniqueOrThrow({ where: { id: enbdBefore.id } });
+    expect(enbdAfter.currentBalance.toFixed(2)).toBe("5750.48");
   });
 });
