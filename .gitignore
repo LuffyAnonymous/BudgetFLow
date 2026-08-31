@@ -13,6 +13,9 @@
 # testing
 /coverage
 
+# real (redacted) bank email samples used to build import parsers — never committed
+/Content/
+
 # next.js
 /.next/
 /out/

@@ -227,4 +227,46 @@ describe("ImportService.processEmail", () => {
     const txCount = await db.transaction.count({ where: { userId } });
     expect(txCount).toBe(1);
   });
+
+  it("auto-posts a recognized, well-formed Emirates NBD ATM withdrawal email", async () => {
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "ATM withdrawal",
+      body: "Your ATM withdrawal transaction was successfully completed on 28th Aug 2026 at 16:57 PM . Amount: AED 3,500.00 Available balance: AED 1,500.48 Card number: 443913XXXXXX8014 Account number: 014XXX70XXX01 Machine ID: E4012432 Machine location: JLB Branch Reference number: 624016112506",
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-enbd-atm-1",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
+      expect(tx!.amount.toFixed(2)).toBe("3500.00");
+      expect(tx!.origin).toBe("EMAIL_IMPORT");
+
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.institutionCode).toBe("ENBD");
+      expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
+    }
+  });
+
+  it("auto-posts a recognized, well-formed Emirates NBD salary-credit email", async () => {
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Be alert, stay safe.",
+      body: "Salary of AED 5,750.00 has been credited into your account 014XXX70XXX01. The available balance is AED 5,750.48.",
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-enbd-salary-1",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
+      expect(tx!.amount.toFixed(2)).toBe("5750.00");
+      expect(tx!.origin).toBe("EMAIL_IMPORT");
+
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.institutionCode).toBe("ENBD");
+      expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
+    }
+  });
 });
