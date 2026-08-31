@@ -233,6 +233,20 @@ export function SettingsClient() {
     },
   });
 
+  const resyncGmailMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/settings/gmail-link/resync", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Resync failed");
+      return json.data as { transactionsProcessed: number };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["gmail-link-status"] });
+      queryClient.invalidateQueries({ queryKey: ["imports"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+
   // Import Settings Query
   const { data: importSettings, isLoading: isLoadingImportSettings } = useQuery({
     queryKey: ["import-settings"],
@@ -1178,19 +1192,39 @@ export function SettingsClient() {
                   Last synced {new Date(gmailStatus.lastSyncedAt).toLocaleString("en-AE", { timeZone: "Asia/Dubai", dateStyle: "medium", timeStyle: "short" })}
                 </p>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm("Disconnect Gmail? Bank email import will stop until you reconnect.")) {
-                    disconnectGmailMutation.mutate();
-                  }
-                }}
-                disabled={disconnectGmailMutation.isPending}
-                className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
-              >
-                <LucideUnlink className="h-3.5 w-3.5" />
-                Disconnect
-              </button>
+              {resyncGmailMutation.isSuccess && (
+                <p className="text-[11px] text-emerald-400">
+                  Resync complete — checked {resyncGmailMutation.data.transactionsProcessed} recent email{resyncGmailMutation.data.transactionsProcessed === 1 ? "" : "s"} from the last 7 days.
+                </p>
+              )}
+              {resyncGmailMutation.error && (
+                <p className="text-[11px] text-rose-400">{(resyncGmailMutation.error as Error).message}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => resyncGmailMutation.mutate()}
+                  disabled={resyncGmailMutation.isPending}
+                  title="Re-checks the last 7 days of your inbox — useful after a new bank email format gets added, to pick up a transaction that failed before support for it existed."
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  <LucideRotateCw className={`h-3.5 w-3.5 ${resyncGmailMutation.isPending ? "animate-spin" : ""}`} />
+                  {resyncGmailMutation.isPending ? "Resyncing..." : "Resync Last 7 Days"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm("Disconnect Gmail? Bank email import will stop until you reconnect.")) {
+                      disconnectGmailMutation.mutate();
+                    }
+                  }}
+                  disabled={disconnectGmailMutation.isPending}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 py-2.5 text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  <LucideUnlink className="h-3.5 w-3.5" />
+                  Disconnect
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-4">

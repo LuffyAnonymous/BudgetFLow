@@ -140,6 +140,11 @@ export class GmailIntegrationService {
     );
   }
 
+  /** Raw integration entity for the resync/sync paths — null if never connected or revoked. */
+  async getActiveIntegration(userId: string): Promise<GmailIntegration | null> {
+    return db.gmailIntegration.findFirst({ where: { userId, status: "ACTIVE" } });
+  }
+
   async getByGoogleAccountEmail(email: string): Promise<GmailIntegration | null> {
     return db.gmailIntegration.findFirst({ where: { googleAccountEmail: email, status: "ACTIVE" } });
   }
