@@ -110,7 +110,7 @@ describe("ImportService.processEmail", () => {
     }
   });
 
-  it("fails with RECOGNIZED_SENDER_NO_PARSER for a Mashreq email (registered domain, stub parser)", async () => {
+  it("fails with RECOGNIZED_SENDER_NO_PARSER for a Mashreq email that doesn't match the registered debit-alert format", async () => {
     const res = await importService.processEmail(userId, {
       fromAddress: "alerts@mashreqbank.com",
       subject: "Transaction Alert",
@@ -122,6 +122,28 @@ describe("ImportService.processEmail", () => {
     if (res.outcome === "failed") {
       const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
       expect(importedTx!.failureCode).toBe("RECOGNIZED_SENDER_NO_PARSER");
+    }
+  });
+
+  it("auto-posts a recognized, well-formed Mashreq debit-alert email", async () => {
+    const res = await importService.processEmail(userId, {
+      fromAddress: "MashreqAlerts@mashreq.com",
+      subject: "Transaction Notification",
+      body: "Your AC No:XXXXXXXX9523 is debited with AED 200.00 for Aani Instant Payments (Local IPP Transfer). Login to Online Banking for details",
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-mashreq-1",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
+      expect(tx!.amount.toFixed(2)).toBe("200.00");
+      expect(tx!.origin).toBe("EMAIL_IMPORT");
+
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.source).toBe("EMAIL");
+      expect(importedTx!.institutionCode).toBe("MASHREQ");
+      expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
     }
   });
 

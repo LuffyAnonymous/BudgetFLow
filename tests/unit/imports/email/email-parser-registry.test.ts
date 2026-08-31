@@ -26,7 +26,7 @@ describe("emailParserRegistry.select", () => {
     expect(result.outcome).toBe("no_match");
   });
 
-  it("returns no_match for a Mashreq email (stub never claims anything)", () => {
+  it("returns no_match for a Mashreq email that doesn't match the registered debit-alert wording", () => {
     const result = emailParserRegistry.select("alerts@mashreqbank.com", "Transaction Alert", "AED 50.00 debited.");
     expect(result.outcome).toBe("no_match");
   });

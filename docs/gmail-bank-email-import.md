@@ -5,9 +5,13 @@ the same auto-post/flag-for-a-second-look/fail model as SMS import, applied to e
 Import runs on **Gmail push notifications** (real-time, as emails arrive), not on a polling
 schedule — no n8n, no third-party automation platform.
 
-Only **Emirates NBD's "Local Bank Transfer" confirmation email** is fully supported today.
-Other banks and other Emirates NBD email formats are recognized as "not supported yet" rather
-than guessed at — see "How This Differs From SMS" below.
+Two email formats are fully supported today: **Emirates NBD's "Local Bank Transfer"**
+confirmation email, and **Mashreq's "Transaction Notification" debit alert** (the
+`MashreqAlerts@mashreq.com` "Your AC No:...is debited with AED..." email — Mashreq's other,
+richer "Local AED Transfer request via Mobile Banking" confirmation from
+`MashreqDigital@mashreq.com` is not yet supported). Any other bank, and any other email format
+from either of these two banks, is recognized as "not supported yet" rather than guessed at —
+see "How This Differs From SMS" below.
 
 ---
 
@@ -15,7 +19,7 @@ than guessed at — see "How This Differs From SMS" below.
 
 BudgetFlow needs its own Google OAuth client to request read-only Gmail access on your behalf.
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a new project
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a new projectMy Project 20787
    (or reuse an existing one you control).
 2. **APIs & Services → Library** — enable the **Gmail API** and the **Cloud Pub/Sub API**.
 3. **APIs & Services → OAuth consent screen**:
