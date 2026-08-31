@@ -23,6 +23,7 @@ import {
   LucideUpload,
   LucideFileText,
   LucideReceipt,
+  LucideTrash2,
 } from "lucide-react";
 
 interface ImportItem {
@@ -190,6 +191,21 @@ export default function ImportsPage() {
     },
   });
 
+  const clearFailedMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/imports/failed", { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error ?? "Failed to clear failed imports");
+      }
+      return json.data as { deletedCount: number };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["imports"] });
+      setSelectedId(null);
+    },
+  });
+
   const pageError = listError || categoriesError || detailError;
 
   return (
@@ -253,28 +269,54 @@ export default function ImportsPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6 border-b border-slate-800 pb-2 overflow-x-auto">
-        {[
-          { id: "PROCESSED", label: "Recent Imports" },
-          { id: "REVIEW_REQUIRED", label: "Pending Receipts" },
-          { id: "REJECTED,FAILED", label: "Failed" },
-        ].map((tab) => (
+      <div className="flex items-center justify-between gap-2 mb-6 border-b border-slate-800 pb-2 flex-wrap">
+        <div className="flex gap-2 overflow-x-auto">
+          {[
+            { id: "PROCESSED", label: "Recent Imports" },
+            { id: "REVIEW_REQUIRED", label: "Pending Receipts" },
+            { id: "REJECTED,FAILED", label: "Failed" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                setActiveTab(tab.id);
+                setSelectedId(null);
+              }}
+              className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
+                activeTab === tab.id
+                  ? "bg-indigo-500/20 text-indigo-400"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {activeTab === "REJECTED,FAILED" && Array.isArray(reviewItems) && reviewItems.some((i) => i.status === "FAILED") && (
           <button
-            key={tab.id}
             onClick={() => {
-              setActiveTab(tab.id);
-              setSelectedId(null);
+              if (window.confirm("Permanently delete all failed imports? This can't be undone.")) {
+                clearFailedMutation.mutate();
+              }
             }}
-            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap ${
-              activeTab === tab.id
-                ? "bg-indigo-500/20 text-indigo-400"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-            }`}
+            disabled={clearFailedMutation.isPending}
+            className="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-3 py-1.5 text-xs font-bold transition-all disabled:opacity-50"
           >
-            {tab.label}
+            {clearFailedMutation.isPending ? (
+              <LucideRefreshCw className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <LucideTrash2 className="h-3.5 w-3.5" />
+            )}
+            Clear All Failed
           </button>
-        ))}
+        )}
       </div>
+      {clearFailedMutation.error && (
+        <div className="flex items-center gap-2 rounded-lg bg-rose-500/10 border border-rose-500/20 p-3 text-sm text-rose-400 -mt-3">
+          <LucideAlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{(clearFailedMutation.error as Error).message}</span>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* List */}
