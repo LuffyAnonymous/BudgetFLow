@@ -17,7 +17,7 @@ export function BrandPanel() {
 
       <div className="relative mt-10 shrink-0">
         <h1 className="text-4xl font-extrabold leading-tight tracking-tight text-white">
-          Your bank texts you.
+          Your bank texts or emails you.
           <br />
           BudgetFlow reads it.
         </h1>
