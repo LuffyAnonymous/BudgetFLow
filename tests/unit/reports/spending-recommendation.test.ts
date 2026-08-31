@@ -26,6 +26,7 @@ describe("ReportService.getSpendingRecommendation", () => {
 
   beforeEach(async () => {
     await db.transaction.deleteMany({});
+    await db.debtPayment.deleteMany({});
     await db.debt.deleteMany({});
     await db.category.deleteMany({});
     await db.setting.deleteMany({});

@@ -82,6 +82,75 @@ describe("ImportService.processEmail", () => {
     expect(account).toBeDefined();
   });
 
+  it("auto-links toAccountId to the user's own matching account from the message alone, with no second leg", async () => {
+    const mashreq = await db.account.create({
+      data: { userId, name: "Mashreq", type: AccountType.MASHREQ, currentBalance: 0 },
+    });
+
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Local Bank Transfer",
+      body: enbdTransferBody({
+        "Beneficiary Bank Name":
+          "MASHREQBANK PSC SWIFT / Routing Code: BOMLAEAD Correspondent Bank Name: N/A Transaction Fees: No Fees Channel Reference No: AUTOLINKTEST1 SWIFT Reference No: AUTOLINKSWIFT1 Status: Success",
+        "Channel Reference No": "AUTOLINKTEST1",
+      }),
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-autolink",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome !== "auto_posted") return;
+
+    const tx = await db.transaction.findUniqueOrThrow({ where: { id: res.transactionId } });
+    expect(tx.toAccountId).toBe(mashreq.id);
+
+    // The destination's cached balance reflects the inflow immediately —
+    // it has no leg of its own going through updateBalance(), so this only
+    // happens if the auto-link path explicitly recomputes it.
+    const updatedMashreq = await db.account.findUniqueOrThrow({ where: { id: mashreq.id } });
+    expect(Number(updatedMashreq.currentBalance)).toBe(750);
+  });
+
+  it("does not auto-link when the user has no account matching the named destination bank", async () => {
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Local Bank Transfer",
+      body: enbdTransferBody({ "Channel Reference No": "NOACCOUNTMATCH1" }),
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-noautolink",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome !== "auto_posted") return;
+
+    const tx = await db.transaction.findUniqueOrThrow({ where: { id: res.transactionId } });
+    expect(tx.toAccountId).toBeNull();
+  });
+
+  it("never auto-links to the source account itself", async () => {
+    // A degenerate case: the user's ENBD account name happens to appear in
+    // its own transfer's description. Must never self-link.
+    await db.account.create({ data: { userId, name: "Emirates NBD", type: AccountType.EMIRATES_NBD, currentBalance: 0 } });
+
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Local Bank Transfer",
+      body: enbdTransferBody({
+        "Beneficiary Bank Name": "Emirates NBD Internal",
+        "Channel Reference No": "SELFLINKTEST1",
+      }),
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-selflink",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome !== "auto_posted") return;
+
+    const tx = await db.transaction.findUniqueOrThrow({ where: { id: res.transactionId } });
+    expect(tx.toAccountId).toBeNull();
+  });
+
   it("returns disabled when import is not enabled for the user", async () => {
     await db.importSetting.update({ where: { userId }, data: { enabled: false } });
     const res = await importService.processEmail(userId, {

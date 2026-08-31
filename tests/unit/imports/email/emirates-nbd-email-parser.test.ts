@@ -71,6 +71,34 @@ describe("EmiratesNbdEmailParser — parse", () => {
     expect(result!.isDeclined).toBe(false);
   });
 
+  it("bounds the beneficiary bank name when stripHtml() didn't insert a newline before the next field — the real production bug", () => {
+    // The unit-test fixture above joins every field with "\n", which never
+    // exercises this: ENBD's real HTML frequently nests "Beneficiary Bank
+    // Name" and everything after it (SWIFT / Routing Code, Correspondent
+    // Bank, fees, references, Status) inside one block with no <br>/</p>
+    // boundary between them, so gmail-message-decoder's stripHtml() collapses
+    // them onto a single line. An unbounded `.+` capture then swallowed the
+    // entire rest of the payload as "merchant" instead of stopping at
+    // "Beneficiary Bank Name"'s actual value.
+    const body = [
+      "CIF: ***1234***",
+      "",
+      "Here is a consolidated status of your Local Bank Transfer.",
+      "",
+      "Transaction Date: 29/Aug/2026 09:22 AM",
+      "From Account: 014***99***01",
+      "Debit Amount: AED 200.00",
+      "Beneficiary Bank Name: MASHREQBANK PSC SWIFT / Routing Code: BOMLAEAD Correspondent Bank Name: N/A Transaction Fees: No Fees Channel Reference No: 4DB4728EFDAC SWIFT Reference No: 202608290006B98111820496656 Status: Success",
+    ].join("\n");
+
+    const result = emiratesNbdEmailParser.parse("OnlineBanking@emiratesnbd.com", "Local Bank Transfer", body, now, "gmail-msg-realworld");
+
+    expect(result).not.toBeNull();
+    expect(result!.merchant).toBe("MASHREQBANK PSC");
+    expect(result!.reference).toBe("4DB4728EFDAC");
+    expect(result!.amount.toFixed(2)).toBe("200.00");
+  });
+
   it("falls back to SWIFT Reference No when Channel Reference No is absent", () => {
     const body = buildLocalTransferEmail({ "Channel Reference No": "" }).replace(/Channel Reference No: \n/, "");
     const result = emiratesNbdEmailParser.parse("OnlineBanking@emiratesnbd.com", "Local Bank Transfer", body, now, "gmail-msg-2");

@@ -38,6 +38,7 @@ import { extractSmsTransaction, AI_SMS_PARSER_KEY } from "./ai-sms-extractor";
 import { isOtpOrPromoMessage } from "../sms/otp-promo-filter";
 import { tryApplyDebtLinkage } from "./debt-linkage";
 import { matchDebtByDescription } from "./debt-matcher";
+import { matchAccountByDescription } from "./account-name-matcher";
 
 const DUBAI_OFFSET_HOURS = 4;
 
@@ -538,6 +539,24 @@ export class ImportService {
             ? determineBudgetMonth(financialDate, true)
             : await getActiveFinancialCycle(userId, financialDate, tx);
 
+          // A transfer whose message already names the destination bank
+          // (e.g. "MASHREQBANK PSC / Routing Code: ...") can resolve
+          // toAccountId right now, from this one message alone — no need
+          // to wait for (or ever receive) a second leg the way
+          // matchInternalTransfer requires. Only matches the user's OWN
+          // other tracked accounts, so an external payment to someone
+          // else's account never gets misattributed as an internal
+          // transfer just because a bank name happens to appear in it.
+          let toAccId: string | undefined;
+          if (category === KnownCategory.TRANSFERS) {
+            const otherAccounts = await tx.account.findMany({
+              where: { userId, id: { not: primaryAccId } },
+              select: { id: true, name: true },
+            });
+            const matchedAccount = matchAccountByDescription(otherAccounts, normalized.merchant);
+            if (matchedAccount) toAccId = matchedAccount.id;
+          }
+
           const ledgerTx = await tx.transaction.create({
               data: {
                   date: financialDate,
@@ -550,10 +569,19 @@ export class ImportService {
                   cashFlowDirection: cashFlowDir,
                   origin,
                   accountId: primaryAccId,
+                  toAccountId: toAccId,
                   userId,
               }
           });
           ledgerTxId = ledgerTx.id;
+
+          // updateBalance() above only bumped the source account's cache —
+          // a destination resolved by name match here has no leg of its own
+          // going through that same call, so without this its currentBalance
+          // would sit stale until something else happened to recompute it.
+          if (toAccId) {
+            await accountService.updateAccountBalance(userId, toAccId, tx);
+          }
 
           // Auto-applies as a DebtPayment if this transaction's category
           // is debt-linked, or its description matches a registered

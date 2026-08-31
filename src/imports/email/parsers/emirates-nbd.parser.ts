@@ -38,6 +38,16 @@ function parseDubaiLocalTimestamp(raw: string): Date | null {
   return new Date(Date.UTC(year, monthIndex, day, hour, minute) - DUBAI_OFFSET_HOURS * 60 * 60 * 1000);
 }
 
+// The stripped-HTML body doesn't reliably put a newline between adjacent
+// fields (depends on exactly how ENBD's template nests <p>/<div>/<br> tags
+// around each one) — a wire/SWIFT transfer's "Beneficiary Bank Name" field
+// is frequently followed immediately by "SWIFT / Routing Code: ...",
+// "Correspondent Bank Name: ...", etc. on what stripHtml() collapses into
+// one line. An unbounded `.+` capture swallows all of that as the
+// "merchant", instead of stopping at the field it's actually naming.
+const NEXT_FIELD_BOUNDARY =
+  "(?=\\s+SWIFT\\b|\\s+Routing\\s+Code|\\s+Correspondent\\s+Bank|\\s+Transaction\\s+Fees|\\s+Channel\\s+Reference|\\s+SWIFT\\s+Reference|\\s+Status\\s*:|\\s+Beneficiary\\s+Name|\\s+Beneficiary\\s+Bank|\\s+From\\s+Account|\\n|$)";
+
 function extractAccountEnding(body: string): string | null {
   const match = /From\s+Account:\s*([A-Za-z0-9X*]+)/i.exec(body);
   if (!match) return null;
@@ -96,8 +106,8 @@ export class EmiratesNbdEmailParser implements IEmailParser {
     // against to auto-tag this as a Transfer, the same way the SMS parsers'
     // TRANSFER_TO_RE capture feeds a bank/beneficiary name for the same
     // purpose. Falls back to the beneficiary's own name otherwise.
-    const beneficiaryBankMatch = /Beneficiary\s+Bank\s+Name:\s*(.+)/i.exec(body);
-    const beneficiaryNameMatch = /Beneficiary\s+Name:\s*(.+)/i.exec(body);
+    const beneficiaryBankMatch = new RegExp(`Beneficiary\\s+Bank\\s+Name:\\s*(.+?)${NEXT_FIELD_BOUNDARY}`, "i").exec(body);
+    const beneficiaryNameMatch = new RegExp(`Beneficiary\\s+Name:\\s*(.+?)${NEXT_FIELD_BOUNDARY}`, "i").exec(body);
     const merchant = (beneficiaryBankMatch?.[1] ?? beneficiaryNameMatch?.[1] ?? "").trim() || null;
 
     const redactedMessage = redactFinancialEmailText(body);
