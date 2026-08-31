@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { CollapsibleSection, SectionBadge } from "@/components/shared/collapsible-section";
 import {
   LucideLandmark,
   LucideWallet,
@@ -13,8 +14,31 @@ import {
   LucideCircleAlert,
   LucideClock,
   LucideStar,
+  LucideWrench,
+  LucideArrowRight,
   type LucideIcon,
 } from "lucide-react";
+
+interface TransferRepairLeg {
+  institution: string;
+  amount: string | null;
+  description: string | null;
+  receivedAt: string;
+}
+
+interface TransferRepairCandidate {
+  transactionId: string;
+  date: string;
+  amount: string;
+  description: string;
+  currentAccountName: string | null;
+  currentToAccountName: string | null;
+  legs: TransferRepairLeg[];
+  status: "FIXABLE" | "WRONG_LEG_COUNT" | "ACCOUNT_NOT_FOUND" | "AMBIGUOUS";
+  detail: string;
+  resolvedAccountName: string | null;
+  resolvedToAccountName: string | null;
+}
 
 interface AccountItem {
   id: string;
@@ -129,6 +153,48 @@ export default function AccountsClient() {
     },
   });
 
+  const { data: repairCandidates = [] } = useQuery<TransferRepairCandidate[]>({
+    queryKey: ["transfer-repair"],
+    queryFn: async () => {
+      const res = await fetch("/api/accounts/transfer-repair");
+      const json = await res.json();
+      return json.data || [];
+    },
+  });
+
+  const [selectedRepairIds, setSelectedRepairIds] = useState<Set<string>>(new Set());
+  const [repairResultSummary, setRepairResultSummary] = useState<{ repaired: number; skipped: number } | null>(null);
+
+  const repairMutation = useMutation({
+    mutationFn: async (transactionIds: string[]) => {
+      const res = await fetch("/api/accounts/transfer-repair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transactionIds }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Repair failed");
+      return json.data as { repaired: string[]; skipped: { transactionId: string; reason: string }[] };
+    },
+    onSuccess: (data) => {
+      setRepairResultSummary({ repaired: data.repaired.length, skipped: data.skipped.length });
+      setSelectedRepairIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["transfer-repair"] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
+
+  const fixableCandidates = repairCandidates.filter((c) => c.status === "FIXABLE");
+
+  const toggleRepairSelection = (transactionId: string) => {
+    setSelectedRepairIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(transactionId)) next.delete(transactionId);
+      else next.add(transactionId);
+      return next;
+    });
+  };
+
   const spendable = accounts.filter((a) => !isOwedAccount(a));
   const owed = accounts.filter(isOwedAccount);
 
@@ -183,6 +249,90 @@ export default function AccountsClient() {
               <LucideCircleAlert className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
               {primaryError}
             </div>
+          )}
+
+          {repairCandidates.length > 0 && (
+            <CollapsibleSection
+              id="transfer-repair"
+              title="Transfer Link Issues Found"
+              description="A transfer between two of your own accounts didn't fully link — the amount is still counted, but the destination side needs a one-time fix."
+              icon={<LucideWrench className="h-5 w-5 text-amber-400" aria-hidden="true" />}
+              badge={<SectionBadge tone="amber">{repairCandidates.length} found</SectionBadge>}
+              defaultOpen
+            >
+              <div className="space-y-3">
+                {repairResultSummary && (
+                  <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-400 border border-emerald-500/20">
+                    <LucideCircleCheck className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                    Repaired {repairResultSummary.repaired}
+                    {repairResultSummary.skipped > 0 ? `, skipped ${repairResultSummary.skipped} (see below)` : ""}.
+                  </div>
+                )}
+                {repairMutation.error && (
+                  <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-semibold text-red-400 border border-red-500/20">
+                    <LucideCircleAlert className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                    {(repairMutation.error as Error).message}
+                  </div>
+                )}
+
+                {repairCandidates.map((c) => (
+                  <div key={c.transactionId} className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        {c.status === "FIXABLE" && (
+                          <input
+                            type="checkbox"
+                            checked={selectedRepairIds.has(c.transactionId)}
+                            onChange={() => toggleRepairSelection(c.transactionId)}
+                            className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-indigo-500"
+                            aria-label={`Select transfer from ${new Date(c.date).toLocaleDateString()} for repair`}
+                          />
+                        )}
+                        <span className="text-sm font-semibold text-white">{formatAED(c.amount)}</span>
+                        <span className="text-xs text-slate-500">
+                          {new Date(c.date).toLocaleDateString("en-AE", { timeZone: "Asia/Dubai", month: "short", day: "numeric", year: "numeric" })}
+                        </span>
+                      </div>
+                      <SectionBadge tone={c.status === "FIXABLE" ? "emerald" : "amber"}>
+                        {c.status === "FIXABLE" ? "Fixable" : "Needs review"}
+                      </SectionBadge>
+                    </div>
+
+                    {c.status === "FIXABLE" ? (
+                      <div className="flex items-center gap-2 text-xs text-slate-300">
+                        <span>{c.resolvedAccountName}</span>
+                        <LucideArrowRight className="h-3.5 w-3.5 text-slate-600" aria-hidden="true" />
+                        <span>{c.resolvedToAccountName}</span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-amber-300/90">{c.detail}</p>
+                    )}
+
+                    <div className="space-y-1 border-t border-slate-800 pt-2">
+                      {c.legs.map((leg, i) => (
+                        <p key={i} className="text-[11px] text-slate-500">
+                          {leg.institution} — {leg.amount ? formatAED(leg.amount) : "?"} — &quot;{leg.description || "no description"}&quot;
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {fixableCandidates.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => repairMutation.mutate(Array.from(selectedRepairIds))}
+                    disabled={selectedRepairIds.size === 0 || repairMutation.isPending}
+                    className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white transition-all hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    <LucideWrench className="h-3.5 w-3.5" aria-hidden="true" />
+                    {repairMutation.isPending
+                      ? "Repairing..."
+                      : `Repair Selected (${selectedRepairIds.size})`}
+                  </button>
+                )}
+              </div>
+            </CollapsibleSection>
           )}
 
           {/* Per-institution cards */}
