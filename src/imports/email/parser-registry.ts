@@ -18,10 +18,12 @@
 import type { IEmailParser, NormalizedEmailTransaction } from "./email-parser.interface";
 import { emiratesNbdEmailParser } from "./parsers/emirates-nbd.parser";
 import { mashreqEmailParser } from "./parsers/mashreq.parser";
+import { mashreqCardPurchaseEmailParser } from "./parsers/mashreq-card-purchase.parser";
 
 const REGISTERED_PARSERS: IEmailParser[] = [
   emiratesNbdEmailParser,
   mashreqEmailParser,
+  mashreqCardPurchaseEmailParser,
 ];
 
 export type EmailParserSelectionResult =

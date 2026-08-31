@@ -147,6 +147,27 @@ describe("ImportService.processEmail", () => {
     }
   });
 
+  it("auto-posts a recognized, well-formed Mashreq card-purchase alert email", async () => {
+    const res = await importService.processEmail(userId, {
+      fromAddress: "MashreqAlerts@mashreq.com",
+      subject: "Transaction Notification",
+      body: "Your NEO VISA Debit Card Card ending with 3411 was used for a purchase of AED 60.00 at e& Digital App Abu Dhabi AE on 31-AUG-2026 05:49 PM. Available limit is AED 44.00",
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-mashreq-card-1",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
+      expect(tx!.amount.toFixed(2)).toBe("60.00");
+      expect(tx!.origin).toBe("EMAIL_IMPORT");
+
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.institutionCode).toBe("MASHREQ");
+      expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
+    }
+  });
+
   it("fails with EXTRACTION_FAILED when the parser matches but Status isn't Success — never posts a guessed transaction", async () => {
     const res = await importService.processEmail(userId, {
       fromAddress: "OnlineBanking@emiratesnbd.com",
