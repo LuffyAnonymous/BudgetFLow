@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveEmailInstitution, isRecognizedBankDomain } from "../../../../src/imports/email/email-sender-normalizer";
+import { resolveEmailInstitution, isRecognizedBankDomain, getRecognizedBankDomains } from "../../../../src/imports/email/email-sender-normalizer";
 import { AccountType } from "@prisma/client";
 
 describe("resolveEmailInstitution", () => {
@@ -54,5 +54,14 @@ describe("isRecognizedBankDomain", () => {
 
   it("does not false-match a domain that merely contains a registered domain as a substring", () => {
     expect(isRecognizedBankDomain("phish@notemiratesnbd.com")).toBe(false);
+  });
+});
+
+describe("getRecognizedBankDomains", () => {
+  it("returns every registered bank domain, flattened", () => {
+    const domains = getRecognizedBankDomains();
+    expect(domains).toContain("emiratesnbd.com");
+    expect(domains).toContain("mashreqbank.com");
+    expect(domains).toContain("mashreq.com");
   });
 });

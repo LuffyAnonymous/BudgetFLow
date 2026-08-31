@@ -114,6 +114,38 @@ export class GmailClient {
   }
 
   /**
+   * Every message ever sent from any of the given domains, regardless of
+   * age — for a manual resync that needs to check a bank's *entire* mail
+   * history, not just a recent window. Gmail's own search does the sender
+   * filtering server-side (so this never touches anything from a domain
+   * that isn't listed), paginated with a generous but finite cap so a
+   * pathological mailbox can't loop forever.
+   */
+  async listAllMessageIdsFromDomains(domains: string[]): Promise<string[]> {
+    const q = `from:(${domains.join(" OR ")})`;
+    const messageIds: string[] = [];
+    let pageToken: string | undefined;
+    let pagesFetched = 0;
+    const MAX_PAGES = 20; // 20 * 500 = up to 10,000 messages
+
+    do {
+      const res = await this.gmail.users.messages.list({
+        userId: "me",
+        q,
+        maxResults: 500,
+        pageToken,
+      });
+      for (const m of res.data.messages ?? []) {
+        if (m.id) messageIds.push(m.id);
+      }
+      pageToken = res.data.nextPageToken ?? undefined;
+      pagesFetched++;
+    } while (pageToken && pagesFetched < MAX_PAGES);
+
+    return messageIds;
+  }
+
+  /**
    * Cheap header-only fetch (format: "metadata", no body) — used to check
    * the sender's domain before ever pulling a message's full content. An
    * email from a domain that isn't a recognized UAE bank must never have

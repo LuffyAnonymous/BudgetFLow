@@ -59,6 +59,11 @@ export function isRecognizedBankDomain(fromAddress: string): boolean {
   );
 }
 
+/** Every registered bank domain, flattened — for building a Gmail search query. */
+export function getRecognizedBankDomains(): string[] {
+  return EMAIL_INSTITUTIONS.flatMap((entry) => entry.domains);
+}
+
 export function resolveEmailInstitution(fromAddress: string): ResolvedEmailInstitution {
   const domain = extractDomain(fromAddress);
 
