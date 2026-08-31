@@ -20,6 +20,7 @@ import {
   LucideSmartphone,
   LucideMail,
 } from "lucide-react";
+import { CollapsibleSection, SectionBadge } from "@/components/shared/collapsible-section";
 
 const RESET_CONFIRMATION_PHRASE = "DELETE EVERYTHING";
 
@@ -496,18 +497,18 @@ export function SettingsClient() {
     <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
       {/* Preferences Section */}
       <div className="lg:col-span-2 space-y-6">
+        <CollapsibleSection
+          id="general-preferences"
+          defaultOpen={true}
+          icon={<LucideSliders className="h-5 w-5 text-indigo-400" />}
+          title="General Preferences"
+          description="Configure layout, salary, timezone, and lead parameters."
+          forceOpenSignal={!!prefError}
+        >
         <form
           onSubmit={handlePreferencesSubmit}
-          className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6"
+          className="space-y-6"
         >
-          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-            <LucideSliders className="h-5 w-5 text-indigo-400" />
-            <div>
-              <h2 className="text-lg font-semibold text-white">General Preferences</h2>
-              <p className="text-xs text-slate-400">Configure layout, salary, timezone, and lead parameters.</p>
-            </div>
-          </div>
-
           {prefSuccess && (
             <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-400 border border-emerald-500/20">
               <LucideCheckCircle2 className="h-4 w-4 flex-shrink-0" />
@@ -737,22 +738,23 @@ export function SettingsClient() {
             </button>
           </div>
         </form>
+        </CollapsibleSection>
       </div>
 
       {/* Password Section */}
       <div className="space-y-6">
+        <CollapsibleSection
+          id="change-password"
+          defaultOpen={false}
+          icon={<LucideLock className="h-5 w-5 text-red-400" />}
+          title="Change Password"
+          description="Securely update your access credentials."
+          forceOpenSignal={!!passError || !!passSuccess}
+        >
         <form
           onSubmit={handlePasswordSubmit}
-          className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6"
+          className="space-y-6"
         >
-          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-            <LucideLock className="h-5 w-5 text-red-400" />
-            <div>
-              <h2 className="text-lg font-semibold text-white">Change Password</h2>
-              <p className="text-xs text-slate-400">Securely update your access credentials.</p>
-            </div>
-          </div>
-
           {passSuccess && (
             <div className="flex flex-col gap-1 rounded-xl bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-400 border border-emerald-500/20">
               <div className="flex items-center gap-2">
@@ -845,17 +847,19 @@ export function SettingsClient() {
             </button>
           </div>
         </form>
+        </CollapsibleSection>
 
         {/* API Import Token Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-            <LucideKey className="h-5 w-5 text-indigo-400" />
-            <div>
-              <h2 className="text-lg font-semibold text-white">SMS Import Credentials</h2>
-              <p className="text-xs text-slate-400">Generate access tokens for the automated bank SMS endpoint.</p>
-            </div>
-          </div>
-
+        <CollapsibleSection
+          id="sms-import"
+          defaultOpen={false}
+          icon={<LucideKey className="h-5 w-5 text-indigo-400" />}
+          title="SMS Import Credentials"
+          description="Generate access tokens for the automated bank SMS endpoint."
+          forceOpenSignal={!!importConfigError || !!tokenError}
+          badge={tokenStatus?.isActive ? <SectionBadge tone="emerald">Token Active</SectionBadge> : undefined}
+        >
+        <div className="space-y-6">
           {/* Import Engine Toggle */}
           <div className="flex items-center gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
             <label className="flex items-center gap-3 cursor-pointer select-none">
@@ -1128,17 +1132,24 @@ export function SettingsClient() {
             </div>
           )}
         </div>
+        </CollapsibleSection>
 
         {/* Telegram Linking Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-            <LucideSend className="h-5 w-5 text-indigo-400" />
-            <div>
-              <h2 className="text-lg font-semibold text-white">Telegram</h2>
-              <p className="text-xs text-slate-400">Forward bank SMS text to the bot and it&apos;s imported automatically.</p>
-            </div>
-          </div>
-
+        <CollapsibleSection
+          id="telegram"
+          defaultOpen={false}
+          icon={<LucideSend className="h-5 w-5 text-indigo-400" />}
+          title="Telegram"
+          description="Forward bank SMS text to the bot and it's imported automatically."
+          badge={
+            isLoadingTelegram
+              ? undefined
+              : telegramStatus?.isLinked
+                ? <SectionBadge tone="emerald">Connected</SectionBadge>
+                : <SectionBadge tone="slate">Not connected</SectionBadge>
+          }
+        >
+        <div className="space-y-6">
           {isLoadingTelegram ? (
             <div className="h-16 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-800" />
           ) : telegramStatus?.isLinked ? (
@@ -1186,17 +1197,26 @@ export function SettingsClient() {
             </div>
           )}
         </div>
+        </CollapsibleSection>
 
         {/* Gmail Bank-Email Import Section */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur-sm space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-            <LucideMail className="h-5 w-5 text-indigo-400" />
-            <div>
-              <h2 className="text-lg font-semibold text-white">Gmail</h2>
-              <p className="text-xs text-slate-400">Auto-import bank transaction emails from a connected Gmail account.</p>
-            </div>
-          </div>
-
+        <CollapsibleSection
+          id="gmail"
+          defaultOpen={false}
+          icon={<LucideMail className="h-5 w-5 text-indigo-400" />}
+          title="Gmail"
+          description="Auto-import bank transaction emails from a connected Gmail account."
+          badge={
+            isLoadingGmail
+              ? undefined
+              : gmailStatus?.status === "ERROR"
+                ? <SectionBadge tone="amber">Needs attention</SectionBadge>
+                : gmailStatus?.isConnected
+                  ? <SectionBadge tone="emerald">{gmailStatus.googleAccountEmail ? `Connected as ${gmailStatus.googleAccountEmail}` : "Connected"}</SectionBadge>
+                  : <SectionBadge tone="slate">Not connected</SectionBadge>
+          }
+        >
+        <div className="space-y-6">
           {isLoadingGmail ? (
             <div className="h-16 w-full animate-pulse rounded-xl bg-slate-950 border border-slate-800" />
           ) : gmailStatus?.status === "ERROR" ? (
@@ -1284,17 +1304,17 @@ export function SettingsClient() {
             </div>
           )}
         </div>
+        </CollapsibleSection>
 
         {/* Danger Zone */}
-        <div className="rounded-2xl border border-red-900/50 bg-red-950/10 p-6 backdrop-blur-sm space-y-4">
-          <div className="flex items-center gap-3 border-b border-red-900/40 pb-4">
-            <LucideAlertCircle className="h-5 w-5 text-red-500" />
-            <div>
-              <h2 className="text-lg font-semibold text-white">Danger Zone</h2>
-              <p className="text-xs text-slate-400">Irreversible actions. There is no undo.</p>
-            </div>
-          </div>
-
+        <CollapsibleSection
+          id="danger-zone"
+          defaultOpen={false}
+          icon={<LucideAlertCircle className="h-5 w-5 text-red-500" />}
+          title="Danger Zone"
+          description="Irreversible actions. There is no undo."
+        >
+        <div className="space-y-4">
           <div className="rounded-xl border border-red-900/40 bg-slate-950/40 p-4 space-y-3">
             <div>
               <p className="text-sm font-semibold text-red-400">Delete all financial data</p>
@@ -1360,6 +1380,7 @@ export function SettingsClient() {
             </button>
           </div>
         </div>
+        </CollapsibleSection>
       </div>
     </div>
   );
