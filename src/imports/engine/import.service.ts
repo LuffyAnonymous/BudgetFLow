@@ -466,6 +466,30 @@ export class ImportService {
 
       if (matchedTransferId) {
           ledgerTxId = matchedTransferId;
+
+          // The matched row's `accountId` was already set by whichever leg
+          // arrived first (unconditionally, regardless of that leg's own
+          // direction — see the create() below). This leg is therefore
+          // always the *other* side, and the only field that can still be
+          // empty is `toAccountId`. Never overwrite an already-populated
+          // toAccountId — a mismatch there means matchInternalTransfer()
+          // matched something it shouldn't have, and silently relinking it
+          // would corrupt a transfer that's already correctly recorded.
+          const matchedRow = await tx.transaction.findUnique({
+            where: { id: matchedTransferId },
+            select: { accountId: true, toAccountId: true },
+          });
+          if (matchedRow && !matchedRow.toAccountId && matchedRow.accountId !== primaryAccId) {
+            await tx.transaction.update({
+              where: { id: matchedTransferId },
+              data: { toAccountId: primaryAccId },
+            });
+          } else if (matchedRow?.toAccountId && matchedRow.toAccountId !== primaryAccId && matchedRow.accountId !== primaryAccId) {
+            console.warn(
+              "[Import Service] Matched transfer row already has a different toAccountId — leaving it alone",
+              { matchedTransferId, existingToAccountId: matchedRow.toAccountId, thisLegAccountId: primaryAccId }
+            );
+          }
       } else {
           let txType: TransactionType = TransactionType.EXPENSE;
           let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
