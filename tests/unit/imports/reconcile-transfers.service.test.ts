@@ -44,6 +44,7 @@ describe("reconcileTransfers", () => {
         accountId: overrides.accountId,
         categoryId,
         date: overrides.createdAt,
+        occurredAt: overrides.createdAt,
         amount: overrides.amount,
         description: "test leg",
         paymentMethod: "SMS Import",

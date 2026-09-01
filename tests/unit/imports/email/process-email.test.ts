@@ -309,6 +309,13 @@ describe("ImportService.processEmail", () => {
       expect(tx!.amount.toFixed(2)).toBe("3500.00");
       expect(tx!.origin).toBe("EMAIL_IMPORT");
 
+      // `date` is midnight-truncated (budget/reporting-month grouping);
+      // occurredAt preserves the real 16:57 Dubai-local instant (12:57 UTC)
+      // — this is what fixes same-day transactions sorting in an undefined
+      // order on the Transactions list.
+      expect(tx!.date.toISOString()).toBe("2026-08-28T00:00:00.000Z");
+      expect(tx!.occurredAt?.toISOString()).toBe("2026-08-28T12:57:00.000Z");
+
       const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
       expect(importedTx!.institutionCode).toBe("ENBD");
       expect(importedTx!.status).toBe(ImportStatus.PROCESSED);

@@ -162,13 +162,13 @@ describe("Two-phase internal transfer linking", () => {
       // Same account on both sides — must never match.
       await db.transaction.create({
         data: {
-          userId, accountId: enbd.id, categoryId: category.id, date: new Date(), amount: 500,
+          userId, accountId: enbd.id, categoryId: category.id, date: new Date(), occurredAt: new Date(), amount: 500,
           description: "a", paymentMethod: "SMS Import", type: "EXPENSE", cashFlowDirection: "OUTFLOW", origin: "SMS_IMPORT",
         },
       });
       await db.transaction.create({
         data: {
-          userId, accountId: enbd.id, categoryId: category.id, date: new Date(), amount: 500,
+          userId, accountId: enbd.id, categoryId: category.id, date: new Date(), occurredAt: new Date(), amount: 500,
           description: "b", paymentMethod: "SMS Import", type: "INCOME", cashFlowDirection: "INFLOW", origin: "SMS_IMPORT",
         },
       });
@@ -176,13 +176,13 @@ describe("Two-phase internal transfer linking", () => {
       // Different accounts but amounts differ by a cent — no tolerance.
       await db.transaction.create({
         data: {
-          userId, accountId: enbd.id, categoryId: category.id, date: new Date(), amount: 300.00,
+          userId, accountId: enbd.id, categoryId: category.id, date: new Date(), occurredAt: new Date(), amount: 300.00,
           description: "c", paymentMethod: "SMS Import", type: "EXPENSE", cashFlowDirection: "OUTFLOW", origin: "SMS_IMPORT",
         },
       });
       await db.transaction.create({
         data: {
-          userId, accountId: mashreq.id, categoryId: category.id, date: new Date(), amount: 300.01,
+          userId, accountId: mashreq.id, categoryId: category.id, date: new Date(), occurredAt: new Date(), amount: 300.01,
           description: "d", paymentMethod: "SMS Import", type: "INCOME", cashFlowDirection: "INFLOW", origin: "SMS_IMPORT",
         },
       });

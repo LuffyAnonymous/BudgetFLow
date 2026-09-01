@@ -26,24 +26,27 @@ export async function reconcileTransfers(
 ): Promise<ReconciliationResult> {
   const since = new Date(Date.now() - matchWindowMinutes * 60 * 1000);
 
-  // Windowed on createdAt (the real arrival timestamp), not `date` — `date`
-  // is the midnight-truncated financialDate the ledger reports by, shared
-  // by every transaction posted on the same calendar day, so it carries no
-  // usable time-of-day signal for a same-day match window.
+  // Windowed on occurredAt (the real event instant), not `date` (midnight-
+  // truncated — no usable time-of-day signal) and not createdAt (DB
+  // insert/processing time, which can lag badly behind the real event for
+  // a backfilled/resynced import — see CandidateTransaction's doc comment).
   const rows = await db.transaction.findMany({
     where: {
       userId,
       transferMatchStatus: TransferMatchStatus.UNMATCHED,
-      createdAt: { gte: since },
+      occurredAt: { gte: since },
     },
-    select: { id: true, accountId: true, amount: true, createdAt: true, type: true, cashFlowDirection: true },
+    select: { id: true, accountId: true, amount: true, occurredAt: true, date: true, type: true, cashFlowDirection: true },
   });
 
   const candidates: CandidateTransaction[] = rows.map((r) => ({
     id: r.id,
     accountId: r.accountId,
     amount: r.amount,
-    createdAt: r.createdAt,
+    // occurredAt is nullable only for rows that somehow predate both the
+    // column and its migration backfill — shouldn't happen, but `date`
+    // (same instant, just day-precision) is the correct fallback if it did.
+    occurredAt: r.occurredAt ?? r.date,
     type: r.type,
     cashFlowDirection: r.cashFlowDirection,
   }));

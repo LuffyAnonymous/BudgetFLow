@@ -29,7 +29,13 @@ export class TransactionRepository {
 
     return this.getClient(tx).transaction.findMany({
       where,
+      // occurredAt (the real event instant, full precision) is the primary
+      // sort — `date` alone is midnight-truncated, so same-day
+      // transactions previously had an undefined relative order. `date`
+      // and `createdAt` stay as defensive fallbacks for the never-expected
+      // case of a null occurredAt.
       orderBy: [
+        { occurredAt: "desc" },
         { date: "desc" },
         { createdAt: "desc" },
       ],
@@ -69,6 +75,9 @@ export class TransactionRepository {
       data: {
         userId,
         date: data.date,
+        // A manual entry's form collects a date only, no time — this is
+        // the same instant as `date` by design, not a placeholder.
+        occurredAt: data.date,
         budgetMonth: data.budgetMonth !== undefined ? data.budgetMonth : undefined,
         categoryId: data.categoryId,
         description: data.description,
@@ -110,6 +119,11 @@ export class TransactionRepository {
       where: { id, userId },
       data: {
         date: data.date,
+        // Only touched when `date` itself is being explicitly edited (both
+        // undefined together = Prisma leaves the existing column alone) —
+        // never overwrite an auto-imported transaction's real precise
+        // occurredAt just because some other field got edited.
+        occurredAt: data.date,
         budgetMonth: data.budgetMonth !== undefined ? data.budgetMonth : undefined,
         categoryId: data.categoryId,
         description: data.description,

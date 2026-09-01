@@ -49,6 +49,7 @@ export async function GET(request: Request) {
       return {
         id: extendedTx.id,
         date: extendedTx.date.toISOString(),
+        occurredAt: ((extendedTx as Record<string, unknown>).occurredAt as Date | null ?? extendedTx.date).toISOString(),
         budgetMonth: (extendedTx as Record<string, unknown>).budgetMonth as string | null ?? null,
         categoryId: extendedTx.categoryId,
         categoryName: extendedTx.category?.name || "Unknown",

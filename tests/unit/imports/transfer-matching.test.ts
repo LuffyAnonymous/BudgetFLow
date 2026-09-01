@@ -7,7 +7,7 @@ function outflow(overrides: Partial<CandidateTransaction> = {}): CandidateTransa
     id: "out-1",
     accountId: "acc-a",
     amount: new Decimal("100.00"),
-    createdAt: new Date("2026-08-01T10:00:00Z"),
+    occurredAt: new Date("2026-08-01T10:00:00Z"),
     type: "EXPENSE",
     cashFlowDirection: "OUTFLOW",
     ...overrides,
@@ -19,7 +19,7 @@ function inflow(overrides: Partial<CandidateTransaction> = {}): CandidateTransac
     id: "in-1",
     accountId: "acc-b",
     amount: new Decimal("100.00"),
-    createdAt: new Date("2026-08-01T10:01:00Z"),
+    occurredAt: new Date("2026-08-01T10:01:00Z"),
     type: "INCOME",
     cashFlowDirection: "INFLOW",
     ...overrides,
@@ -46,16 +46,16 @@ describe("findTransferMatchPairs", () => {
   });
 
   it("picks the closest-in-time candidate when multiple inflows have the same amount", () => {
-    const far = inflow({ id: "in-far", createdAt: new Date("2026-08-01T12:00:00Z") });
-    const close = inflow({ id: "in-close", createdAt: new Date("2026-08-01T10:00:30Z") });
+    const far = inflow({ id: "in-far", occurredAt: new Date("2026-08-01T12:00:00Z") });
+    const close = inflow({ id: "in-close", occurredAt: new Date("2026-08-01T10:00:30Z") });
     const pairs = findTransferMatchPairs([outflow(), far, close]);
     expect(pairs).toEqual([{ outflowId: "out-1", inflowId: "in-close" }]);
   });
 
   it("never claims the same inflow for two different outflows", () => {
     const sharedInflow = inflow();
-    const out1 = outflow({ id: "out-1", createdAt: new Date("2026-08-01T10:00:00Z") });
-    const out2 = outflow({ id: "out-2", createdAt: new Date("2026-08-01T10:00:10Z") });
+    const out1 = outflow({ id: "out-1", occurredAt: new Date("2026-08-01T10:00:00Z") });
+    const out2 = outflow({ id: "out-2", occurredAt: new Date("2026-08-01T10:00:10Z") });
     const pairs = findTransferMatchPairs([out1, out2, sharedInflow]);
     expect(pairs).toHaveLength(1);
     // The earlier-processed outflow (sorted oldest-first) claims it.
@@ -72,7 +72,7 @@ describe("findTransferMatchPairs", () => {
       id: "already-transfer",
       accountId: "acc-c",
       amount: new Decimal("100.00"),
-      createdAt: new Date("2026-08-01T10:00:00Z"),
+      occurredAt: new Date("2026-08-01T10:00:00Z"),
       type: "TRANSFER",
       cashFlowDirection: "OUTFLOW",
     };

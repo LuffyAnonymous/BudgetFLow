@@ -28,7 +28,12 @@ export interface CandidateTransaction {
   id: string;
   accountId: string | null;
   amount: Decimal;
-  createdAt: Date;
+  /// The real-world event instant (Transaction.occurredAt), not createdAt
+  /// (DB insert/processing time) — a backfilled/resynced import can process
+  /// two real legs of the same transfer in whatever order Gmail happens to
+  /// return matching messages, which has no relationship to when those
+  /// legs actually happened. occurredAt does.
+  occurredAt: Date;
   type: TransactionType;
   cashFlowDirection: "OUTFLOW" | "INFLOW" | null;
 }
@@ -48,7 +53,7 @@ export interface TransferMatchPair {
 export function findTransferMatchPairs(candidates: CandidateTransaction[]): TransferMatchPair[] {
   const outflows = candidates
     .filter((c) => c.type === OUTFLOW_TX_TYPE && c.cashFlowDirection === "OUTFLOW" && c.accountId)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
   const inflows = candidates.filter(
     (c) => c.type === INFLOW_TX_TYPE && c.cashFlowDirection === "INFLOW" && c.accountId
   );
@@ -65,7 +70,7 @@ export function findTransferMatchPairs(candidates: CandidateTransaction[]): Tran
       if (inflow.accountId === outflow.accountId) continue;
       if (!inflow.amount.equals(outflow.amount)) continue;
 
-      const deltaMs = Math.abs(inflow.createdAt.getTime() - outflow.createdAt.getTime());
+      const deltaMs = Math.abs(inflow.occurredAt.getTime() - outflow.occurredAt.getTime());
       if (deltaMs < bestDeltaMs) {
         bestDeltaMs = deltaMs;
         best = inflow;

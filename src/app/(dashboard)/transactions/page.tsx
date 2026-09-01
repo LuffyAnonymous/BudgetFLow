@@ -25,6 +25,7 @@ interface CategoryOption {
 interface TransactionItem {
   id: string;
   date: string;
+  occurredAt: string;
   budgetMonth: string | null;
   categoryId: string;
   categoryName: string;
@@ -142,13 +143,22 @@ export default function TransactionsPage() {
       key: "date",
       header: "Date",
       cell: (tx) => (
-        <span className="whitespace-nowrap font-medium text-slate-400">
-          {new Date(tx.date).toLocaleDateString("en-AE", {
-            timeZone: "Asia/Dubai",
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-          })}
+        <span className="whitespace-nowrap">
+          <span className="block font-medium text-slate-400">
+            {new Date(tx.date).toLocaleDateString("en-AE", {
+              timeZone: "Asia/Dubai",
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}
+          </span>
+          <span className="block text-[11px] text-slate-600">
+            {new Date(tx.occurredAt).toLocaleTimeString("en-AE", {
+              timeZone: "Asia/Dubai",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
         </span>
       ),
     },

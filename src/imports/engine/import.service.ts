@@ -369,6 +369,7 @@ export class ImportService {
         direction,
         category,
         financialDate,
+        occurredAt: normalized.transactionDate,
         confidence,
         directionAmbiguous,
         fingerprint,
@@ -415,6 +416,11 @@ export class ImportService {
     direction: TransactionDirection;
     category: KnownCategory;
     financialDate: Date;
+    /// The real-world instant this transaction happened (full precision) —
+    /// each parser's own transactionDate, computed identically to how
+    /// financialDate was derived from it, but preserved rather than
+    /// discarded. See Transaction.occurredAt's schema doc comment.
+    occurredAt: Date;
     confidence: ImportConfidence;
     directionAmbiguous: boolean;
     fingerprint: string;
@@ -428,7 +434,7 @@ export class ImportService {
   }): Promise<{ importedTxId: string; ledgerTxId: string }> {
     const {
       userId, source, origin, paymentMethodLabel, normalized, institutionForAccount, institutionCode,
-      isCreditCard, direction, category, financialDate, confidence, directionAmbiguous,
+      isCreditCard, direction, category, financialDate, occurredAt, confidence, directionAmbiguous,
       fingerprint, rawPayload, extractionMethod, deviceId, maskedSenderValue, receivedAt, idempotencyKey,
       externalMessageId,
     } = params;
@@ -573,6 +579,7 @@ export class ImportService {
           const ledgerTx = await tx.transaction.create({
               data: {
                   date: financialDate,
+                  occurredAt,
                   budgetMonth: computedBudgetMonth,
                   categoryId: dbCategory.id,
                   description: normalized.merchant || "Auto-imported",
@@ -896,6 +903,7 @@ export class ImportService {
         direction: normalized.direction,
         category,
         financialDate,
+        occurredAt: normalized.transactionDate,
         confidence,
         directionAmbiguous,
         fingerprint,
@@ -1105,6 +1113,9 @@ export class ImportService {
       const ledgerTx = await tx.transaction.create({
           data: {
               date: effectiveDate,
+              // No separate time-of-day signal for a manually-confirmed
+              // receipt/review import — the same instant as `date`.
+              occurredAt: effectiveDate,
               budgetMonth: computedBudgetMonth,
               categoryId,
               description,

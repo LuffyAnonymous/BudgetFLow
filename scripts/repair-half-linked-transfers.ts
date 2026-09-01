@@ -45,7 +45,7 @@ async function main() {
   for (const userId of userIds) {
     const rows = await db.transaction.findMany({
       where: { userId, transferMatchStatus: TransferMatchStatus.UNMATCHED },
-      select: { id: true, accountId: true, amount: true, createdAt: true, type: true, cashFlowDirection: true },
+      select: { id: true, accountId: true, amount: true, occurredAt: true, date: true, type: true, cashFlowDirection: true },
     });
 
     if (rows.length === 0) continue;
@@ -54,7 +54,7 @@ async function main() {
       id: r.id,
       accountId: r.accountId,
       amount: r.amount,
-      createdAt: r.createdAt,
+      occurredAt: r.occurredAt ?? r.date,
       type: r.type,
       cashFlowDirection: r.cashFlowDirection,
     }));

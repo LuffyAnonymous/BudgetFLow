@@ -229,7 +229,22 @@ model Category {
 
 model Transaction {
   id                String             @id @default(uuid())
+  /// Midnight-truncated calendar day (Dubai-local) — used for budget/
+  /// reporting-month grouping, deliberately stripped of time-of-day. Never
+  /// use this for chronological ordering between same-day transactions;
+  /// use occurredAt instead.
   date              DateTime
+  /// The actual real-world instant the transaction happened, full
+  /// precision — the parser's own transactionDate for an auto-imported
+  /// row (already computed during parsing, but previously discarded after
+  /// deriving `date` from it), or the same value as `date` for a manual
+  /// entry (the UI collects no time input). Nullable only because rows
+  /// created before this field existed have no better answer than `date`
+  /// itself (backfilled to that at migration time). This — not `date` and
+  /// not `createdAt` (DB insert/processing time, which can lag badly
+  /// behind the real event for a backfilled/resynced import) — is what
+  /// the Transactions list actually sorts by.
+  occurredAt        DateTime?
   categoryId        String
   category          Category           @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   description       String
@@ -269,6 +284,7 @@ model Transaction {
   updatedAt            DateTime              @updatedAt
 
   @@index([userId, date])
+  @@index([userId, occurredAt])
   @@index([userId, budgetMonth])
   @@index([categoryId])
   @@index([accountId])
