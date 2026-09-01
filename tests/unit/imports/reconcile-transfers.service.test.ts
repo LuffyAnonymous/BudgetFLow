@@ -37,6 +37,7 @@ describe("reconcileTransfers", () => {
     type: "EXPENSE" | "INCOME";
     cashFlowDirection: "OUTFLOW" | "INFLOW";
     createdAt: Date;
+    description?: string;
   }) {
     return db.transaction.create({
       data: {
@@ -46,7 +47,7 @@ describe("reconcileTransfers", () => {
         date: overrides.createdAt,
         occurredAt: overrides.createdAt,
         amount: overrides.amount,
-        description: "test leg",
+        description: overrides.description ?? "test leg",
         paymentMethod: "SMS Import",
         type: overrides.type,
         cashFlowDirection: overrides.cashFlowDirection,
@@ -108,5 +109,69 @@ describe("reconcileTransfers", () => {
   it("returns { matched: 0, scanned: 0 } when there's nothing UNMATCHED", async () => {
     const result = await reconcileTransfers(userId, 45);
     expect(result).toEqual({ matched: 0, scanned: 0 });
+  });
+
+  describe("resolving a named outflow with no pairable second leg", () => {
+    it("resolves a wire transfer whose beneficiary bank has no confirmation email to pair against — even well outside the match window", async () => {
+      const staleOutflow = await createLeg({
+        accountId: enbdId,
+        amount: 652,
+        type: "EXPENSE",
+        cashFlowDirection: "OUTFLOW",
+        createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000), // 3 hours ago — long past any reasonable match window
+        description: "MASHREQBANK PSC SWIFT / Routing Code: BOMLAEAD",
+      });
+
+      const result = await reconcileTransfers(userId, 45);
+      expect(result.matched).toBe(1);
+
+      const after = await db.transaction.findUniqueOrThrow({ where: { id: staleOutflow.id } });
+      expect(after.type).toBe("TRANSFER");
+      expect(after.toAccountId).toBe(mashreqId);
+      expect(after.transferMatchStatus).toBe("MATCHED");
+
+      const mashreqAfter = await db.account.findUniqueOrThrow({ where: { id: mashreqId } });
+      expect(mashreqAfter.currentBalance.toFixed(2)).toBe("652.00");
+    });
+
+    it("prefers an exact amount+time pair over named resolution when both are available", async () => {
+      const now = new Date();
+      const out = await createLeg({
+        accountId: enbdId,
+        amount: 400,
+        type: "EXPENSE",
+        cashFlowDirection: "OUTFLOW",
+        createdAt: now,
+        description: "MASHREQBANK PSC transfer",
+      });
+      const inc = await createLeg({ accountId: mashreqId, amount: 400, type: "INCOME", cashFlowDirection: "INFLOW", createdAt: now });
+
+      const result = await reconcileTransfers(userId, 45);
+      expect(result.matched).toBe(1);
+
+      const outAfter = await db.transaction.findUniqueOrThrow({ where: { id: out.id } });
+      expect(outAfter.toAccountId).toBe(mashreqId);
+
+      const incAfter = await db.transaction.findUniqueOrThrow({ where: { id: inc.id } });
+      expect(incAfter.transferMatchStatus).toBe("MERGED");
+    });
+
+    it("leaves an outflow untouched when its description doesn't name any of the user's own accounts", async () => {
+      const outflow = await createLeg({
+        accountId: enbdId,
+        amount: 75,
+        type: "EXPENSE",
+        cashFlowDirection: "OUTFLOW",
+        createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        description: "CARREFOUR DUBAI",
+      });
+
+      const result = await reconcileTransfers(userId, 45);
+      expect(result.matched).toBe(0);
+
+      const after = await db.transaction.findUniqueOrThrow({ where: { id: outflow.id } });
+      expect(after.type).toBe("EXPENSE");
+      expect(after.transferMatchStatus).toBe("UNMATCHED");
+    });
   });
 });

@@ -2,7 +2,7 @@ import "server-only";
 
 import { db } from "@/lib/db";
 import { TransferMatchStatus } from "@prisma/client";
-import { findTransferMatchPairs, mergeTransferPair, type CandidateTransaction } from "./transfer-matching";
+import { findTransferMatchPairs, mergeTransferPair, resolveNamedOutflow, OUTFLOW_TX_TYPE, type CandidateTransaction } from "./transfer-matching";
 
 export interface ReconciliationResult {
   matched: number;
@@ -54,9 +54,33 @@ export async function reconcileTransfers(
   const pairs = findTransferMatchPairs(candidates);
 
   let matched = 0;
+  const pairedIds = new Set<string>();
   for (const pair of pairs) {
     const merged = await mergeTransferPair(userId, pair.outflowId, pair.inflowId);
-    if (merged) matched++;
+    if (merged) {
+      matched++;
+      pairedIds.add(pair.outflowId);
+      pairedIds.add(pair.inflowId);
+    }
+  }
+
+  // Deliberately UNBOUNDED, unlike the windowed query above: a wire/SWIFT
+  // transfer whose receiving bank never sends its own confirmation has no
+  // second leg to ever pair against, so it would otherwise sit as a plain
+  // EXPENSE forever, past this run's window and every run after it —
+  // resolveNamedOutflow resolves it from its own message text instead (see
+  // its doc comment). This means every scheduled run also sweeps up
+  // anything still stuck from before this fallback existed, not just
+  // transactions from the last matchWindowMinutes.
+  const unresolvedOutflows = await db.transaction.findMany({
+    where: { userId, transferMatchStatus: TransferMatchStatus.UNMATCHED, type: OUTFLOW_TX_TYPE, cashFlowDirection: "OUTFLOW" },
+    select: { id: true },
+  });
+
+  for (const outflow of unresolvedOutflows) {
+    if (pairedIds.has(outflow.id)) continue;
+    const resolved = await resolveNamedOutflow(userId, outflow.id);
+    if (resolved) matched++;
   }
 
   return { matched, scanned: candidates.length };

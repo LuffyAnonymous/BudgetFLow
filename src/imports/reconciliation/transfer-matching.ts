@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { AuditAction, AuditEntityType, TransactionType, TransferMatchStatus, Prisma } from "@prisma/client";
 import { accountService } from "@/server/services/account.service";
 import { AuditLogService } from "@/server/services/audit-log.service";
+import { matchAccountByDescription } from "../engine/account-name-matcher";
 import { Decimal } from "decimal.js";
 
 /**
@@ -178,6 +179,70 @@ export async function mergeTransferPair(userId: string, outflowId: string, inflo
   } catch (err) {
     if (err instanceof Error && err.message === RACE_LOST) return false;
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") return false; // findUniqueOrThrow lost a race entirely (row gone from a concurrent... never actually deleted, but defensive)
+    throw err;
+  }
+}
+
+/**
+ * Fallback for an unmatched outflow that findTransferMatchPairs will never
+ * pair: a wire/SWIFT transfer whose receiving bank doesn't send its own
+ * "money received" notification has no second leg to ever match against by
+ * amount+time, and would otherwise sit as a plain EXPENSE forever —
+ * incorrectly counted as real spending instead of an internal transfer, and
+ * leaving the destination account's balance permanently short. Resolves it
+ * from its own message text alone (e.g. "...MASHREQBANK PSC...") using
+ * matchAccountByDescription — the same logic import.service.ts used to run
+ * inline at ingestion, before the two-phase rebuild moved all matching
+ * here. Only ever proposes the user's OWN other tracked accounts, so an
+ * external payment naming some other bank never gets misattributed as an
+ * internal transfer just because a name happens to appear in it.
+ */
+export async function resolveNamedOutflow(userId: string, transactionId: string): Promise<boolean> {
+  try {
+    return await db.$transaction(async (tx) => {
+      const outflow = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId } });
+
+      if (outflow.userId !== userId) return false;
+      if (outflow.transferMatchStatus !== TransferMatchStatus.UNMATCHED) return false;
+      if (outflow.type !== OUTFLOW_TX_TYPE || outflow.cashFlowDirection !== "OUTFLOW" || !outflow.accountId) return false;
+
+      const otherAccounts = await tx.account.findMany({
+        where: { userId, id: { not: outflow.accountId } },
+        select: { id: true, name: true },
+      });
+      const matchedAccount = matchAccountByDescription(otherAccounts, outflow.description);
+      if (!matchedAccount) return false;
+
+      const claim = await tx.transaction.updateMany({
+        where: { id: transactionId, transferMatchStatus: TransferMatchStatus.UNMATCHED },
+        data: {
+          type: TransactionType.TRANSFER,
+          toAccountId: matchedAccount.id,
+          transferMatchStatus: TransferMatchStatus.MATCHED,
+        },
+      });
+      if (claim.count !== 1) return false;
+
+      await accountService.updateAccountBalance(userId, outflow.accountId, tx);
+      await accountService.updateAccountBalance(userId, matchedAccount.id, tx);
+
+      await AuditLogService.log(
+        {
+          userId,
+          action: AuditAction.UPDATE,
+          entityType: AuditEntityType.TRANSACTION,
+          entityId: transactionId,
+          before: { type: outflow.type, toAccountId: outflow.toAccountId, transferMatchStatus: outflow.transferMatchStatus },
+          after: { type: TransactionType.TRANSFER, toAccountId: matchedAccount.id, transferMatchStatus: TransferMatchStatus.MATCHED },
+          source: "TRANSFER_RECONCILIATION_NAMED",
+        },
+        tx
+      );
+
+      return true;
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") return false;
     throw err;
   }
 }

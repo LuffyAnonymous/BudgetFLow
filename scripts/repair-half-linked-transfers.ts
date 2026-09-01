@@ -23,7 +23,7 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import { TransferMatchStatus } from "@prisma/client";
-import { findTransferMatchPairs, mergeTransferPair, type CandidateTransaction } from "../src/imports/reconciliation/transfer-matching";
+import { findTransferMatchPairs, mergeTransferPair, resolveNamedOutflow, type CandidateTransaction } from "../src/imports/reconciliation/transfer-matching";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -63,20 +63,36 @@ async function main() {
     totalScanned += candidates.length;
     totalProposed += pairs.length;
 
-    if (pairs.length === 0) continue;
+    const pairedIds = new Set<string>();
 
-    console.log(`\nUser ${userId}: ${candidates.length} unmatched, ${pairs.length} proposed pair(s)`);
-    for (const pair of pairs) {
-      console.log(`  outflow ${pair.outflowId}  <->  inflow ${pair.inflowId}`);
+    if (pairs.length > 0) {
+      console.log(`\nUser ${userId}: ${candidates.length} unmatched, ${pairs.length} proposed pair(s)`);
+      for (const pair of pairs) {
+        console.log(`  outflow ${pair.outflowId}  <->  inflow ${pair.inflowId}`);
+        pairedIds.add(pair.outflowId);
+        pairedIds.add(pair.inflowId);
 
-      if (apply) {
-        const merged = await mergeTransferPair(userId, pair.outflowId, pair.inflowId);
-        if (merged) {
-          totalApplied++;
-          console.log(`    merged.`);
-        } else {
-          console.log(`    skipped (lost the race — already claimed since this scan started).`);
+        if (apply) {
+          const merged = await mergeTransferPair(userId, pair.outflowId, pair.inflowId);
+          if (merged) {
+            totalApplied++;
+            console.log(`    merged.`);
+          } else {
+            console.log(`    skipped (lost the race — already claimed since this scan started).`);
+          }
         }
+      }
+    }
+
+    // Anything left over might still name its own destination account
+    // directly — see resolveNamedOutflow's doc comment.
+    const namedCandidates = candidates.filter((c) => !pairedIds.has(c.id));
+    for (const candidate of namedCandidates) {
+      if (!apply) continue; // resolveNamedOutflow writes unconditionally — dry run can't preview it without also writing
+      const resolved = await resolveNamedOutflow(userId, candidate.id);
+      if (resolved) {
+        totalApplied++;
+        console.log(`  outflow ${candidate.id}  resolved from its own message text.`);
       }
     }
   }

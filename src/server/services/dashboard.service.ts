@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getDubaiCurrentDate, getDubaiMonthRange, getRemainingDaysInMonthDubai } from "@/lib/dates";
 import { Decimal } from "decimal.js";
-import { CategoryType, TransactionType, CashFlowDirection, DebtStatus, SavingGoalStatus } from "@prisma/client";
+import { CategoryType, TransactionType, CashFlowDirection, DebtStatus, SavingGoalStatus, TransferMatchStatus } from "@prisma/client";
 import {
   calculateRemainingMoney,
   calculateCategoryBudgetRemaining,
@@ -74,6 +74,14 @@ export class DashboardService {
     const transactions = await db.transaction.findMany({
       where: {
         userId,
+        // A MERGED row is the losing leg of a reconciled transfer (see
+        // TransferMatchStatus's doc comment) — it keeps its original
+        // INCOME/EXPENSE type for history, but its cash-flow effect is
+        // superseded by the MATCHED TRANSFER row it points to. Without this
+        // exclusion, a reconciled transfer's inflow leg would double-count
+        // as real income (or its outflow leg as real spending) on top of
+        // the internal-transfer money movement it actually represents.
+        transferMatchStatus: { not: TransferMatchStatus.MERGED },
         OR: [
           { budgetMonth: activeMonth },
           {
