@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { AccountType } from "@prisma/client";
 import { emiratesNbdAtmWithdrawalEmailParser } from "../../../../src/imports/email/parsers/emirates-nbd-atm-withdrawal.parser";
 import { TransactionDirection } from "../../../../src/imports/engine/direction-classifier";
 
@@ -78,6 +79,7 @@ describe("EmiratesNbdAtmWithdrawalEmailParser — parse", () => {
     expect(result!.reference).toBe("624016112506");
     expect(result!.institution).toBe("Emirates NBD");
     expect(result!.institutionCode).toBe("ENBD");
+    expect(result!.impliedToAccount).toEqual({ type: AccountType.CASH, name: "Cash" });
   });
 
   it("returns null when the amount can't be extracted", () => {

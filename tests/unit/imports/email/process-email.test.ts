@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { db } from "@/lib/db";
 import { importService } from "@/imports/engine/import.service";
 import { accountService } from "@/server/services/account.service";
-import { AccountType, ImportStatus } from "@prisma/client";
+import { AccountType, ImportStatus, TransactionType } from "@prisma/client";
 
 const enbdTransferBody = (overrides: Partial<Record<string, string>> = {}) => {
   const fields: Record<string, string> = {
@@ -319,6 +319,17 @@ describe("ImportService.processEmail", () => {
       const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
       expect(importedTx!.institutionCode).toBe("ENBD");
       expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
+
+      // The withdrawn cash didn't vanish — it's a TRANSFER into a Cash
+      // account, resolved immediately via impliedToAccount (a deterministic
+      // single-message fact, unlike a bank-to-bank transfer's genuine
+      // ambiguity). This is the fix for "why is the cash zero???".
+      expect(tx!.type).toBe(TransactionType.TRANSFER);
+      const cashAccount = await db.account.findUnique({ where: { userId_name: { userId, name: "Cash" } } });
+      expect(cashAccount).not.toBeNull();
+      expect(cashAccount!.type).toBe(AccountType.CASH);
+      expect(tx!.toAccountId).toBe(cashAccount!.id);
+      expect(cashAccount!.currentBalance.toFixed(2)).toBe("3500.00");
     }
   });
 

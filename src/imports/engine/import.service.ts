@@ -14,6 +14,7 @@ import {
   CategoryType,
   ImportConfidence,
   DebtStatus,
+  TransferMatchStatus,
 } from "@prisma/client";
 import { Decimal } from "decimal.js";
 import { sha256, maskSender, redactFinancialText, maskEmailSender, redactFinancialEmailText } from "./redaction";
@@ -73,6 +74,8 @@ interface AutoPostableTransaction {
   parserVersion: string;
   redactedMessage: string;
   payloadHash: string;
+  /** See NormalizedEmailTransaction.impliedToAccount's doc comment. */
+  impliedToAccount?: { type: AccountType; name: string } | null;
 }
 
 export type ImportResult =
@@ -576,6 +579,20 @@ export class ImportService {
             ? determineBudgetMonth(financialDate, true)
             : await getActiveFinancialCycle(userId, financialDate, tx);
 
+          // A parser-declared deterministic transfer (e.g. ATM withdrawal
+          // -> Cash) resolves immediately — see impliedToAccount's doc
+          // comment for why this is safe unlike the matching Phase 1
+          // otherwise never does.
+          let impliedToAccId: string | undefined;
+          if (normalized.impliedToAccount) {
+            const destAccount = await accountService.ensureAccountForInstitution(
+              userId,
+              normalized.impliedToAccount,
+              tx
+            );
+            impliedToAccId = destAccount.id;
+          }
+
           const ledgerTx = await tx.transaction.create({
               data: {
                   date: financialDate,
@@ -585,10 +602,16 @@ export class ImportService {
                   description: normalized.merchant || "Auto-imported",
                   amount: normalized.amount,
                   paymentMethod: paymentMethodLabel,
-                  type: txType,
+                  type: impliedToAccId ? TransactionType.TRANSFER : txType,
                   cashFlowDirection: cashFlowDir,
                   origin,
                   accountId: primaryAccId,
+                  toAccountId: impliedToAccId,
+                  // Already a fully resolved transfer at ingestion time (the
+                  // parser declared both sides deterministically) — MATCHED,
+                  // not the Phase 1 default UNMATCHED, so reconcile-transfers'
+                  // Phase 2 scan never re-considers it for pairing.
+                  transferMatchStatus: impliedToAccId ? TransferMatchStatus.MATCHED : undefined,
                   userId,
                   // Must match the `now` passed to updateBalance() above
                   // exactly — see updateBalance()'s timestamp param doc.
@@ -596,6 +619,10 @@ export class ImportService {
               }
           });
           ledgerTxId = ledgerTx.id;
+
+          if (impliedToAccId) {
+            await updateBalance(impliedToAccId, normalized.amount, TransactionDirection.INFLOW, null, occurredAt, tx, now);
+          }
 
           // Auto-applies as a DebtPayment if this transaction's category
           // is debt-linked, or its description matches a registered

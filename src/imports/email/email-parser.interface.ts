@@ -17,6 +17,7 @@
  */
 
 import type { Decimal } from "decimal.js";
+import type { AccountType } from "@prisma/client";
 import { TransactionDirection } from "../engine/direction-classifier";
 
 /**
@@ -78,6 +79,18 @@ export interface NormalizedEmailTransaction {
   readonly externalMessageId: string;
   /** Additional structured data the parser found (no sensitive values) */
   readonly metadata: Record<string, unknown>;
+  /**
+   * Set only when a single message unambiguously declares BOTH sides of a
+   * transfer by itself (e.g. an ATM withdrawal — the money didn't
+   * disappear, it became cash in hand) — never for a bank-to-bank
+   * transfer, where the real destination is genuinely unknown until
+   * either a second confirming message arrives or reconcile-transfers'
+   * Phase 2 matching runs. This is NOT the risky "guess which account
+   * this probably went to" heuristic the two-phase redesign removed from
+   * ingestion — it's a deterministic fact the parser itself is certain of,
+   * so resolving it immediately carries none of that risk.
+   */
+  readonly impliedToAccount?: { type: AccountType; name: string } | null;
 }
 
 /**

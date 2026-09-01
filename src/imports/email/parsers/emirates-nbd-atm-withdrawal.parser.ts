@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { AccountType } from "@prisma/client";
 import { IEmailParser, NormalizedEmailTransaction } from "../email-parser.interface";
 import { redactFinancialEmailText, maskEmailSender, sha256 } from "../../engine/redaction";
 import { TransactionDirection } from "../../engine/direction-classifier";
@@ -123,6 +124,10 @@ export class EmiratesNbdAtmWithdrawalEmailParser implements IEmailParser {
         isDeclined: false,
         machineId,
       },
+      // The withdrawn cash didn't disappear — it's now physically in the
+      // user's hand. Unlike a bank-to-bank transfer, there's no ambiguity
+      // to wait on: this one message is the complete, certain fact.
+      impliedToAccount: { type: AccountType.CASH, name: "Cash" },
     };
   }
 }
