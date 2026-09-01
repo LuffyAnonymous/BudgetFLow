@@ -134,6 +134,43 @@ describe("reconcileTransfers", () => {
       expect(mashreqAfter.currentBalance.toFixed(2)).toBe("652.00");
     });
 
+    it("still applies the balance change when the account's checkpoint is newer than the resolved transfer (a stale anchor must not silently swallow a historical merge)", async () => {
+      // The account's checkpoint was set by some later, unrelated message —
+      // after the wire transfer below actually happened in the real world.
+      await db.account.update({
+        where: { id: enbdId },
+        data: { latestImportedBalance: 1000, latestImportedBalanceAt: new Date() },
+      });
+
+      const staleOutflow = await createLeg({
+        accountId: enbdId,
+        amount: 652,
+        type: "EXPENSE",
+        cashFlowDirection: "OUTFLOW",
+        createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        description: "MASHREQBANK PSC SWIFT / Routing Code: BOMLAEAD",
+      });
+
+      await reconcileTransfers(userId, 45);
+
+      // forceFullRecompute sums the ledger from zero by design (see
+      // updateAccountBalance's doc comment) — it doesn't treat the stale
+      // 1000 anchor as a legitimate starting balance to preserve. What
+      // matters here is that the merge's effect actually lands at all: an
+      // anchored recompute would have left this at exactly 1000 (the
+      // outflow's occurredAt is older than the checkpoint, so it'd be
+      // silently excluded) — that's the bug this test guards against.
+      const enbdAfter = await db.account.findUniqueOrThrow({ where: { id: enbdId } });
+      expect(enbdAfter.currentBalance.toFixed(2)).toBe("-652.00");
+
+      const mashreqAfter = await db.account.findUniqueOrThrow({ where: { id: mashreqId } });
+      expect(mashreqAfter.currentBalance.toFixed(2)).toBe("652.00");
+
+      const outflowAfter = await db.transaction.findUniqueOrThrow({ where: { id: staleOutflow.id } });
+      expect(outflowAfter.type).toBe("TRANSFER");
+      expect(outflowAfter.toAccountId).toBe(mashreqId);
+    });
+
     it("prefers an exact amount+time pair over named resolution when both are available", async () => {
       const now = new Date();
       const out = await createLeg({

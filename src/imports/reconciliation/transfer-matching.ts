@@ -145,8 +145,20 @@ export async function mergeTransferPair(userId: string, outflowId: string, inflo
       });
       if (inflowClaim.count !== 1) throw new Error(RACE_LOST);
 
-      await accountService.updateAccountBalance(userId, outflow.accountId, tx);
-      await accountService.updateAccountBalance(userId, inflow.accountId, tx);
+      // forceFullRecompute, not the default anchored path: this merge just
+      // retyped a transaction whose occurredAt can be well in the past
+      // (that's the whole point of reconciliation — matching legs that
+      // arrived out of order, or backfilled/resynced long after the real
+      // event). The anchored recompute only sums transactions with
+      // occurredAt after the account's latestImportedBalanceAt checkpoint,
+      // so a historical merge like this one would silently never be
+      // counted if that checkpoint happens to be newer — the balance would
+      // still say old the money never moved, even though the Transaction
+      // row itself is now correctly typed as a TRANSFER. A full recompute
+      // is always correct here per updateAccountBalance's own doc comment
+      // (every account starts at 0 with no untracked starting balance).
+      await accountService.updateAccountBalance(userId, outflow.accountId, tx, true);
+      await accountService.updateAccountBalance(userId, inflow.accountId, tx, true);
 
       await AuditLogService.log(
         {
@@ -223,8 +235,13 @@ export async function resolveNamedOutflow(userId: string, transactionId: string)
       });
       if (claim.count !== 1) return false;
 
-      await accountService.updateAccountBalance(userId, outflow.accountId, tx);
-      await accountService.updateAccountBalance(userId, matchedAccount.id, tx);
+      // forceFullRecompute — same reasoning as mergeTransferPair's own call:
+      // this outflow's occurredAt can be well in the past relative to
+      // either account's anchored checkpoint (the exact scenario this
+      // fallback exists for — an already-stuck historical transfer), so an
+      // anchored recompute could silently exclude it.
+      await accountService.updateAccountBalance(userId, outflow.accountId, tx, true);
+      await accountService.updateAccountBalance(userId, matchedAccount.id, tx, true);
 
       await AuditLogService.log(
         {
