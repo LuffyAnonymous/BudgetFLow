@@ -71,6 +71,19 @@ export class TransactionService {
 
     // 3. Create transaction, log audit, and update balances atomically
     const { accountService } = await import("./account.service");
+
+    // The manual-entry form has no account picker, so accountId is always
+    // omitted from the request — without a default, the transaction still
+    // counts toward dashboard cash flow but never actually debits/credits
+    // any account, silently desyncing "Remaining Cash Flow" from "Total
+    // Available Money" by exactly this amount. Defaulting to the primary
+    // account keeps balances accurate with zero added user effort; null
+    // only when the user genuinely has no accounts yet.
+    if (data.accountId === undefined || data.accountId === null) {
+      const primary = await accountService.getPrimaryAccount(userId);
+      if (primary) data.accountId = primary.id;
+    }
+
     const created = await db.$transaction(async (tx) => {
       const created = await this.transactionRepo.create(userId, data, tx);
       await AuditLogService.log(
