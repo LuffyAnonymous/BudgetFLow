@@ -161,18 +161,32 @@ export class AccountService {
   /**
    * Recalculates the balance of a specific account using the ledger as the source of truth,
    * then caches/updates the currentBalance column on the Account record.
+   *
+   * `forceFullRecompute`, when true, ignores the latestImportedBalance/
+   * latestImportedBalanceAt anchor entirely and sums the complete
+   * transaction history from zero instead. The anchored path is what
+   * normal ingestion uses (cheap — it doesn't re-sum an account's entire
+   * history on every single new transaction), but the anchor itself is
+   * only as correct as whatever set it; if it was ever corrupted by an
+   * out-of-order backfill *before* that got fixed, an anchored recompute
+   * inherits the corruption instead of curing it. A full from-zero sum has
+   * no such dependency — this is what the user-facing "Recalculate
+   * Balances" button uses, precisely so it's always a genuine fix.
    */
   async updateAccountBalance(
     userId: string,
     accountId: string,
-    tx?: Prisma.TransactionClient
+    tx?: Prisma.TransactionClient,
+    forceFullRecompute: boolean = false
   ): Promise<Decimal> {
     const client = this.getClient(tx);
 
-    const account = await client.account.findUnique({
-      where: { id: accountId },
-      select: { latestImportedBalance: true, latestImportedBalanceAt: true },
-    });
+    const account = forceFullRecompute
+      ? null
+      : await client.account.findUnique({
+          where: { id: accountId },
+          select: { latestImportedBalance: true, latestImportedBalanceAt: true },
+        });
     const baseBalance = account?.latestImportedBalance
       ? new Decimal(account.latestImportedBalance.toString())
       : new Decimal(0);
@@ -193,14 +207,18 @@ export class AccountService {
   /**
    * Helper to recalculate balances for all accounts of a user.
    */
-  async updateAllBalances(userId: string, tx?: Prisma.TransactionClient): Promise<void> {
+  async updateAllBalances(
+    userId: string,
+    tx?: Prisma.TransactionClient,
+    forceFullRecompute: boolean = false
+  ): Promise<void> {
     const client = this.getClient(tx);
     const accounts = await client.account.findMany({
       where: { userId },
       select: { id: true },
     });
     for (const acc of accounts) {
-      await this.updateAccountBalance(userId, acc.id, tx);
+      await this.updateAccountBalance(userId, acc.id, tx, forceFullRecompute);
     }
   }
 
