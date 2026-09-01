@@ -33,9 +33,12 @@ export async function PUT(
     if (valData.categoryId) updateData.categoryId = valData.categoryId;
     if (valData.description) updateData.description = valData.description;
     if (valData.amount) updateData.amount = new Decimal(valData.amount);
-    if (valData.paymentMethod) updateData.paymentMethod = valData.paymentMethod;
     if (valData.notes !== undefined) updateData.notes = valData.notes;
     if (valData.type) updateData.type = valData.type;
+    // accountId drives paymentMethod (derived server-side in
+    // TransactionService.updateTransaction) — never take paymentMethod
+    // from the client directly.
+    if (valData.accountId) updateData.accountId = valData.accountId;
 
     const transaction = await transactionService.updateTransaction(id, session.user.id, updateData);
 
@@ -57,6 +60,7 @@ export async function PUT(
       description: transaction.description,
       amount: transaction.amount.toFixed(2),
       paymentMethod: transaction.paymentMethod,
+      accountId: transaction.accountId,
       notes: transaction.notes,
       type: transaction.type,
       importSource: extendedTx.importSource ?? null,

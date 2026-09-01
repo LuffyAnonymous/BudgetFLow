@@ -645,6 +645,7 @@ enum AttachmentStatus {
 enum AuditAction {
   CREATE
   UPDATE
+  DELETE
   ARCHIVE
   REVERSE
   CHANGE_PASSWORD
@@ -683,6 +684,7 @@ enum AuditEntityType {
   USER
   SETTING
   TRANSACTION
+  ACCOUNT
   BUDGET
   DEBT
   DEBT_PAYMENT

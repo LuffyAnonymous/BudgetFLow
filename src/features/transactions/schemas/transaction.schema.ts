@@ -32,17 +32,20 @@ export const transactionFormSchema = z.object({
       },
       { message: "Amount must be greater than zero." }
     ),
+  // Derived server-side from the selected account (see
+  // TransactionService.createTransaction) — the form no longer collects
+  // this as free text, so it's optional here rather than required.
   paymentMethod: z
     .string()
     .trim()
-    .min(1, "Payment method is required.")
-    .max(50, "Payment method cannot exceed 50 characters."),
+    .max(50, "Payment method cannot exceed 50 characters.")
+    .optional(),
   notes: z
     .string()
     .trim()
     .max(200, "Notes cannot exceed 200 characters.")
     .nullish(),
   type: z.nativeEnum(TransactionType),
-  accountId: z.string().uuid().nullable().optional(),
+  accountId: z.string().uuid("Please select an account."),
   toAccountId: z.string().uuid().nullable().optional(),
 });

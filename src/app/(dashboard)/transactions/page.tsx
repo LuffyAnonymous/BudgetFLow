@@ -33,6 +33,7 @@ interface TransactionItem {
   description: string;
   amount: string;
   paymentMethod: string;
+  accountId: string | null;
   notes: string | null;
   type: "INCOME" | "EXPENSE";
   importSource: string | null;
@@ -122,6 +123,7 @@ export default function TransactionsPage() {
       description: tx.description,
       amount: tx.amount,
       paymentMethod: tx.paymentMethod,
+      accountId: tx.accountId,
       notes: tx.notes,
       type: tx.type,
     });

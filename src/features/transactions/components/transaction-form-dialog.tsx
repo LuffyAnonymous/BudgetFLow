@@ -14,6 +14,7 @@ import { transactionFormSchema } from "@/features/transactions/schemas/transacti
 import { z } from "zod";
 import { LucideX, LucideLoader2 } from "lucide-react";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
+import { AccountSelect } from "@/features/transactions/components/account-select";
 
 type FormValues = z.infer<typeof transactionFormSchema>;
 
@@ -31,6 +32,7 @@ export interface EditableTransaction {
   description: string;
   amount: string;
   paymentMethod: string;
+  accountId: string | null;
   notes: string | null;
   type: "INCOME" | "EXPENSE";
 }
@@ -81,7 +83,7 @@ export function TransactionFormDialog({
       categoryId: "",
       description: "",
       amount: "",
-      paymentMethod: "",
+      accountId: "",
       notes: "",
       type: defaultType,
     },
@@ -89,6 +91,7 @@ export function TransactionFormDialog({
 
   const selectedType = useWatch({ control, name: "type" });
   const watchedCategoryId = useWatch({ control, name: "categoryId" });
+  const watchedAccountId = useWatch({ control, name: "accountId" });
 
   const filteredCategories = useMemo(() => {
     return categories.filter((cat) => {
@@ -115,7 +118,7 @@ export function TransactionFormDialog({
         categoryId: editingTransaction.categoryId,
         description: editingTransaction.description,
         amount: editingTransaction.amount,
-        paymentMethod: editingTransaction.paymentMethod,
+        accountId: editingTransaction.accountId || "",
         notes: editingTransaction.notes || "",
         type: editingTransaction.type,
       });
@@ -126,7 +129,7 @@ export function TransactionFormDialog({
         categoryId: "",
         description: "",
         amount: "",
-        paymentMethod: "",
+        accountId: "",
         notes: "",
         type: defaultType,
       });
@@ -321,19 +324,18 @@ export function TransactionFormDialog({
             {errors.description && <span className="text-xs text-red-400" role="alert">{String(errors.description.message)}</span>}
           </div>
 
-          {/* Payment Method */}
+          {/* Account */}
           <div className="space-y-1.5">
-            <label htmlFor="tx-method" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Payment Method
+            <label htmlFor="tx-account" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Account
             </label>
-            <input
-              id="tx-method"
-              type="text"
-              placeholder="e.g. Card, Cash, Bank Transfer"
-              {...register("paymentMethod")}
-              className="w-full rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            <AccountSelect
+              id="tx-account"
+              value={watchedAccountId || ""}
+              onChange={(accountId) => setValue("accountId", accountId, { shouldValidate: true })}
+              enabled={isOpen}
             />
-            {errors.paymentMethod && <span className="text-xs text-red-400" role="alert">{String(errors.paymentMethod.message)}</span>}
+            {errors.accountId && <span className="text-xs text-red-400" role="alert">{String(errors.accountId.message)}</span>}
           </div>
 
           {/* Notes */}

@@ -57,6 +57,7 @@ export async function GET(request: Request) {
         description: extendedTx.description,
         amount: extendedTx.amount.toFixed(2),
         paymentMethod: extendedTx.paymentMethod,
+        accountId: extendedTx.accountId,
         notes: extendedTx.notes,
         type: extendedTx.type,
         importSource: (extendedTx as Record<string, unknown>).importSource as string | null ?? null,
@@ -100,9 +101,12 @@ export async function POST(request: Request) {
       categoryId: valData.categoryId,
       description: valData.description,
       amount: new Decimal(valData.amount),
-      paymentMethod: valData.paymentMethod,
+      // paymentMethod is derived server-side from the selected account —
+      // see TransactionService.createTransaction.
+      paymentMethod: "",
       notes: valData.notes || null,
       type: valData.type,
+      accountId: valData.accountId,
     });
 
     return apiSuccess({
@@ -113,6 +117,7 @@ export async function POST(request: Request) {
       description: transaction.description,
       amount: transaction.amount.toFixed(2),
       paymentMethod: transaction.paymentMethod,
+      accountId: transaction.accountId,
       notes: transaction.notes,
       type: transaction.type,
     }, 201);

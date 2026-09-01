@@ -72,19 +72,15 @@ export class TransactionService {
     // 3. Create transaction, log audit, and update balances atomically
     const { accountService } = await import("./account.service");
 
-    // The manual-entry form has no account picker, so accountId is always
-    // omitted from the request — without a default, the transaction still
-    // counts toward dashboard cash flow but never actually debits/credits
-    // any account, silently desyncing "Remaining Cash Flow" from "Total
-    // Available Money" by exactly this amount. The free-text Payment
-    // Method field is the closest thing the form has to an account
-    // choice — "Cash" typed there means the Cash account, not whatever
-    // happens to be primary — so it's tried first via the same
-    // substring-match logic the import pipeline uses to resolve a named
-    // destination account from message text. Only falls back to the
-    // primary account when payment method doesn't name any of the user's
-    // own accounts (e.g. "Card" naming nothing specific); null only when
-    // the user has no accounts at all.
+    // The manual-entry form now collects an explicit account choice (an
+    // AccountSelect dropdown, not free text) and the API requires it — see
+    // transactionFormSchema. This fallback only matters for a caller that
+    // reaches this service directly without going through that validated
+    // form/route (e.g. a service-API-key integration): resolve from
+    // whatever payment-method text it did supply, falling back to the
+    // primary account, so a transaction never silently ends up with no
+    // account at all (which would count toward dashboard cash flow while
+    // never actually moving any account's balance).
     if (data.accountId === undefined || data.accountId === null) {
       const { matchAccountByDescription } = await import("@/imports/engine/account-name-matcher");
       const accounts = await db.account.findMany({ where: { userId }, select: { id: true, name: true } });
@@ -95,6 +91,20 @@ export class TransactionService {
         const primary = await accountService.getPrimaryAccount(userId);
         if (primary) data.accountId = primary.id;
       }
+    }
+
+    // Payment Method is always derived from the resolved account (its
+    // display label) rather than trusted as free text — the form no
+    // longer collects it directly, and deriving it here keeps it accurate
+    // even for the fallback-resolution path above.
+    if (data.accountId) {
+      const account = await db.account.findUnique({ where: { id: data.accountId }, select: { userId: true, name: true, type: true } });
+      if (!account || account.userId !== userId) {
+        throw new Error("INVALID_ACCOUNT: The selected account does not exist or does not belong to you.");
+      }
+      data.paymentMethod = account.type === "CASH" ? "Cash" : account.name;
+    } else if (!data.paymentMethod) {
+      data.paymentMethod = "Unspecified";
     }
 
     const created = await db.$transaction(async (tx) => {
@@ -111,6 +121,7 @@ export class TransactionService {
             amount: created.amount.toString(),
             categoryId: created.categoryId,
             description: created.description,
+            accountId: created.accountId,
             date: created.date.toISOString(),
           },
         },
@@ -167,8 +178,18 @@ export class TransactionService {
     // 3. Validate category compatibility
     this.validateCategoryCompatibility(finalType, category.type);
 
-    // 4. Update + audit + balance sync atomically
+    // 4. Validate account ownership if changing, and re-derive Payment
+    // Method to match (see createTransaction's identical reasoning).
     const { accountService } = await import("./account.service");
+    if (data.accountId) {
+      const account = await db.account.findUnique({ where: { id: data.accountId }, select: { userId: true, name: true, type: true } });
+      if (!account || account.userId !== userId) {
+        throw new Error("INVALID_ACCOUNT: The selected account does not exist or does not belong to you.");
+      }
+      data.paymentMethod = account.type === "CASH" ? "Cash" : account.name;
+    }
+
+    // 5. Update + audit + balance sync atomically
     return db.$transaction(async (tx) => {
       const updated = await this.transactionRepo.update(id, userId, data, tx);
       await AuditLogService.log(
@@ -181,6 +202,7 @@ export class TransactionService {
             amount: existing.amount.toString(),
             description: existing.description,
             categoryId: existing.categoryId,
+            accountId: existing.accountId,
             date: existing.date.toISOString(),
             notes: existing.notes,
           },
@@ -188,6 +210,7 @@ export class TransactionService {
             amount: updated.amount.toString(),
             description: updated.description,
             categoryId: updated.categoryId,
+            accountId: updated.accountId,
             date: updated.date.toISOString(),
             notes: updated.notes,
           },
@@ -222,6 +245,23 @@ export class TransactionService {
     const { accountService } = await import("./account.service");
     return db.$transaction(async (tx) => {
       const deleted = await this.transactionRepo.delete(id, userId, tx);
+
+      await AuditLogService.log(
+        {
+          userId,
+          action: AuditAction.DELETE,
+          entityType: AuditEntityType.TRANSACTION,
+          entityId: id,
+          before: {
+            type: deleted.type,
+            amount: deleted.amount.toString(),
+            description: deleted.description,
+            accountId: deleted.accountId,
+            date: deleted.date.toISOString(),
+          },
+        },
+        tx
+      );
 
       // Recalculate balances for accounts that were involved
       if (deleted.accountId) {
