@@ -501,11 +501,13 @@ describe("Milestone 3 Integration Tests", () => {
       // - Income is 5000
       // - Linked debt payment counts (100), unlinked (50) is excluded
       // - Linked savings counts (200), unlinked (150) is excluded
-      // - Remaining balance: 5000 - 100 - 200 = 4700 (rather than including 50 or 150)
+      // (actual.remaining is account-balance-based now, not derived from
+      // these month-scoped figures — see DashboardService.getDashboardData
+      // and account.service.ts's getTotalAvailableMoney — so it's not
+      // exercised by this scenario, which doesn't touch any Account row.)
       expect(data.actual.income).toBe("5000.00");
       expect(data.actual.debtPayments).toBe("100.00");
       expect(data.actual.savings).toBe("200.00");
-      expect(data.actual.remaining).toBe("4700.00");
     });
   });
 });

@@ -120,19 +120,28 @@ describe("Active Financial Cycle Attribution", () => {
     const debtLedgerTx = await db.transaction.findFirst({ where: { userId, type: "DEBT_PAYMENT" } });
     expect(debtLedgerTx?.budgetMonth).toBe("2026-08");
 
-    // ASSERTION 2: July Dashboard contains ZERO transactions (0.00 income, 0.00 expenses, 0.00 remaining)
+    // ASSERTION 2: July Dashboard contains ZERO transactions for that
+    // month (0.00 income, 0.00 expenses). "remaining" is account-balance-
+    // based now (see ASSERTION 5) and isn't month-scoped at all — it's the
+    // same real total regardless of which month's dashboard is open, by
+    // design (that's the whole point: "how much do I actually have" can't
+    // depend on which month you happen to be looking at).
     const julyDash = await dashboardService.getDashboardData(userId, "2026-07");
     expect(julyDash.actual.income).toBe("0.00");
     expect(julyDash.actual.expenses).toBe("0.00");
     expect(julyDash.actual.debtPayments).toBe("0.00");
-    expect(julyDash.actual.remaining).toBe("0.00");
+    expect(julyDash.actual.remaining).toBe("5752.56");
 
-    // ASSERTION 3: August Dashboard contains salary (5,750), outgoings (497.90 = 300 + 197.90), and remaining cash flow (5252.10)
+    // ASSERTION 3: August Dashboard contains salary (5,750) and outgoings
+    // (497.90 = 300 + 197.90). "remaining" is the same real account total
+    // as July's (5752.56) — the manual Groceries expense has no accountId
+    // (no primary account set in this test's fixtures), so it never
+    // touches the ENBD balance the SMS's authoritative reading set.
     const augDash = await dashboardService.getDashboardData(userId, "2026-08");
     expect(augDash.actual.income).toBe("5750.00");
     expect(augDash.actual.expenses).toBe("197.90");
     expect(augDash.actual.debtPayments).toBe("300.00");
-    expect(augDash.actual.remaining).toBe("5252.10");
+    expect(augDash.actual.remaining).toBe("5752.56");
 
     // ASSERTION 4: Default dashboard opens on August 2026 automatically
     const defaultDash = await dashboardService.getDashboardData(userId);

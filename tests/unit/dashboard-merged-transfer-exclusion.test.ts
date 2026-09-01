@@ -80,6 +80,47 @@ describe("DashboardService.getDashboardData — excludes MERGED transfer legs fr
     const data = await dashboardService.getDashboardData(userId, activeMonth);
 
     expect(data.actual.income).toBe("5000.00");
-    expect(data.actual.remaining).toBe("5000.00");
+  });
+});
+
+describe("DashboardService.getDashboardData — 'Remaining Cash Flow' mirrors the Accounts page total", () => {
+  const dashboardService = new DashboardService();
+  let userId: string;
+
+  beforeEach(async () => {
+    await db.transaction.deleteMany({});
+    await db.account.deleteMany({});
+    await db.category.deleteMany({});
+    await db.setting.deleteMany({});
+    await db.user.deleteMany({ where: { email: "dashboard_remaining_sync_test@budgetflow.ae" } });
+
+    const user = await db.user.create({
+      data: { email: "dashboard_remaining_sync_test@budgetflow.ae", passwordHash: "dummy-hash", name: "Remaining Sync Tester" },
+    });
+    userId = user.id;
+    await db.setting.create({ data: { userId, monthlySalary: 5000, payday: 26 } });
+  });
+
+  it("equals the sum of real account balances, not a month-scoped income-minus-expenses figure", async () => {
+    // Deliberately does NOT set up any transactions for the active month —
+    // a prior month's activity already reduced these balances, exactly the
+    // real scenario this fix addresses. A month-scoped income-minus-
+    // expenses calculation would show 0 here; the real answer is whatever
+    // money actually exists right now.
+    await db.account.create({ data: { userId, name: "Emirates NBD", type: "EMIRATES_NBD", currentBalance: 4.81 } });
+    await db.account.create({ data: { userId, name: "Mashreq", type: "MASHREQ", currentBalance: 3.26 } });
+    await db.account.create({ data: { userId, name: "Cash", type: "CASH", currentBalance: 510 } });
+
+    const data = await dashboardService.getDashboardData(userId);
+    expect(data.actual.remaining).toBe("518.07");
+  });
+
+  it("excludes BNPL and credit-card balances, matching the Accounts page's own exclusion", async () => {
+    await db.account.create({ data: { userId, name: "Emirates NBD", type: "EMIRATES_NBD", currentBalance: 1000 } });
+    await db.account.create({ data: { userId, name: "Tabby", type: "TABBY", currentBalance: -300 } });
+    await db.account.create({ data: { userId, name: "Emirates NBD Credit Card", type: "EMIRATES_NBD", isCreditCard: true, currentBalance: -150 } });
+
+    const data = await dashboardService.getDashboardData(userId);
+    expect(data.actual.remaining).toBe("1000.00");
   });
 });

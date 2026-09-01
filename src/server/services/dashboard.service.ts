@@ -3,12 +3,12 @@ import { getDubaiCurrentDate, getDubaiMonthRange, getRemainingDaysInMonthDubai }
 import { Decimal } from "decimal.js";
 import { CategoryType, TransactionType, CashFlowDirection, DebtStatus, SavingGoalStatus, TransferMatchStatus } from "@prisma/client";
 import {
-  calculateRemainingMoney,
   calculateCategoryBudgetRemaining,
   calculateDailyFoodAllowance,
   calculateOutstandingDebt,
 } from "../calculations/finance-calculations";
 import { DebtService } from "./debt.service";
+import { accountService } from "./account.service";
 
 export class DashboardService {
   private debtService = new DebtService();
@@ -178,13 +178,14 @@ export class DashboardService {
       .filter((t) => t.type === TransactionType.DEBT_PAYMENT)
       .reduce((sum, t) => sum.plus(t.amount), new Decimal(0));
 
-    // Remaining cash flow: Income - Expenses - Net Savings Outflows - Remittances - Debt Payments
-    const actualRemaining = calculateRemainingMoney(
-      actualIncome,
-      actualExpenses,
-      actualSavings,
-      actualRemittances.plus(actualDebtPayments)
-    );
+    // "Remaining Cash Flow" mirrors the Accounts page's "Total Available
+    // Money" exactly (accountService.getTotalAvailableMoney) rather than a
+    // month-scoped income-minus-expenses figure — the two used to disagree
+    // by however much money moved before this budget month started (e.g. a
+    // prior month's spending already reflected in the real account
+    // balances, but invisible to a calculation scoped to just this month).
+    // "How much do I actually have" should never differ between screens.
+    const actualRemaining = await accountService.getTotalAvailableMoney(userId);
 
     // 7. Calculate Food group spending
     const foodCategory = budgets.find((b) => b.category.name === "Food" && b.category.budgetGroupKey === "FOOD");

@@ -320,6 +320,23 @@ export class AccountService {
   async getPrimaryAccount(userId: string, tx?: Prisma.TransactionClient): Promise<Account | null> {
     return this.getClient(tx).account.findFirst({ where: { userId, isPrimary: true } });
   }
+
+  /**
+   * Sum of currentBalance across every real, spendable account — the same
+   * "Total Available Money" figure the Accounts page headline shows
+   * (accounts-client.tsx's own identical filter), and the single source of
+   * truth the dashboard's "Remaining Cash Flow" now mirrors too, so the two
+   * screens can never show a different number for "how much money do I
+   * actually have." Excludes BNPL (Tabby/Tamara) and credit-card accounts —
+   * their balance is money owed, not money to spend.
+   */
+  async getTotalAvailableMoney(userId: string, tx?: Prisma.TransactionClient): Promise<Decimal> {
+    const accounts = await this.getAccounts(userId, tx);
+    const BNPL_TYPES = new Set<AccountType>([AccountType.TABBY, AccountType.TAMARA]);
+    return accounts
+      .filter((a) => !a.isCreditCard && !BNPL_TYPES.has(a.type))
+      .reduce((sum, a) => sum.plus(a.currentBalance), new Decimal(0));
+  }
 }
 
 export const accountService = new AccountService();
