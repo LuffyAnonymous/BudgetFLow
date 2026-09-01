@@ -76,12 +76,25 @@ export class TransactionService {
     // omitted from the request — without a default, the transaction still
     // counts toward dashboard cash flow but never actually debits/credits
     // any account, silently desyncing "Remaining Cash Flow" from "Total
-    // Available Money" by exactly this amount. Defaulting to the primary
-    // account keeps balances accurate with zero added user effort; null
-    // only when the user genuinely has no accounts yet.
+    // Available Money" by exactly this amount. The free-text Payment
+    // Method field is the closest thing the form has to an account
+    // choice — "Cash" typed there means the Cash account, not whatever
+    // happens to be primary — so it's tried first via the same
+    // substring-match logic the import pipeline uses to resolve a named
+    // destination account from message text. Only falls back to the
+    // primary account when payment method doesn't name any of the user's
+    // own accounts (e.g. "Card" naming nothing specific); null only when
+    // the user has no accounts at all.
     if (data.accountId === undefined || data.accountId === null) {
-      const primary = await accountService.getPrimaryAccount(userId);
-      if (primary) data.accountId = primary.id;
+      const { matchAccountByDescription } = await import("@/imports/engine/account-name-matcher");
+      const accounts = await db.account.findMany({ where: { userId }, select: { id: true, name: true } });
+      const matched = matchAccountByDescription(accounts, data.paymentMethod);
+      if (matched) {
+        data.accountId = matched.id;
+      } else {
+        const primary = await accountService.getPrimaryAccount(userId);
+        if (primary) data.accountId = primary.id;
+      }
     }
 
     const created = await db.$transaction(async (tx) => {

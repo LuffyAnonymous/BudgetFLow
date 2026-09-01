@@ -3,11 +3,12 @@ import { db } from "@/lib/db";
 import { TransactionService } from "@/server/services/transaction.service";
 import { Decimal } from "decimal.js";
 
-describe("TransactionService.createTransaction — defaults accountId to the primary account", () => {
+describe("TransactionService.createTransaction — resolves accountId when none is given", () => {
   const transactionService = new TransactionService();
   let userId: string;
   let enbdId: string;
   let mashreqId: string;
+  let cashId: string;
   let categoryId: string;
 
   beforeEach(async () => {
@@ -23,14 +24,16 @@ describe("TransactionService.createTransaction — defaults accountId to the pri
 
     const enbd = await db.account.create({ data: { userId, name: "Emirates NBD", type: "EMIRATES_NBD", isPrimary: true } });
     const mashreq = await db.account.create({ data: { userId, name: "Mashreq", type: "MASHREQ" } });
+    const cash = await db.account.create({ data: { userId, name: "Cash", type: "CASH" } });
     enbdId = enbd.id;
     mashreqId = mashreq.id;
+    cashId = cash.id;
 
     const category = await db.category.create({ data: { userId, name: "Rent", type: "FIXED_EXPENSE" } });
     categoryId = category.id;
   });
 
-  it("attaches a manually-entered expense (no accountId given) to the primary account, and debits it", async () => {
+  it("falls back to the primary account when payment method names none of the user's accounts", async () => {
     const created = await transactionService.createTransaction(userId, {
       date: new Date(),
       categoryId,
@@ -44,6 +47,38 @@ describe("TransactionService.createTransaction — defaults accountId to the pri
 
     const enbdAfter = await db.account.findUniqueOrThrow({ where: { id: enbdId } });
     expect(enbdAfter.currentBalance.toFixed(2)).toBe("-2000.00");
+  });
+
+  it("attaches to the Cash account when the payment method says CASH, even though Emirates NBD is primary", async () => {
+    const created = await transactionService.createTransaction(userId, {
+      date: new Date(),
+      categoryId,
+      description: "Room Rent",
+      amount: new Decimal(2000),
+      paymentMethod: "CASH",
+      type: "EXPENSE",
+    });
+
+    expect(created.accountId).toBe(cashId);
+
+    const cashAfter = await db.account.findUniqueOrThrow({ where: { id: cashId } });
+    expect(cashAfter.currentBalance.toFixed(2)).toBe("-2000.00");
+
+    const enbdAfter = await db.account.findUniqueOrThrow({ where: { id: enbdId } });
+    expect(enbdAfter.currentBalance.toFixed(2)).toBe("0.00");
+  });
+
+  it("matches payment method case-insensitively and by substring (e.g. 'Mashreq Debit Card')", async () => {
+    const created = await transactionService.createTransaction(userId, {
+      date: new Date(),
+      categoryId,
+      description: "Coffee",
+      amount: new Decimal(15),
+      paymentMethod: "Mashreq Debit Card",
+      type: "EXPENSE",
+    });
+
+    expect(created.accountId).toBe(mashreqId);
   });
 
   it("never overrides an explicitly-provided accountId", async () => {
