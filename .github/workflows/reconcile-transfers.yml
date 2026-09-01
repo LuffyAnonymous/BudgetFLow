@@ -1,0 +1,39 @@
+name: Reconcile Transfers
+
+# Phase 2 of the two-phase transfer design (see
+# src/imports/reconciliation/reconcile-transfers.service.ts). Every SMS/email
+# transaction posts immediately as its own EXPENSE/INCOME row (Phase 1, in
+# import.service.ts) — this job scans recent UNMATCHED transactions and
+# merges exact-amount, different-account pairs into one canonical TRANSFER
+# row. An unmatched leg past the 45-minute match window is left exactly as
+# posted — expected steady state, not a failure this job needs to catch.
+#
+# Runs every 15 minutes, well inside the 45-minute window even accounting
+# for GitHub Actions' usual scheduling jitter (schedules aren't guaranteed
+# to the minute, especially under high platform load).
+#
+# Requires two repository secrets (Settings → Secrets and variables →
+# Actions): BUDGETFLOW_BASE_URL and CRON_SECRET — both already configured
+# from the Gmail watch-renewal workflow (.github/workflows/gmail-watch-renew.yml),
+# nothing new to set up here.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reconcile-transfers
+        run: |
+          status=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.BUDGETFLOW_BASE_URL }}/api/cron/reconcile-transfers")
+          echo "HTTP status: $status"
+          cat /tmp/response.json
+          if [ "$status" -ge 400 ]; then
+            echo "::error::reconcile-transfers returned $status"
+            exit 1
+          fi

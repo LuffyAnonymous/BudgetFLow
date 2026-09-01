@@ -5,10 +5,12 @@
  * Phase 2 of the two-phase transfer design (see
  * src/imports/reconciliation/reconcile-transfers.service.ts) — runs
  * reconcileTransfers() for every user with import enabled, or a single
- * user when ?userId= is given. Triggered on a schedule by n8n (Bearer
- * $CRON_SECRET, matching every other cron route in this app) rather than
- * Vercel Cron, same pattern as /api/cron/health and
- * /api/cron/gmail-watch-renew.
+ * user when ?userId= is given. Triggered every 15 minutes by a GitHub
+ * Actions workflow (.github/workflows/reconcile-transfers.yml, Bearer
+ * $CRON_SECRET), not n8n or Vercel Cron — this needs to run on a fixed
+ * schedule regardless of whether any other service happens to be up, which
+ * rules out an n8n-triggered call unless the n8n instance itself is always
+ * live. Same pattern as /api/cron/gmail-watch-renew.
  */
 
 import { NextRequest, NextResponse } from "next/server";
