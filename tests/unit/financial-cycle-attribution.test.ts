@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { db } from "@/lib/db";
 import { importService } from "@/imports/engine/import.service";
 import { DashboardService } from "@/server/services/dashboard.service";
@@ -60,7 +60,21 @@ describe("Active Financial Cycle Attribution", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("proves July contains 0 transactions, August contains salary & outgoings, debt balances remain intact, and new transactions default to budgetMonth 2026-08", async () => {
+    // ASSERTION 4 below asks the dashboard for "the active financial cycle"
+    // with no month specified, which resolves relative to the real wall
+    // clock (via getDubaiCurrentDate()/getActiveFinancialCycle()'s `new
+    // Date()` defaults) — pin it to a fixed instant within August 2026 so
+    // this test doesn't start failing the moment real time crosses into a
+    // new month. Only Date is faked (not timers), so async DB/network I/O
+    // in the calls below is unaffected.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-15T12:00:00.000Z"));
+
     // 1. Process August Salary on 28 July 2026
     const sms = "AED 5,750.00 has been credited to your account no. 014557001234501 DTB SALARY. The available balance is AED 5,752.56.";
     const smsRes = await importService.processSms(userId, {
