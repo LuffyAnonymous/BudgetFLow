@@ -168,6 +168,7 @@ async function main() {
       data: {
         currentBalance: 0,
         latestImportedBalance: null,
+        latestImportedBalanceAt: null,
         lastSMSImportedAt: null,
         lastSuccessfulSyncAt: null
       }
@@ -228,6 +229,7 @@ async function main() {
       OR: [
         { currentBalance: { not: 0 } },
         { latestImportedBalance: { not: null } },
+        { latestImportedBalanceAt: { not: null } },
         { lastSMSImportedAt: { not: null } },
         { lastSuccessfulSyncAt: { not: null } }
       ]

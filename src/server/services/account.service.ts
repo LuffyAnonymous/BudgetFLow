@@ -92,16 +92,19 @@ export class AccountService {
    * drifted apart, so they disagreed by design and "Recalculating" never
    * cleared.
    *
-   * `since`, when given, restricts the sum to transactions created after
-   * that moment — used to anchor onto a bank-reported latestImportedBalance
-   * checkpoint instead of assuming the ledger holds every transaction back
-   * to account opening (it usually doesn't: pre-app history is real but
-   * untracked). Filters on `createdAt`, not `date` — `date` is the
-   * midnight-truncated financialDate, so filtering on it against a precise
-   * checkpoint timestamp silently dropped every transaction that landed on
-   * the same calendar day as the checkpoint, which is the common case, not
-   * an edge case. Omit `since` (and leave `baseBalance` at 0) to sum the
-   * complete history from scratch instead.
+   * `since`, when given, restricts the sum to transactions that really
+   * happened after that moment — used to anchor onto a bank-reported
+   * latestImportedBalance checkpoint instead of assuming the ledger holds
+   * every transaction back to account opening (it usually doesn't: pre-app
+   * history is real but untracked). Filters on `occurredAt` — not `date`
+   * (the midnight-truncated financialDate, which silently dropped every
+   * same-calendar-day transaction against a precise checkpoint) and not
+   * `createdAt` (DB insert/processing time, which for a backfilled or
+   * resynced import can be wildly out of order relative to when the
+   * transactions actually happened, double-counting or dropping activity
+   * relative to an anchor set by a different, out-of-order message). Omit
+   * `since` (and leave `baseBalance` at 0) to sum the complete history from
+   * scratch instead.
    */
   private async computeLedgerBalance(
     userId: string,
@@ -110,7 +113,7 @@ export class AccountService {
     baseBalance: Decimal = new Decimal(0),
     since: Date | null = null
   ): Promise<Decimal> {
-    const sinceFilter = since ? { createdAt: { gt: since } } : {};
+    const sinceFilter = since ? { occurredAt: { gt: since } } : {};
     // A MERGED row (see TransferMatchStatus) was the "other leg" of a
     // transfer folded into a MATCHED TRANSFER row elsewhere — its own
     // balance effect is superseded by that row, so it must never be summed
@@ -168,12 +171,12 @@ export class AccountService {
 
     const account = await client.account.findUnique({
       where: { id: accountId },
-      select: { latestImportedBalance: true, lastSMSImportedAt: true },
+      select: { latestImportedBalance: true, latestImportedBalanceAt: true },
     });
     const baseBalance = account?.latestImportedBalance
       ? new Decimal(account.latestImportedBalance.toString())
       : new Decimal(0);
-    const since = account?.latestImportedBalance ? account.lastSMSImportedAt : null;
+    const since = account?.latestImportedBalance ? account.latestImportedBalanceAt : null;
 
     const derivedBalance = await this.computeLedgerBalance(userId, accountId, client, baseBalance, since);
 
@@ -235,7 +238,7 @@ export class AccountService {
       accountId,
       client,
       latestImportedBalance ?? new Decimal(0),
-      latestImportedBalance ? account.lastSMSImportedAt : null
+      latestImportedBalance ? account.latestImportedBalanceAt : null
     );
 
     // Full history from zero, deliberately NOT anchored — bankDifference

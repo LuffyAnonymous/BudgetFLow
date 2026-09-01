@@ -188,6 +188,14 @@ model Account {
   isPrimary             Boolean     @default(false)
   currentBalance        Decimal     @default(0) @db.Decimal(12, 2)
   latestImportedBalance Decimal?    @db.Decimal(12, 2)
+  /// The real-world event time (Transaction.occurredAt) of whichever
+  /// transaction most recently set latestImportedBalance — the anchor a
+  /// ledger recompute sums forward from. Deliberately NOT the same as
+  /// lastSMSImportedAt (processing/insert time, still used only for the
+  /// "last synced" display): an out-of-order backfilled/resynced message
+  /// reporting an OLDER bank balance must never clobber a newer, more
+  /// correct one just because it happened to be *processed* more recently.
+  latestImportedBalanceAt DateTime?
   lastSMSImportedAt     DateTime?
   lastSuccessfulSyncAt  DateTime?
   lastUpdated           DateTime    @default(now()) @updatedAt

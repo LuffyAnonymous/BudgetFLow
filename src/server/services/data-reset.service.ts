@@ -59,6 +59,7 @@ export class DataResetService {
         data: {
           currentBalance: 0,
           latestImportedBalance: null,
+          latestImportedBalanceAt: null,
           lastSMSImportedAt: null,
           lastSuccessfulSyncAt: null,
         },

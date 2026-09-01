@@ -343,6 +343,47 @@ describe("ImportService.processEmail", () => {
     }
   });
 
+  it("THE BUG: an out-of-order backfill (withdrawal processed before the earlier-happening salary) must not leave the account balance on the stale salary snapshot", async () => {
+    // Real-world order: salary happened first (09:00 UTC), withdrawal
+    // happened later the same day (16:57 Dubai local = 12:57 UTC, parsed
+    // from the email's own body text, independent of receivedAt). Processed
+    // here in the OPPOSITE order (withdrawal's processEmail() call first,
+    // salary's second) — exactly what a resync/backfill can do, since
+    // Gmail's search API makes no ordering guarantee about which message it
+    // returns first. The salary format has no separate date field in its
+    // body — its transactionDate IS receivedAt directly — so receivedAt
+    // here is what fixes its real-world event time at 09:00, deliberately
+    // earlier than the withdrawal's, despite being the second call.
+    const withdrawalRes = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "ATM withdrawal",
+      body: "Your ATM withdrawal transaction was successfully completed on 29th Aug 2026 at 16:57 PM . Amount: AED 3,500.00 Available balance: AED 1,500.48 Card number: 443913XXXXXX8014 Account number: 014XXX70XXX01 Machine ID: E4012432 Machine location: JLB Branch Reference number: 624016112506",
+      receivedAt: new Date("2026-08-29T20:00:00.000Z"), // processing time — irrelevant to this parser's occurredAt
+      externalMessageId: "gmail-msg-process-outoforder-withdrawal",
+    });
+    expect(withdrawalRes.outcome).toBe("auto_posted");
+
+    const salaryRes = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Be alert, stay safe.",
+      body: "Salary of AED 5,750.00 has been credited into your account 014XXX70XXX01. The available balance is AED 5,750.48.",
+      receivedAt: new Date("2026-08-29T09:00:00.000Z"), // this format's occurredAt IS receivedAt — genuinely earlier in real time than the withdrawal's 12:57 UTC
+      externalMessageId: "gmail-msg-process-outoforder-salary",
+    });
+    expect(salaryRes.outcome).toBe("auto_posted");
+
+    const enbd = await db.account.findFirstOrThrow({ where: { userId, type: AccountType.EMIRATES_NBD } });
+    // Must reflect the withdrawal's balance (the real-world later event) —
+    // not the salary's (the real-world earlier event), even though salary
+    // was *processed* second.
+    expect(enbd.currentBalance.toFixed(2)).toBe("1500.48");
+
+    // A full ledger recalculation ("Recalculate Balances" on the Accounts
+    // page) must independently agree.
+    const recomputed = await accountService.updateAccountBalance(userId, enbd.id);
+    expect(recomputed.toFixed(2)).toBe("1500.48");
+  });
+
   it("auto-posts a recognized, well-formed Emirates NBD account-deduction email", async () => {
     const res = await importService.processEmail(userId, {
       fromAddress: "OnlineBanking@emiratesnbd.com",

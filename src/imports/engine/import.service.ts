@@ -324,7 +324,7 @@ export class ImportService {
           },
         });
 
-        await this.syncBalance(userId, institutionForAccount, normalized.availableBalance, direction, null, isCreditCard);
+        await this.syncBalance(userId, institutionForAccount, normalized.availableBalance, direction, null, normalized.transactionDate, isCreditCard);
 
         if (outcome === "pending_event") return { outcome: "pending_event", importedTransactionId: importedTx.id };
         return { outcome: "ignored" };
@@ -512,7 +512,7 @@ export class ImportService {
       // to re-apply even for a soft duplicate. The increment path isn't —
       // applying it twice for the same real debit would double-count it.
       if (!softDuplicate || normalized.availableBalance !== null) {
-        await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, tx, now);
+        await updateBalance(primaryAccId, normalized.amount, direction, normalized.availableBalance, occurredAt, tx, now);
       }
 
       let ledgerTxId: string;
@@ -1062,7 +1062,7 @@ export class ImportService {
         );
         primaryAccId = primaryAccount.id;
         direction = classifyDirection(importedTx.rawPayload || "");
-        await updateBalance(primaryAccId, amount, direction, null);
+        await updateBalance(primaryAccId, amount, direction, null, importedTx.financialDate ?? importedTx.receivedAt);
       }
 
       let txType: TransactionType = TransactionType.EXPENSE;
@@ -1174,6 +1174,7 @@ export class ImportService {
     authoritativeBalance: Decimal | null,
     direction: TransactionDirection,
     amount: Decimal | null,
+    occurredAt: Date,
     isCreditCard: boolean = false
   ) {
     const account = await accountService.ensureAccountForInstitution(userId, {
@@ -1182,7 +1183,7 @@ export class ImportService {
       isCreditCard,
     });
 
-    await updateBalance(account.id, amount, direction, authoritativeBalance);
+    await updateBalance(account.id, amount, direction, authoritativeBalance, occurredAt);
   }
 }
 
