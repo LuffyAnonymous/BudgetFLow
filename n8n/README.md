@@ -60,7 +60,8 @@ n8n/workflows/
     ├── monthly-rollover-trigger.json
     ├── notification-evaluation-trigger.json
     ├── system-health-check.json
-    └── import-retention-cleanup.json
+    ├── import-retention-cleanup.json
+    └── reconcile-transfers.json
 ```
 
 Gmail bank-email import (a separate feature, see `docs/gmail-bank-email-import.md`) is
@@ -175,7 +176,7 @@ straight to `POST /api/imports/sms`, which resolves it to the right account.
 |---|---|---|
 | `BUDGETFLOW_SERVICE_API_KEY` (`bf_svc_...`) | 02-processing, 03-budgetflow-api-client, 06-scheduling-orchestration | Scoped read/write access to one user's transactions/debts/savings/remittances/categories/accounts + automation triggers |
 | `bf_import_...` (per-user, forwarded per-request — not an n8n env var) | 01-intake/email-import-gmail | Only `POST /api/imports/sms` — full parse/dedup/categorize pipeline (the app's own, not the 02-processing one) |
-| `CRON_SECRET` | 06-scheduling-orchestration/system-health-check | Only `GET /api/cron/health` (all-user sweep). Also reused (outside n8n) by the GitHub Actions Gmail-watch-renewal workflow. |
+| `CRON_SECRET` | 06-scheduling-orchestration/system-health-check, 06-scheduling-orchestration/reconcile-transfers | `GET /api/cron/health` (all-user sweep) and `GET /api/cron/reconcile-transfers` (Phase 2 transfer matching, all-user sweep). Also reused (outside n8n) by the GitHub Actions Gmail-watch-renewal workflow. |
 | `IMPORT_CLEANUP_SECRET` | 06-scheduling-orchestration/import-retention-cleanup | Only `POST /api/system/import-cleanup` |
 
 Each `bf_import_...` token is generated the same way as today, via
@@ -190,7 +191,7 @@ you set yourself.
 | `BUDGETFLOW_BASE_URL` | `https://budgetflow.yourdomain.com` | No trailing slash |
 | `BUDGETFLOW_SERVICE_API_KEY` | `bf_svc_...` | From the settings endpoint above; needs the full scope list |
 | `BUDGETFLOW_IMPORT_TOKEN` | `bf_import_...` | Only needed if you enable email-import-gmail (a single-user path) |
-| `CRON_SECRET` | matches app's env | For System Health Check |
+| `CRON_SECRET` | matches app's env | For System Health Check and Reconcile Transfers |
 | `IMPORT_CLEANUP_SECRET` | matches app's env | For Import Retention Cleanup |
 | `TELEGRAM_BOT_TOKEN` | matches app's env | Used only for outbound `sendMessage` calls from 04-notifications — safe to reuse the app's token for this, since it only calls the Telegram API, it doesn't register a webhook |
 | `N8N_OPS_TELEGRAM_CHAT_ID` | your chat/group id | A channel you control for automation alerts, separate from per-user chats |

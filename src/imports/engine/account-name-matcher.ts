@@ -5,11 +5,14 @@ interface MatchableAccount {
 
 /**
  * Matches a transfer's merchant/description text against the user's own
- * OTHER account names (e.g. "MASHREQBANK PSC" contains "Mashreq") — lets an
- * outgoing transfer's destination resolve immediately from the message
- * itself, without waiting for a second SMS/email leg to arrive and match on
- * amount+direction (matchInternalTransfer's approach, which fails entirely
- * when only one side of a transfer ever gets imported/parsed).
+ * OTHER account names (e.g. "MASHREQBANK PSC" contains "Mashreq"). Not
+ * currently called by any production code path — ingestion (Phase 1, see
+ * import.service.ts) never resolves toAccountId from the message text
+ * anymore, and reconcile-transfers.service.ts's Phase 2 matching is
+ * amount+time only, per the two-phase transfer redesign. Left in place
+ * (with its own test coverage) as a real, working utility in case
+ * description-based matching is wired into Phase 2 later — not dead code
+ * kept by accident.
  */
 export function matchAccountByDescription(
   accounts: MatchableAccount[],

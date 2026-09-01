@@ -77,6 +77,20 @@ enum CashFlowDirection {
   INFLOW
 }
 
+/// Two-phase transfer reconciliation status (see reconcile-transfers.service.ts).
+/// UNMATCHED: posted at ingestion, no attempt yet to pair it with another leg.
+/// MATCHED: this row IS the canonical TRANSFER record — reconciliation found
+///          its other leg and folded it in (type became TRANSFER, toAccountId
+///          points at the other leg's account).
+/// MERGED: this row WAS the other leg — kept forever for history/audit
+///         (never deleted), but its balance effect is superseded by the
+///         MATCHED row it points to via mergedIntoTransactionId.
+enum TransferMatchStatus {
+  UNMATCHED
+  MATCHED
+  MERGED
+}
+
 enum AccountType {
   EMIRATES_NBD
   CASH
@@ -232,6 +246,12 @@ model Transaction {
   toAccountId String?
   toAccount   Account? @relation("TransferToTransactions", fields: [toAccountId], references: [id], onDelete: SetNull)
 
+  // Two-phase transfer reconciliation (see TransferMatchStatus doc comment)
+  transferMatchStatus     TransferMatchStatus @default(UNMATCHED)
+  mergedIntoTransactionId String?
+  mergedIntoTransaction   Transaction?        @relation("TransferMerge", fields: [mergedIntoTransactionId], references: [id], onDelete: SetNull)
+  mergedTransactions      Transaction[]       @relation("TransferMerge")
+
   // Import tracking
   importSource         ImportSource?
   adjustedAt           DateTime? // set when user edits an imported transaction
@@ -256,6 +276,7 @@ model Transaction {
   @@index([userId, accountId, date])
   @@index([userId, toAccountId, date])
   @@index([userId, type, date])
+  @@index([userId, transferMatchStatus, date])
 }
 
 model Budget {

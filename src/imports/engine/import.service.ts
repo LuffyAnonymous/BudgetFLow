@@ -31,14 +31,12 @@ import { isCreditCardTransaction } from "./card-type-classifier";
 import { classifyDirection, isDirectionAmbiguous, TransactionDirection } from "./direction-classifier";
 import { categorizeMerchant, KnownCategory } from "./merchant-categorizer";
 import { resolveFallbackCategory, resolveCategoryByAlias } from "./category-resolver";
-import { matchInternalTransfer } from "./transfer-matcher";
 import { evaluateConfidence } from "./confidence-evaluator";
 import { updateBalance } from "./balance-updater";
 import { extractSmsTransaction, AI_SMS_PARSER_KEY } from "./ai-sms-extractor";
 import { isOtpOrPromoMessage } from "../sms/otp-promo-filter";
 import { tryApplyDebtLinkage } from "./debt-linkage";
 import { matchDebtByDescription } from "./debt-matcher";
-import { matchAccountByDescription } from "./account-name-matcher";
 import { EMIRATES_NBD_ACCOUNT_DEDUCTION_PARSER_KEY } from "../email/parsers/emirates-nbd-account-deduction.parser";
 
 const DUBAI_OFFSET_HOURS = 4;
@@ -358,20 +356,6 @@ export class ImportService {
       const d = new Date(dubaiMs);
       const financialDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 
-      // LOW confidence still auto-posts (below) — it just skips internal-
-      // transfer matching. Merging two transactions together on a
-      // low-confidence guess would compound the risk rather than contain it.
-      console.log("[Import Service] Stage: Match internal transfer", { confidence });
-      let matchedTransferId: string | null = null;
-      if (confidence !== ImportConfidence.LOW) {
-          matchedTransferId = await matchInternalTransfer(
-              userId,
-              normalized.amount,
-              financialDate,
-              direction === TransactionDirection.INFLOW
-          );
-      }
-
       console.log("[Import Service] Stage: Executing auto-post transaction");
       const result = await this.autoPostTransaction({
         userId,
@@ -384,7 +368,6 @@ export class ImportService {
         isCreditCard,
         direction,
         category,
-        matchedTransferId,
         financialDate,
         confidence,
         directionAmbiguous,
@@ -431,7 +414,6 @@ export class ImportService {
     isCreditCard: boolean;
     direction: TransactionDirection;
     category: KnownCategory;
-    matchedTransferId: string | null;
     financialDate: Date;
     confidence: ImportConfidence;
     directionAmbiguous: boolean;
@@ -446,7 +428,7 @@ export class ImportService {
   }): Promise<{ importedTxId: string; ledgerTxId: string }> {
     const {
       userId, source, origin, paymentMethodLabel, normalized, institutionForAccount, institutionCode,
-      isCreditCard, direction, category, matchedTransferId, financialDate, confidence, directionAmbiguous,
+      isCreditCard, direction, category, financialDate, confidence, directionAmbiguous,
       fingerprint, rawPayload, extractionMethod, deviceId, maskedSenderValue, receivedAt, idempotencyKey,
       externalMessageId,
     } = params;
@@ -464,14 +446,18 @@ export class ImportService {
       // for why these must match exactly.
       const now = new Date();
 
+      // Phase 1 (ingestion): typed EXPENSE/INCOME by direction only. Never
+      // TRANSFER here, even when the category resolves to "Transfers" — that
+      // reclassification, and any cross-account linking, is entirely
+      // reconcile-transfers.service.ts's job (Phase 2), run asynchronously
+      // after both legs of a real transfer have had a chance to arrive. This
+      // keeps matching and balance mutation decoupled, so a bad match can
+      // never corrupt the balance update that already happened for this leg.
       let txType: TransactionType = TransactionType.EXPENSE;
       let cashFlowDir: CashFlowDirection = CashFlowDirection.OUTFLOW;
       if (direction === TransactionDirection.INFLOW) {
         txType = TransactionType.INCOME;
         cashFlowDir = CashFlowDirection.INFLOW;
-      }
-      if (category === KnownCategory.TRANSFERS) {
-        txType = TransactionType.TRANSFER;
       }
 
       // Emirates NBD sends both a generic "AED X deducted...for <reason>"
@@ -482,9 +468,9 @@ export class ImportService {
       // same-account/amount/direction match is that generic parser, so this
       // never merges two genuinely unrelated same-amount transactions from
       // any other source.
-      let softDuplicate: { id: string; type: TransactionType; toAccountId: string | null } | null = null;
+      let softDuplicate: { id: string; type: TransactionType } | null = null;
       let softDuplicateScore = 0;
-      if (!matchedTransferId) {
+      {
         const windowMs = 5 * 60 * 1000;
         const candidate = await tx.transaction.findFirst({
           where: {
@@ -511,8 +497,8 @@ export class ImportService {
           candidateLeg?.parserKey === EMIRATES_NBD_ACCOUNT_DEDUCTION_PARSER_KEY;
 
         if (candidate && involvesDeductionParser) {
-          softDuplicate = { id: candidate.id, type: candidate.type, toAccountId: candidate.toAccountId };
-          softDuplicateScore = (candidateLeg?.parsedReference ? 2 : 0) + (candidate.type === TransactionType.TRANSFER ? 1 : 0);
+          softDuplicate = { id: candidate.id, type: candidate.type };
+          softDuplicateScore = candidateLeg?.parsedReference ? 2 : 0;
         }
       }
 
@@ -553,55 +539,19 @@ export class ImportService {
         return dbCategory;
       };
 
-      const resolveToAccId = async (): Promise<string | undefined> => {
-        if (category !== KnownCategory.TRANSFERS) return undefined;
-        const otherAccounts = await tx.account.findMany({
-          where: { userId, id: { not: primaryAccId } },
-          select: { id: true, name: true },
-        });
-        const matchedAccount = matchAccountByDescription(otherAccounts, normalized.merchant);
-        return matchedAccount?.id;
-      };
-
-      if (matchedTransferId) {
-          ledgerTxId = matchedTransferId;
-
-          // The matched row's `accountId` was already set by whichever leg
-          // arrived first (unconditionally, regardless of that leg's own
-          // direction — see the create() below). This leg is therefore
-          // always the *other* side, and the only field that can still be
-          // empty is `toAccountId`. Never overwrite an already-populated
-          // toAccountId — a mismatch there means matchInternalTransfer()
-          // matched something it shouldn't have, and silently relinking it
-          // would corrupt a transfer that's already correctly recorded.
-          const matchedRow = await tx.transaction.findUnique({
-            where: { id: matchedTransferId },
-            select: { accountId: true, toAccountId: true },
-          });
-          if (matchedRow && !matchedRow.toAccountId && matchedRow.accountId !== primaryAccId) {
-            await tx.transaction.update({
-              where: { id: matchedTransferId },
-              data: { toAccountId: primaryAccId },
-            });
-          } else if (matchedRow?.toAccountId && matchedRow.toAccountId !== primaryAccId && matchedRow.accountId !== primaryAccId) {
-            console.warn(
-              "[Import Service] Matched transfer row already has a different toAccountId — leaving it alone",
-              { matchedTransferId, existingToAccountId: matchedRow.toAccountId, thisLegAccountId: primaryAccId }
-            );
-          }
-      } else if (softDuplicate) {
+      if (softDuplicate) {
           ledgerTxId = softDuplicate.id;
 
-          const newScore = (normalized.reference ? 2 : 0) + (category === KnownCategory.TRANSFERS ? 1 : 0);
+          const newScore = normalized.reference ? 2 : 0;
 
           // Only overwrite the existing row's fields when this message is
-          // strictly more informative (has a reference, or resolves to a
-          // transfer where the existing row didn't) — otherwise the
-          // already-posted leg is left exactly as it was, and this message
-          // just gets attached to it below as a second corroborating leg.
+          // strictly more informative (has a reference the existing row
+          // didn't) — otherwise the already-posted leg is left exactly as
+          // it was, and this message just gets attached to it below as a
+          // second corroborating leg. Never touches toAccountId/type here —
+          // reconcile-transfers.service.ts (Phase 2) owns that decision now.
           if (newScore > softDuplicateScore) {
             const dbCategory = await resolveDbCategory();
-            const toAccId = await resolveToAccId();
 
             await tx.transaction.update({
               where: { id: softDuplicate.id },
@@ -610,13 +560,8 @@ export class ImportService {
                 cashFlowDirection: cashFlowDir,
                 description: normalized.merchant || "Auto-imported",
                 categoryId: dbCategory.id,
-                toAccountId: toAccId ?? softDuplicate.toAccountId,
               },
             });
-
-            if (toAccId && toAccId !== softDuplicate.toAccountId) {
-              await accountService.updateAccountBalance(userId, toAccId, tx);
-            }
           }
       } else {
           const dbCategory = await resolveDbCategory();
@@ -624,16 +569,6 @@ export class ImportService {
           const computedBudgetMonth = isSalary
             ? determineBudgetMonth(financialDate, true)
             : await getActiveFinancialCycle(userId, financialDate, tx);
-
-          // A transfer whose message already names the destination bank
-          // (e.g. "MASHREQBANK PSC / Routing Code: ...") can resolve
-          // toAccountId right now, from this one message alone — no need
-          // to wait for (or ever receive) a second leg the way
-          // matchInternalTransfer requires. Only matches the user's OWN
-          // other tracked accounts, so an external payment to someone
-          // else's account never gets misattributed as an internal
-          // transfer just because a bank name happens to appear in it.
-          const toAccId = await resolveToAccId();
 
           const ledgerTx = await tx.transaction.create({
               data: {
@@ -647,7 +582,6 @@ export class ImportService {
                   cashFlowDirection: cashFlowDir,
                   origin,
                   accountId: primaryAccId,
-                  toAccountId: toAccId,
                   userId,
                   // Must match the `now` passed to updateBalance() above
                   // exactly — see updateBalance()'s timestamp param doc.
@@ -655,14 +589,6 @@ export class ImportService {
               }
           });
           ledgerTxId = ledgerTx.id;
-
-          // updateBalance() above only bumped the source account's cache —
-          // a destination resolved by name match here has no leg of its own
-          // going through that same call, so without this its currentBalance
-          // would sit stale until something else happened to recompute it.
-          if (toAccId) {
-            await accountService.updateAccountBalance(userId, toAccId, tx);
-          }
 
           // Auto-applies as a DebtPayment if this transaction's category
           // is debt-linked, or its description matches a registered
@@ -952,17 +878,6 @@ export class ImportService {
       const d = new Date(dubaiMs);
       const financialDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 
-      console.log("[Import Service] Stage: Match internal transfer", { confidence });
-      let matchedTransferId: string | null = null;
-      if (confidence !== ImportConfidence.LOW) {
-        matchedTransferId = await matchInternalTransfer(
-          userId,
-          normalized.amount,
-          financialDate,
-          normalized.direction === TransactionDirection.INFLOW
-        );
-      }
-
       const institutionForAccount: ResolvedInstitution = {
         accountType: institution.accountType,
         displayName: normalized.isCreditCard ? `${institution.displayName} Credit Card` : institution.displayName,
@@ -980,7 +895,6 @@ export class ImportService {
         isCreditCard: normalized.isCreditCard,
         direction: normalized.direction,
         category,
-        matchedTransferId,
         financialDate,
         confidence,
         directionAmbiguous,

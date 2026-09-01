@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { Account, AccountType, Prisma, TransactionType } from "@prisma/client";
+import { Account, AccountType, Prisma, TransactionType, TransferMatchStatus } from "@prisma/client";
 import { Decimal } from "decimal.js";
 
 export class AccountService {
@@ -111,13 +111,20 @@ export class AccountService {
     since: Date | null = null
   ): Promise<Decimal> {
     const sinceFilter = since ? { createdAt: { gt: since } } : {};
+    // A MERGED row (see TransferMatchStatus) was the "other leg" of a
+    // transfer folded into a MATCHED TRANSFER row elsewhere — its own
+    // balance effect is superseded by that row, so it must never be summed
+    // here too, or the destination account's inflow gets double-counted.
+    // The row itself is kept forever for history; only its contribution to
+    // this recompute is excluded.
+    const notMergedFilter = { transferMatchStatus: { not: TransferMatchStatus.MERGED } };
 
     const incomeAgg = await client.transaction.aggregate({
-      where: { userId, accountId, type: TransactionType.INCOME, ...sinceFilter },
+      where: { userId, accountId, type: TransactionType.INCOME, ...notMergedFilter, ...sinceFilter },
       _sum: { amount: true },
     });
     const transferInAgg = await client.transaction.aggregate({
-      where: { userId, toAccountId: accountId, type: TransactionType.TRANSFER, ...sinceFilter },
+      where: { userId, toAccountId: accountId, type: TransactionType.TRANSFER, ...notMergedFilter, ...sinceFilter },
       _sum: { amount: true },
     });
 
@@ -137,6 +144,7 @@ export class AccountService {
             TransactionType.TRANSFER,
           ],
         },
+        ...notMergedFilter,
         ...sinceFilter,
       },
       _sum: { amount: true },

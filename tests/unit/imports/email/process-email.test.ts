@@ -83,8 +83,8 @@ describe("ImportService.processEmail", () => {
     expect(account).toBeDefined();
   });
 
-  it("auto-links toAccountId to the user's own matching account from the message alone, with no second leg", async () => {
-    const mashreq = await db.account.create({
+  it("never auto-links toAccountId at ingestion, even when the message names a matching account — that's reconcile-transfers.service.ts's (Phase 2) job now", async () => {
+    await db.account.create({
       data: { userId, name: "Mashreq", type: AccountType.MASHREQ, currentBalance: 0 },
     });
 
@@ -104,13 +104,9 @@ describe("ImportService.processEmail", () => {
     if (res.outcome !== "auto_posted") return;
 
     const tx = await db.transaction.findUniqueOrThrow({ where: { id: res.transactionId } });
-    expect(tx.toAccountId).toBe(mashreq.id);
-
-    // The destination's cached balance reflects the inflow immediately —
-    // it has no leg of its own going through updateBalance(), so this only
-    // happens if the auto-link path explicitly recomputes it.
-    const updatedMashreq = await db.account.findUniqueOrThrow({ where: { id: mashreq.id } });
-    expect(Number(updatedMashreq.currentBalance)).toBe(750);
+    expect(tx.toAccountId).toBeNull();
+    expect(tx.type).toBe("EXPENSE");
+    expect(tx.transferMatchStatus).toBe("UNMATCHED");
   });
 
   it("does not auto-link when the user has no account matching the named destination bank", async () => {
@@ -362,8 +358,11 @@ describe("ImportService.processEmail", () => {
   });
 
   describe("merging the two Emirates NBD emails a single wire transfer generates", () => {
-    it("merges the generic deduction alert and the specific transfer confirmation into one TRANSFER, not two debits (deduction arrives first)", async () => {
-      const mashreq = await db.account.create({
+    it("merges the generic deduction alert and the specific transfer confirmation into one row, not two debits (deduction arrives first) — stays EXPENSE/UNMATCHED, cross-account linking is Phase 2's job now", async () => {
+      // Created to prove the merge doesn't incidentally link to it — Phase 1
+      // never resolves toAccountId anymore, even though this plausibly-
+      // matching account exists.
+      await db.account.create({
         data: { userId, name: "Mashreq", type: AccountType.MASHREQ },
       });
 
@@ -403,18 +402,12 @@ describe("ImportService.processEmail", () => {
 
       const allTx = await db.transaction.findMany({ where: { userId } });
       expect(allTx).toHaveLength(1);
-      expect(allTx[0].type).toBe("TRANSFER");
-      expect(allTx[0].toAccountId).toBe(mashreq.id);
-
-      const updatedMashreq = await db.account.findUniqueOrThrow({ where: { id: mashreq.id } });
-      expect(updatedMashreq.currentBalance.toFixed(2)).toBe("150.00");
+      expect(allTx[0].type).toBe("EXPENSE");
+      expect(allTx[0].toAccountId).toBeNull();
+      expect(allTx[0].transferMatchStatus).toBe("UNMATCHED");
     });
 
     it("merges the two emails in the opposite order too (specific transfer confirmation arrives first)", async () => {
-      const mashreq = await db.account.create({
-        data: { userId, name: "Mashreq", type: AccountType.MASHREQ },
-      });
-
       const base = new Date("2026-03-15T10:00:00Z");
 
       const transferRes = await importService.processEmail(userId, {
@@ -451,8 +444,9 @@ describe("ImportService.processEmail", () => {
 
       const allTx = await db.transaction.findMany({ where: { userId } });
       expect(allTx).toHaveLength(1);
-      expect(allTx[0].type).toBe("TRANSFER");
-      expect(allTx[0].toAccountId).toBe(mashreq.id);
+      expect(allTx[0].type).toBe("EXPENSE");
+      expect(allTx[0].toAccountId).toBeNull();
+      expect(allTx[0].transferMatchStatus).toBe("UNMATCHED");
     });
 
     it("does not merge two genuinely unrelated transactions that just happen to share an amount, when neither is the generic deduction alert", async () => {
