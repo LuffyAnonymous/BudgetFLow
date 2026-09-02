@@ -36,10 +36,8 @@ describe("POST /api/accounts/recalculate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("recomputes and persists the corrected balance for the current user, even when it's stuck on a same-day checkpoint", async () => {
-    // Simulate a stale cached balance the way the same-day-exclusion bug
-    // would have left it: currentBalance stuck at the checkpoint despite a
-    // real transaction existing in the ledger since.
+  it("adds a post-checkpoint transaction on top of the bank's own last reported balance", async () => {
+    const checkpoint = new Date();
     const account = await db.account.create({
       data: {
         userId,
@@ -47,34 +45,18 @@ describe("POST /api/accounts/recalculate", () => {
         type: "EMIRATES_NBD",
         currentBalance: "5750.00",
         latestImportedBalance: "5750.00",
-        lastSMSImportedAt: new Date(),
+        latestImportedBalanceAt: checkpoint,
+        lastSMSImportedAt: checkpoint,
       },
     });
     accountId = account.id;
 
-    // Every real BudgetFlow account is auto-created at currentBalance: 0
-    // (see ensureAccountForInstitution) — the true full history is always
-    // reconstructable from the ledger, which is exactly why forcing a
-    // from-zero recompute here (rather than anchoring on a balance that
-    // may itself be the corrupted value) is safe.
     await db.transaction.create({
       data: {
         userId,
         accountId,
         date: new Date(),
-        categoryId,
-        description: "Salary",
-        amount: "5750.00",
-        paymentMethod: "Email Import",
-        type: "INCOME",
-        cashFlowDirection: "INFLOW",
-      },
-    });
-    await db.transaction.create({
-      data: {
-        userId,
-        accountId,
-        date: new Date(),
+        occurredAt: new Date(checkpoint.getTime() + 60_000),
         categoryId,
         description: "ATM Withdrawal",
         amount: "3500.00",
@@ -89,53 +71,86 @@ describe("POST /api/accounts/recalculate", () => {
 
     const json = await res.json();
     const account2 = json.data.find((a: { id: string }) => a.id === accountId);
-    expect(account2.currentBalance).toBe("2250.00"); // 5750 - 3500, from a genuine full-ledger sum
+    expect(account2.currentBalance).toBe("2250.00"); // 5750 - 3500
 
     const persisted = await db.account.findUniqueOrThrow({ where: { id: accountId } });
     expect(Number(persisted.currentBalance)).toBe(2250);
   });
 
-  it("fixes THE BUG's exact scenario: an out-of-order backfill that left currentBalance on the earlier (salary) snapshot instead of the later (withdrawal) one", async () => {
-    // Reproduces exactly what the production bug left behind: the account
-    // row's currentBalance/latestImportedBalance stuck on the salary's
-    // reading, even though a later withdrawal genuinely happened and its
-    // own Transaction row already exists in the ledger.
+  /**
+   * Regression pin for a real incident: this button used to force a full
+   * recompute (sum every transaction from zero, discarding the bank's own
+   * latestImportedBalance reading entirely). On this exact real account
+   * shape it produced AED 1,190.88 — an internally-consistent sum of the
+   * visible ledger that did not match the user's real bank balance,
+   * because the ledger doesn't capture everything the bank's own reading
+   * does (pre-tracking history, informational-only messages). The correct,
+   * anchored answer — confirmed against the user's actual bank balance —
+   * is AED 4.81. If this ever regresses back to forcing a full recompute,
+   * this test fails on the exact numbers that went wrong in production.
+   */
+  it("regression: does not repeat the incident where forcing a full recompute produced AED 1,190.88 instead of the correct AED 4.81", async () => {
+    const staleCheckpoint = new Date("2026-08-30T07:34:35.000Z");
     const account = await db.account.create({
       data: {
         userId,
         name: "Emirates NBD",
         type: "EMIRATES_NBD",
-        currentBalance: "5750.48", // stuck on the salary's reading
-        latestImportedBalance: "5750.48",
-        latestImportedBalanceAt: new Date(), // a "too-late" anchor, per the bug
-        lastSMSImportedAt: new Date(),
+        currentBalance: "200.93",
+        latestImportedBalance: "200.93",
+        latestImportedBalanceAt: staleCheckpoint,
+        lastSMSImportedAt: staleCheckpoint,
       },
     });
     accountId = account.id;
 
+    // Transactions genuinely older than the checkpoint — already reflected
+    // in the bank's own 200.93 reading, must not be summed again.
+    for (const [desc, amount, occurredAt] of [
+      ["Salary", "5750.00", "2026-08-28T11:59:24.000Z"],
+      ["ATM Withdrawal", "3500.00", "2026-08-28T12:57:50.000Z"],
+      ["Transfer to Mashreq", "150.00", "2026-08-28T13:54:19.000Z"],
+    ] as const) {
+      await db.transaction.create({
+        data: {
+          userId,
+          accountId,
+          date: new Date(occurredAt),
+          occurredAt: new Date(occurredAt),
+          categoryId,
+          description: desc,
+          amount,
+          paymentMethod: "Email Import",
+          type: desc === "Salary" ? "INCOME" : "EXPENSE",
+          cashFlowDirection: desc === "Salary" ? "INFLOW" : "OUTFLOW",
+        },
+      });
+    }
+
+    // Genuinely new activity, after the checkpoint — must be added.
     await db.transaction.create({
       data: {
         userId,
         accountId,
-        date: new Date("2026-08-29T00:00:00.000Z"),
-        occurredAt: new Date("2026-08-29T09:00:00.000Z"),
+        date: new Date("2026-09-01T22:11:23.600Z"),
+        occurredAt: new Date("2026-09-01T22:11:23.600Z"),
         categoryId,
-        description: "Salary",
-        amount: "5750.00",
+        description: "Nol Card recharge",
+        amount: "150.00",
         paymentMethod: "Email Import",
-        type: "INCOME",
-        cashFlowDirection: "INFLOW",
+        type: "EXPENSE",
+        cashFlowDirection: "OUTFLOW",
       },
     });
     await db.transaction.create({
       data: {
         userId,
         accountId,
-        date: new Date("2026-08-29T00:00:00.000Z"),
-        occurredAt: new Date("2026-08-29T12:57:00.000Z"),
+        date: new Date("2026-09-01T22:13:05.921Z"),
+        occurredAt: new Date("2026-09-01T22:13:05.921Z"),
         categoryId,
-        description: "ATM Withdrawal",
-        amount: "3500.00",
+        description: "Buy Food and Essentials",
+        amount: "46.12",
         paymentMethod: "Email Import",
         type: "EXPENSE",
         cashFlowDirection: "OUTFLOW",
@@ -145,6 +160,7 @@ describe("POST /api/accounts/recalculate", () => {
     const res = await POST();
     const json = await res.json();
     const account2 = json.data.find((a: { id: string }) => a.id === accountId);
-    expect(account2.currentBalance).toBe("2250.00");
+    expect(account2.currentBalance).toBe("4.81");
+    expect(account2.currentBalance).not.toBe("1190.88");
   });
 });

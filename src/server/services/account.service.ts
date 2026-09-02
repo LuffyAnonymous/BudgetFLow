@@ -162,16 +162,30 @@ export class AccountService {
    * Recalculates the balance of a specific account using the ledger as the source of truth,
    * then caches/updates the currentBalance column on the Account record.
    *
-   * `forceFullRecompute`, when true, ignores the latestImportedBalance/
-   * latestImportedBalanceAt anchor entirely and sums the complete
-   * transaction history from zero instead. The anchored path is what
-   * normal ingestion uses (cheap — it doesn't re-sum an account's entire
-   * history on every single new transaction), but the anchor itself is
-   * only as correct as whatever set it; if it was ever corrupted by an
-   * out-of-order backfill *before* that got fixed, an anchored recompute
-   * inherits the corruption instead of curing it. A full from-zero sum has
-   * no such dependency — this is what the user-facing "Recalculate
-   * Balances" button uses, precisely so it's always a genuine fix.
+   * Default (forceFullRecompute: false, always use this unless you have a
+   * specific, narrow reason not to): anchors on latestImportedBalance/
+   * latestImportedBalanceAt — the bank's own last authoritative reading —
+   * and sums only transactions after it. This is correct and safe for
+   * every normal caller, confirmed against real production data.
+   *
+   * forceFullRecompute: true ignores that anchor entirely and sums the
+   * complete transaction history from zero instead, on the assumption
+   * that "every account starts at 0 with no untracked starting balance."
+   * That assumption is FALSE for this app: the wallet-import fallback
+   * account and the ignored/pending-message path both legitimately set a
+   * real balance with zero backing transactions, and forcing a full
+   * recompute silently discards it. This caused a real incident: an
+   * account correctly anchored at the bank's true balance (AED 4.81) was
+   * force-recomputed to AED 1,190.88 — a fictitious number that happened
+   * to be an internally-consistent sum of the visible ledger, but did not
+   * match the user's real bank balance, because the ledger doesn't (and
+   * structurally can't) capture everything the bank's own reading does.
+   * The ONE legitimate use is reconcile-transfers.service.ts's merge of a
+   * historical transfer's destination leg — money the destination
+   * account's own anchor genuinely never knew about, because it arrived
+   * via a different account's message entirely. Do not add new callers
+   * without re-deriving this reasoning from scratch; when in doubt, don't
+   * pass it.
    */
   async updateAccountBalance(
     userId: string,

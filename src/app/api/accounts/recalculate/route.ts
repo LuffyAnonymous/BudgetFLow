@@ -23,7 +23,16 @@ export async function POST(): Promise<NextResponse> {
   }
   const userId = session.user.id;
 
-  await accountService.updateAllBalances(userId, undefined, true);
+  // Deliberately NOT forceFullRecompute: that path ignores the bank's own
+  // last authoritative reading (latestImportedBalance) entirely and sums
+  // every transaction from zero instead — the assumption that "every
+  // account starts at 0 with no untracked starting balance" doesn't hold
+  // for this app in practice (the wallet-import fallback account and the
+  // ignored/pending-message path both legitimately set a real balance
+  // with no backing transaction). Confirmed against real production data:
+  // forcing a full recompute here produced numbers far off the user's
+  // actual bank balances, while the anchored default matched exactly.
+  await accountService.updateAllBalances(userId);
 
   const accounts = await accountService.getAccounts(userId);
   const serialized = await Promise.all(accounts.map((acc) => serializeAccountWithReconciliation(userId, acc)));
