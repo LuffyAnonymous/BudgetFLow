@@ -23,6 +23,7 @@ import { emiratesNbdAtmWithdrawalEmailParser } from "./parsers/emirates-nbd-atm-
 import { emiratesNbdSalaryCreditEmailParser } from "./parsers/emirates-nbd-salary-credit.parser";
 import { emiratesNbdAccountDeductionEmailParser } from "./parsers/emirates-nbd-account-deduction.parser";
 import { emiratesNbdInstantTransferCreditEmailParser } from "./parsers/emirates-nbd-instant-transfer-credit.parser";
+import { emiratesNbdCashDepositEmailParser } from "./parsers/emirates-nbd-cash-deposit.parser";
 
 const REGISTERED_PARSERS: IEmailParser[] = [
   emiratesNbdEmailParser,
@@ -32,6 +33,7 @@ const REGISTERED_PARSERS: IEmailParser[] = [
   emiratesNbdSalaryCreditEmailParser,
   emiratesNbdAccountDeductionEmailParser,
   emiratesNbdInstantTransferCreditEmailParser,
+  emiratesNbdCashDepositEmailParser,
 ];
 
 export type EmailParserSelectionResult =

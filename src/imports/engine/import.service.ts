@@ -76,6 +76,8 @@ interface AutoPostableTransaction {
   payloadHash: string;
   /** See NormalizedEmailTransaction.impliedToAccount's doc comment. */
   impliedToAccount?: { type: AccountType; name: string } | null;
+  /** See NormalizedEmailTransaction.impliedFromAccount's doc comment. */
+  impliedFromAccount?: { type: AccountType; name: string } | null;
 }
 
 export type ImportResult =
@@ -580,9 +582,10 @@ export class ImportService {
             : await getActiveFinancialCycle(userId, financialDate, tx);
 
           // A parser-declared deterministic transfer (e.g. ATM withdrawal
-          // -> Cash) resolves immediately — see impliedToAccount's doc
-          // comment for why this is safe unlike the matching Phase 1
-          // otherwise never does.
+          // -> Cash, or a cash deposit <- Cash) resolves immediately — see
+          // impliedToAccount/impliedFromAccount's doc comments for why
+          // this is safe unlike the matching Phase 1 otherwise never does.
+          // Mutually exclusive in practice: a parser sets at most one.
           let impliedToAccId: string | undefined;
           if (normalized.impliedToAccount) {
             const destAccount = await accountService.ensureAccountForInstitution(
@@ -593,6 +596,18 @@ export class ImportService {
             impliedToAccId = destAccount.id;
           }
 
+          let impliedFromAccId: string | undefined;
+          if (normalized.impliedFromAccount) {
+            const sourceAccount = await accountService.ensureAccountForInstitution(
+              userId,
+              normalized.impliedFromAccount,
+              tx
+            );
+            impliedFromAccId = sourceAccount.id;
+          }
+
+          const isImpliedTransfer = !!impliedToAccId || !!impliedFromAccId;
+
           const ledgerTx = await tx.transaction.create({
               data: {
                   date: financialDate,
@@ -602,16 +617,21 @@ export class ImportService {
                   description: normalized.merchant || "Auto-imported",
                   amount: normalized.amount,
                   paymentMethod: paymentMethodLabel,
-                  type: impliedToAccId ? TransactionType.TRANSFER : txType,
+                  type: isImpliedTransfer ? TransactionType.TRANSFER : txType,
                   cashFlowDirection: cashFlowDir,
                   origin,
-                  accountId: primaryAccId,
-                  toAccountId: impliedToAccId,
+                  // impliedFromAccount reverses which side is the source: the
+                  // parser's own institution (primaryAccId) is the
+                  // destination being credited, not the account being
+                  // debited (e.g. a cash deposit — Cash is the source, ENBD
+                  // the destination, the opposite of an ATM withdrawal).
+                  accountId: impliedFromAccId ?? primaryAccId,
+                  toAccountId: impliedFromAccId ? primaryAccId : impliedToAccId,
                   // Already a fully resolved transfer at ingestion time (the
                   // parser declared both sides deterministically) — MATCHED,
                   // not the Phase 1 default UNMATCHED, so reconcile-transfers'
                   // Phase 2 scan never re-considers it for pairing.
-                  transferMatchStatus: impliedToAccId ? TransferMatchStatus.MATCHED : undefined,
+                  transferMatchStatus: isImpliedTransfer ? TransferMatchStatus.MATCHED : undefined,
                   userId,
                   // Must match the `now` passed to updateBalance() above
                   // exactly — see updateBalance()'s timestamp param doc.
@@ -622,6 +642,12 @@ export class ImportService {
 
           if (impliedToAccId) {
             await updateBalance(impliedToAccId, normalized.amount, TransactionDirection.INFLOW, null, occurredAt, tx, now);
+          }
+          if (impliedFromAccId) {
+            // primaryAccId (the destination) was already credited by the
+            // unconditional updateBalance() call above this branch — only
+            // the source side still needs its own debit applied here.
+            await updateBalance(impliedFromAccId, normalized.amount, TransactionDirection.OUTFLOW, null, occurredAt, tx, now);
           }
 
           // Auto-applies as a DebtPayment if this transaction's category

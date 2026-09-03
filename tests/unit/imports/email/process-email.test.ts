@@ -333,6 +333,42 @@ describe("ImportService.processEmail", () => {
     }
   });
 
+  it("auto-posts a recognized, well-formed Emirates NBD cash deposit email", async () => {
+    const res = await importService.processEmail(userId, {
+      fromAddress: "OnlineBanking@emiratesnbd.com",
+      subject: "Cash deposit",
+      body: "Your cash deposit has been successfully processed on 03-09-2026 at 20:04 PM . Amount: AED 500 Deposited to: 014XXX70XXX01 Machine ID: E4012434 Machine location: JLB Branch Reference number: E4012434262466860",
+      receivedAt: new Date(),
+      externalMessageId: "gmail-msg-process-enbd-deposit-1",
+    });
+
+    expect(res.outcome).toBe("auto_posted");
+    if (res.outcome === "auto_posted") {
+      const tx = await db.transaction.findUnique({ where: { id: res.transactionId } });
+      expect(tx!.amount.toFixed(2)).toBe("500.00");
+      expect(tx!.origin).toBe("EMAIL_IMPORT");
+
+      const importedTx = await db.importedTransaction.findUnique({ where: { id: res.importedTransactionId } });
+      expect(importedTx!.institutionCode).toBe("ENBD");
+      expect(importedTx!.status).toBe(ImportStatus.PROCESSED);
+
+      // The mirror image of the ATM withdrawal case: deposited cash came
+      // FROM the user's own Cash account, so Cash is the source
+      // (accountId) and Emirates NBD the destination (toAccountId) — the
+      // opposite assignment from a withdrawal, resolved immediately via
+      // impliedFromAccount (same single-message-certainty reasoning as
+      // impliedToAccount, just reversed).
+      expect(tx!.type).toBe(TransactionType.TRANSFER);
+      const cashAccount = await db.account.findUnique({ where: { userId_name: { userId, name: "Cash" } } });
+      const enbdAccount = await db.account.findFirst({ where: { userId, type: AccountType.EMIRATES_NBD } });
+      expect(cashAccount).not.toBeNull();
+      expect(tx!.accountId).toBe(cashAccount!.id);
+      expect(tx!.toAccountId).toBe(enbdAccount!.id);
+      expect(cashAccount!.currentBalance.toFixed(2)).toBe("-500.00");
+      expect(enbdAccount!.currentBalance.toFixed(2)).toBe("500.00");
+    }
+  });
+
   it("auto-posts a recognized, well-formed Emirates NBD salary-credit email", async () => {
     const res = await importService.processEmail(userId, {
       fromAddress: "OnlineBanking@emiratesnbd.com",

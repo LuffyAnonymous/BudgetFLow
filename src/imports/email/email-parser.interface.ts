@@ -91,6 +91,16 @@ export interface NormalizedEmailTransaction {
    * so resolving it immediately carries none of that risk.
    */
   readonly impliedToAccount?: { type: AccountType; name: string } | null;
+  /**
+   * The mirror image of impliedToAccount — set when a single message
+   * unambiguously declares that money moved FROM another of the user's
+   * own accounts INTO this one (e.g. a cash deposit: the deposited money
+   * didn't appear from nowhere, it was the user's own physical cash on
+   * hand). Mutually exclusive with impliedToAccount in practice — a
+   * parser sets at most one, matching whichever direction its primary
+   * institution's balance actually moves.
+   */
+  readonly impliedFromAccount?: { type: AccountType; name: string } | null;
 }
 
 /**
